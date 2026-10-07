@@ -232,7 +232,9 @@ func streamUsageEventRecordsForQuery(db *gorm.DB, query *gorm.DB, emit func(dto.
 		}
 		record := usageEventProjectionToRecord(event)
 		// Request Events cost 只在响应阶段按当前价格配置计算，不回写 usage_events。
-		record.CostUSD, record.CostAvailable, record.PricingStyle = usageEventRecordCost(record, costResolver)
+		result := costResolver.Calculate(UsageEventRecordCostSubject(record))
+		record.CostUSD, record.CostAvailable, record.PricingStyle = result.Cost.TotalCostUSD, result.Available, result.PricingStyle
+		record.PricingSelection = costResolver.Selection(result)
 		if err := emit(record); err != nil {
 			return err
 		}
@@ -286,11 +288,6 @@ func usageEventProjectionToRecord(event usageEventProjection) dto.UsageEventReco
 		CacheCreationTokens:     event.CacheCreationTokens,
 		TotalTokens:             event.TotalTokens,
 	}
-}
-
-func usageEventRecordCost(record dto.UsageEventRecord, costResolver pricing.Resolver) (float64, bool, string) {
-	result := costResolver.Calculate(UsageEventRecordCostSubject(record))
-	return result.Cost.TotalCostUSD, result.Available, result.PricingStyle
 }
 
 // usageEventProjectionToEntity 把轻量投影转回实体，供内存聚合复用原有事件处理逻辑。
@@ -391,7 +388,7 @@ func applyUsageEventListQuery(query *gorm.DB, filter dto.UsageQueryFilter) *gorm
 }
 
 func BuildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResolver pricing.Resolver) (*dto.AnalysisRecord, error) {
-	if db != nil && costResolver.HasCredentialDefaults() {
+	if db != nil && costResolver.HasPricingOverrides() {
 		var result *dto.AnalysisRecord
 		err := db.Transaction(func(tx *gorm.DB) error {
 			var err error
@@ -865,7 +862,7 @@ func BuildUsageOverviewWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, cost
 }
 
 func BuildUsageOverviewWithFilterAndRecentCache(db *gorm.DB, filter dto.UsageQueryFilter, recentCache *UsageRecentEventCache, costResolver pricing.Resolver) (*dto.UsageOverviewRecord, error) {
-	if db != nil && costResolver.HasCredentialDefaults() {
+	if db != nil && costResolver.HasPricingOverrides() {
 		var result *dto.UsageOverviewRecord
 		err := db.Transaction(func(tx *gorm.DB) error {
 			var err error
@@ -988,7 +985,7 @@ func buildUsageOverviewFromStats(db *gorm.DB, filter dto.UsageQueryFilter, costR
 		seen := make(map[string]struct{}, len(boundaryEvents))
 		for _, event := range boundaryEvents {
 			authIndex := strings.TrimSpace(event.AuthIndex)
-			if costResolver.HasCredentialDefaults() {
+			if costResolver.HasPricingOverrides() {
 				authIndex = event.AuthIndex
 			}
 			if authIndex != "" {
@@ -1466,7 +1463,7 @@ func buildUsageOverviewRealtime(db *gorm.DB, filter dto.UsageQueryFilter, costRe
 		events = dbEvents
 	}
 
-	if costResolver.HasCredentialDefaults() {
+	if costResolver.HasPricingOverrides() {
 		// Exact observed identity controls credential bins as well as their fees.
 		// Keep the legacy fallback policy unchanged when defaults are absent.
 		for index := range events {

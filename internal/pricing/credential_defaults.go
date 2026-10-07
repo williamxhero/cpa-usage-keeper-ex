@@ -57,7 +57,14 @@ type credentialIdentity struct{ authType, authIndex string }
 
 // CompileSnapshotWithCredentials validates the whole candidate, including
 // unadjusted baseline safety even when legacy model multipliers are zero.
-func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialBinding, defaults []CredentialConfig) (*Snapshot, error) {
+func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialBinding, defaults []CredentialConfig, extra ...OverrideConfig) (*Snapshot, error) {
+	if len(extra) > 1 {
+		return nil, fmt.Errorf("expected at most one override configuration")
+	}
+	var exceptions []CredentialModelConfig
+	if len(extra) == 1 {
+		exceptions = extra[0].CredentialModels
+	}
 	snapshot, err := CompileSnapshot(models)
 	if err != nil {
 		return nil, err
@@ -123,8 +130,11 @@ func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialB
 		}
 		snapshot.credentialDefaults[config.SubjectID] = config.Multiplier
 	}
+	if err := snapshot.compileCredentialModels(exceptions); err != nil {
+		return nil, err
+	}
 	snapshot.legacyActiveFields = snapshot.activeFields
-	if len(defaults) > 0 {
+	if len(defaults) > 0 || len(exceptions) > 0 {
 		// Retained-event reconciliation must identify the original rollup cohorts,
 		// including dimensions not used by current legacy rules.
 		for field := RuleFieldAPIGroupKey; field < ruleFieldCount; field++ {
@@ -176,7 +186,7 @@ func (r Resolver) LegacyActiveFields() ActiveFields {
 	if r.snapshot == nil {
 		return 0
 	}
-	if r.HasCredentialDefaults() {
+	if r.HasPricingOverrides() {
 		return r.snapshot.legacyActiveFields
 	}
 	return r.snapshot.activeFields
@@ -185,12 +195,7 @@ func (r Resolver) credentialDefault(subject CostSubject) (string, float64, bool)
 	if r.snapshot == nil {
 		return "", 0, false
 	}
-	id := ""
-	if subject.AuthType == "" && !subject.ObservedIdentity {
-		id = r.snapshot.credentialIndexes[subject.IdentityAuthIndex]
-	} else {
-		id = r.snapshot.credentials[credentialIdentity{subject.AuthType, subject.IdentityAuthIndex}]
-	}
+	id := r.credentialSubject(subject)
 	multiplier, ok := r.snapshot.credentialDefaults[id]
 	return id, multiplier, ok
 }

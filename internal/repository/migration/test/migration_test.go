@@ -96,6 +96,7 @@ func TestOrderedMigrationsPreservesExecutionOrder(t *testing.T) {
 		"20260925_limit_latency_sample_points",
 		"20261007_credential_pricing_subjects",
 		"20261007_credential_price_defaults",
+		"20261007_credential_model_multipliers",
 	}
 	assertStringSlicesEqual(t, want, got)
 }
