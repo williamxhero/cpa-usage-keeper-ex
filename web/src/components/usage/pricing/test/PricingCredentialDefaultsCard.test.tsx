@@ -13,6 +13,7 @@ const dto = (multiplier: number | null) => ({ subject_id: subject.subject_id, mu
 
 describe('PricingCredentialDefaultsCard', () => {
   let root: Root
+  const onChanged = vi.fn()
   let container: HTMLDivElement
   const button = (key: string) => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(item => item.textContent === `pricing_credential_defaults.${key}`)!
   const input = () => container.querySelector<HTMLInputElement>('input[aria-label="pricing_credential_defaults.multiplier"]')!
@@ -28,6 +29,7 @@ describe('PricingCredentialDefaultsCard', () => {
     })
   }
   beforeEach(() => {
+    onChanged.mockReset()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -40,13 +42,13 @@ describe('PricingCredentialDefaultsCard', () => {
   it('does not render or fetch management data for a read-only user', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => root.render(<PricingCredentialDefaultsCard canManage={false} />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard canManage={false} onChanged={onChanged} />))
     expect(container.textContent).toBe('')
     expect(fetchMock).not.toHaveBeenCalled()
   })
   it.each([401, 403])('hides all controls on denied subject-list read %s without showing upstream secrets', async status => {
     vi.stubGlobal('fetch', vi.fn(async () => response({ error: 'synthetic-private-token' }, status)))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('pricing_credential_defaults.permission_denied')
     expect(container.querySelector('[role="combobox"]')).toBeNull()
     expect(container.querySelector('input')).toBeNull()
@@ -58,7 +60,7 @@ describe('PricingCredentialDefaultsCard', () => {
       if (failing) return response({ error: 'synthetic-private-token' }, 500)
       return String(url).endsWith('credential-subjects') ? response({ credentials: [subject] }) : response(dto(null))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('pricing_credential_defaults.load_failed')
     expect(button('save').disabled).toBe(true)
     expect(container.textContent).not.toContain('synthetic-private-token')
@@ -72,7 +74,7 @@ describe('PricingCredentialDefaultsCard', () => {
     let failing = true
     vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => String(url).endsWith('credential-subjects')
       ? response({ credentials: [subject] }) : failing ? response({ error: 'synthetic-private-token' }, status) : response(dto(0.4))))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     const key = status === 401 || status === 403 ? 'permission_denied' : status === 409 ? 'conflict' : 'load_failed'
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(`pricing_credential_defaults.${key}`)
@@ -96,12 +98,13 @@ describe('PricingCredentialDefaultsCard', () => {
       if (String(url).endsWith('credential-subjects')) return response({ credentials: [subject] })
       return init?.method === method ? response({ error: 'synthetic-private-token' }, Number(status)) : response(dto(0.3))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     await enter('0.2x')
     await act(async () => button(method === 'PUT' ? 'save' : 'clear').click())
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(`pricing_credential_defaults.${key}`)
     expect(container.textContent).not.toContain('synthetic-private-token')
+    expect(onChanged).not.toHaveBeenCalled()
     expect(container.textContent).not.toContain('pricing_credential_defaults.saved')
     expect(container.textContent).not.toContain('pricing_credential_defaults.cleared')
     if (key === 'permission_denied') {
@@ -122,7 +125,7 @@ describe('PricingCredentialDefaultsCard', () => {
       }
       return committed ? response({ error: 'synthetic-private-token' }, 500) : response(dto(0.3))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     await enter('20%')
     await act(async () => button(method === 'PUT' ? 'save' : 'clear').click())
@@ -131,7 +134,28 @@ describe('PricingCredentialDefaultsCard', () => {
     expect(container.textContent).toContain(`pricing_credential_defaults.${method === 'PUT' ? 'saved' : 'cleared'}`)
     expect(input().value).toBe(method === 'PUT' ? '0.2' : '')
     expect(method === 'PUT' ? container.querySelector('output')?.textContent : container.querySelector('output')).toBe(method === 'PUT' ? '0.2' : null)
+    expect(onChanged).toHaveBeenCalledOnce()
     if (method === 'DELETE') expect(container.textContent).toContain('pricing_credential_defaults.inherited')
+  })
+  it('notifies before readback settles and retains the notification if readback is canceled', async () => {
+    const pending = Promise.withResolvers<Response>()
+    let committed = false
+    let signal: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).endsWith('credential-subjects')) return response({ credentials: [subject] })
+      if (init?.method === 'PUT') { committed = true; return response(dto(.2)) }
+      if (committed) { signal = init?.signal as AbortSignal; return pending.promise }
+      return response(dto(.3))
+    }))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
+    await selectSubject(); await enter('20%')
+    expect(onChanged).not.toHaveBeenCalled()
+    await act(async () => button('save').click())
+    expect(onChanged).toHaveBeenCalledOnce()
+    await act(async () => root.render(null))
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { pending.resolve(response(dto(.2))); await pending.promise })
+    expect(onChanged).toHaveBeenCalledOnce()
   })
   it('uses the GET readback rather than calculating a local canonical value', async () => {
     let saved = false
@@ -143,10 +167,11 @@ describe('PricingCredentialDefaultsCard', () => {
       }
       return response(dto(saved ? 0.25 : null))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     await enter('20%')
     await act(async () => button('save').click())
+    expect(onChanged).toHaveBeenCalledOnce()
     expect(input().value).toBe('0.25')
     expect(container.querySelector('output')?.textContent).toBe('0.25')
   })
@@ -163,7 +188,7 @@ describe('PricingCredentialDefaultsCard', () => {
       }
       return response(dto(saved ? Number(canonical) : null))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     await enter(` ${text} `)
     await act(async () => button('save').click())
@@ -180,7 +205,7 @@ describe('PricingCredentialDefaultsCard', () => {
       return response({ ...dto(0.7), subject_id: second.subject_id })
     })
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await act(async () => container.querySelector<HTMLElement>('[role="combobox"]')!.click())
     const options = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'))
     expect(options).toHaveLength(2)
@@ -198,7 +223,7 @@ describe('PricingCredentialDefaultsCard', () => {
       return response(dto(Number(canonical)))
     })
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     expect(input().value).toBe(text)
     await act(async () => button('save').click())
@@ -217,24 +242,25 @@ describe('PricingCredentialDefaultsCard', () => {
       }
       return response(dto(0.3))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     await enter('0.9x')
     await act(async () => button('save').click())
     expect(button('save').disabled).toBe(true)
     expect(button('clear').disabled).toBe(true)
     expect(signal?.aborted).toBe(false)
-    await act(async () => root.render(<PricingCredentialDefaultsCard canManage={false} />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard canManage={false} onChanged={onChanged} />))
     expect(signal?.aborted).toBe(true)
     expect(container.textContent).toBe('')
     await act(async () => {
       pending.resolve(response(dto(0.9)))
       await pending.promise
     })
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     expect(container.querySelector('output')).toBeNull()
     expect(button('save').disabled).toBe(true)
     expect(input().value).toBe('')
+    expect(onChanged).not.toHaveBeenCalled()
     expect(container.textContent).not.toContain('pricing_credential_defaults.saved')
     await selectSubject()
     expect(container.querySelector('output')?.textContent).toBe('0.3')
@@ -250,7 +276,7 @@ describe('PricingCredentialDefaultsCard', () => {
       }
       return response(dto(0.3))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     if (method !== 'GET') {
       await enter('0.2x')
@@ -264,6 +290,7 @@ describe('PricingCredentialDefaultsCard', () => {
       pending.resolve(response(dto(0.2)))
       await pending.promise
     })
+    expect(onChanged).not.toHaveBeenCalled()
     expect(container.textContent).toBe('')
   })
   it('shows a safe network error without overwriting saved state', async () => {
@@ -272,7 +299,7 @@ describe('PricingCredentialDefaultsCard', () => {
       if (init?.method === 'PUT') throw new Error('synthetic-private-token')
       return response(dto(0.3))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     await enter('0.2x')
     await act(async () => button('save').click())
@@ -286,7 +313,7 @@ describe('PricingCredentialDefaultsCard', () => {
       if (init?.method === 'PUT') return response({ error: 'synthetic-private-token' }, status)
       return response(dto(0.3))
     }))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     await enter('9'.repeat(200))
     await act(async () => button('save').click())
@@ -312,7 +339,7 @@ describe('PricingCredentialDefaultsCard', () => {
       return response(dto(current))
     })
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     expect(input().value).toBe(String(initial))
     expect(container.querySelector('output')?.textContent).toBe(String(initial))
@@ -337,7 +364,7 @@ describe('PricingCredentialDefaultsCard', () => {
   it.each(['', '   ', '-1', '-0', '+1', 'NaN', 'Infinity', 'Inf', '1e3', '0x10', '20%x', '0.2x%', '0.2xx', '1 x', '1 .2', 'abc', '1,2', '.', '9'.repeat(310)])('rejects invalid text %j without changing the saved override', async value => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL) => String(url).endsWith('credential-subjects') ? response({ credentials: [subject] }) : response(dto(0.3)))
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     await enter(value)
     await act(async () => button('save').click())
@@ -345,6 +372,7 @@ describe('PricingCredentialDefaultsCard', () => {
     expect(container.textContent).toContain('pricing_credential_defaults.invalid_multiplier')
     expect(container.querySelector('output')?.textContent).toBe('0.3')
     expect(fetchMock.mock.calls).toHaveLength(2)
+    expect(onChanged).not.toHaveBeenCalled()
     expect(container.textContent).not.toContain('pricing_credential_defaults.saved')
   })
   it('selects a registered subject, saves text, reads the canonical value, and reloads it', async () => {
@@ -361,7 +389,7 @@ describe('PricingCredentialDefaultsCard', () => {
       return response(dto(saved ? 0.2 : null))
     })
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     expect(button('save').disabled).toBe(true)
     await selectSubject()
     expect(container.textContent).toContain('pricing_credential_defaults.inherited')
@@ -377,7 +405,7 @@ describe('PricingCredentialDefaultsCard', () => {
     expect(container.textContent).toContain('pricing_credential_defaults.replacement_warning')
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url) === defaultUrl && !init?.method)).toHaveLength(2)
     await act(async () => root.render(null))
-    await act(async () => root.render(<PricingCredentialDefaultsCard />))
+    await act(async () => root.render(<PricingCredentialDefaultsCard onChanged={onChanged} />))
     await selectSubject()
     expect(input().value).toBe('0.2')
   })

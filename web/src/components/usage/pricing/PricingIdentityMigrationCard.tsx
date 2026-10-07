@@ -10,7 +10,7 @@ import styles from './PricingIdentityMigrationCard.module.scss';
 
 type Confirmation = { action: 'migrate' | 'unbind' | 'rebind'; snapshotId: string; subjectId: string; targetId: string; ref: string; label: string };
 
-export function PricingIdentityMigrationCard({ canManage = true }: { canManage?: boolean }) {
+export function PricingIdentityMigrationCard({ canManage = true, onChanged }: { canManage?: boolean; onChanged?: () => void }) {
   const { t } = useTranslation();
   const [state, setState] = useState<PricingIdentityState | null>(null);
   const [subject, setSubject] = useState('');
@@ -24,6 +24,13 @@ export function PricingIdentityMigrationCard({ canManage = true }: { canManage?:
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const requestRef = useRef<AbortController | null>(null);
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+  const notifyChanged = () => {
+    // A parent refresh is fire-and-forget, not part of the committed mutation.
+    try { void Promise.resolve(onChangedRef.current?.()).catch(() => {}); }
+    catch { /* Refresh errors must not become mutation errors. */ }
+  };
   const resetSelection = useCallback(() => {
     setSubject(''); setDirectory(''); setBinding(''); setTarget(''); setPending(null);
   }, []);
@@ -90,6 +97,7 @@ export function PricingIdentityMigrationCard({ canManage = true }: { canManage?:
       // Preserve the actual committed receipt even if canonical GET fails. Old
       // snapshot-scoped selections must never remain actionable after a write.
       setSaved(result); resetSelection(); setState(null); setNotice('pricing_identity_migration.saved');
+      notifyChanged();
       try {
         const readback = await fetchPricingIdentityState(controller.signal);
         if (!controller.signal.aborted) setState(readback);

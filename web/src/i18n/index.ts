@@ -20,6 +20,15 @@ const getInitialLanguage = (): SupportedLanguage => {
 const resources = {
   en: {
     translation: {
+      cost_estimates: {
+        configured: 'Configured-price estimated cost', reference: 'Baseline reference cost', complete: 'Complete', partial: 'Partial · known subtotal', unavailable: 'Unavailable', known_zero: 'Known zero', not_provided: 'Not provided by this server',
+        explanation: 'Pricing explanation', history_warning: 'Current prices recalculate historical estimates; these are not frozen invoices. USD; rates are per 1 million tokens.', replacement_warning: 'This override replaces ALL legacy model multipliers and matching rules; they are not multiplied on top.',
+        scope: 'Scope', subject: 'Credential', channel: 'Channel', selected_model: 'Selected model / alias', baseline_model: 'Baseline model / alias', model: 'Request model', model_alias: 'Model alias', mode: 'Mode', multiplier: 'Multiplier', style: 'Pricing style', snapshot: 'Pricing snapshot', legacy_model_multiplier: 'Legacy model multiplier', legacy_rule_multiplier: 'Legacy rule multiplier', final_multiplier: 'Final multiplier', matched_rules: 'Safe matched rules',
+        snapshot_mismatch: 'Pricing snapshots differ. Refresh all related costs before comparing them.', refresh: 'Refresh all costs', load_failed: 'Unable to load current costs. Please refresh.',
+        prompt_price_per_1m: 'Ordinary input rate / 1M', completion_price_per_1m: 'Output rate / 1M', cache_read_price_per_1m: 'Cache read rate / 1M', cache_write_price_per_1m: 'Cache write rate / 1M', uncached_input_cost_usd: 'Uncached input cost', output_cost_usd: 'Output cost', cache_read_cost_usd: 'Cache read cost', cache_write_cost_usd: 'Cache write cost',
+        scopes: { credential_model: 'Credential model', credential_default: 'Credential default', channel_model: 'Channel model', channel_default: 'Channel default', legacy: 'Legacy pricing' }, modes: { multiplier: 'Multiplier', fixed: 'Fixed four rates', legacy: 'Legacy pricing' },
+        reasons: { missing_baseline: 'Baseline price is missing', reference_overflow: 'Baseline reference exceeds the supported range', retained_evidence_incomplete: 'Retained pricing evidence is incomplete', missing_price: 'Configured price is missing', unknown_identity: 'Upstream identity is unknown', unresolved_identity: 'Upstream identity could not be resolved', unbound_channel: 'Credential is not bound to a channel' },
+      },
       pricing_identity_migration: {
         title: 'Identity migration and correction', scope_help: 'Associate exact observed upstream identities with saved Keeper subjects. Names, endpoints, provider types and directory positions never merge accounts automatically.',
         refresh: 'Refresh associations', subject: 'Select the saved subject to preserve', directory: 'Select the new current identity', target: 'Select the correction target subject', binding: 'Select a saved identity association', owner: 'Saved owner', receipt: 'Committed association',
@@ -1058,6 +1067,15 @@ const resources = {
   },
   zh: {
     translation: {
+      cost_estimates: {
+        configured: '配置价估算费用', reference: '基准参考费用', complete: '完整', partial: '部分可用 · 已知小计', unavailable: '不可用', known_zero: '已知为零', not_provided: '服务器未提供此信息',
+        explanation: '计价说明', history_warning: '当前价格会重新计算历史估算；这不是冻结账单。币种为 USD；费率按每百万 Token 计。', replacement_warning: '此覆盖会替换全部旧模型倍率和命中规则，而非与旧调整叠乘。',
+        scope: '作用域', subject: '凭证', channel: '渠道', selected_model: '选中模型 / 别名', baseline_model: '基准模型 / 别名', model: '请求模型', model_alias: '模型别名', mode: '模式', multiplier: '倍率', style: '计价风格', snapshot: '计价快照', legacy_model_multiplier: '旧模型倍率', legacy_rule_multiplier: '旧规则倍率', final_multiplier: '最终倍率', matched_rules: '安全的命中规则',
+        snapshot_mismatch: '计价快照不一致。请刷新全部相关费用后再比较。', refresh: '刷新全部费用', load_failed: '无法加载当前费用，请刷新重试。',
+        prompt_price_per_1m: '普通输入费率 / 百万', completion_price_per_1m: '输出费率 / 百万', cache_read_price_per_1m: '缓存读取费率 / 百万', cache_write_price_per_1m: '缓存写入费率 / 百万', uncached_input_cost_usd: '未缓存输入费用', output_cost_usd: '输出费用', cache_read_cost_usd: '缓存读取费用', cache_write_cost_usd: '缓存写入费用',
+        scopes: { credential_model: '凭证模型', credential_default: '凭证默认', channel_model: '渠道模型', channel_default: '渠道默认', legacy: '旧计价' }, modes: { multiplier: '倍率', fixed: '固定四项费率', legacy: '旧计价' },
+        reasons: { missing_baseline: '缺少基准价格', reference_overflow: '基准参考费用超出支持范围', retained_evidence_incomplete: '保留的计价证据不完整', missing_price: '缺少配置价格', unknown_identity: '上游身份未知', unresolved_identity: '无法解析上游身份', unbound_channel: '凭证未绑定渠道' },
+      },
       pricing_identity_migration: {
         title: '身份迁移与纠错', scope_help: '将精确的上游观测身份关联至已保存的 Keeper 主体。名称、端点、provider 类型和目录位置都不会自动合并账号。',
         refresh: '刷新关联', subject: '选择要保留的已保存主体', directory: '选择新的当前身份', target: '选择纠错目标主体', binding: '选择已保存的身份关联', owner: '已保存归属', receipt: '已提交的关联',
@@ -2096,6 +2114,15 @@ const resources = {
   },
   'zh-TW': {
     translation: {
+      cost_estimates: {
+        configured: '配置價估算費用', reference: '基準參考費用', complete: '完整', partial: '部分可用 · 已知小計', unavailable: '不可用', known_zero: '已知為零', not_provided: '伺服器未提供此資訊',
+        explanation: '計價說明', history_warning: '目前價格會重新計算歷史估算；這不是凍結帳單。幣別為 USD；費率按每百萬 Token 計。', replacement_warning: '此覆寫會取代全部舊模型倍率和命中規則，而非與舊調整疊乘。',
+        scope: '作用域', subject: '憑證', channel: '渠道', selected_model: '選中模型 / 別名', baseline_model: '基準模型 / 別名', model: '請求模型', model_alias: '模型別名', mode: '模式', multiplier: '倍率', style: '計價風格', snapshot: '計價快照', legacy_model_multiplier: '舊模型倍率', legacy_rule_multiplier: '舊規則倍率', final_multiplier: '最終倍率', matched_rules: '安全的命中規則',
+        snapshot_mismatch: '計價快照不一致。請重新整理全部相關費用後再比較。', refresh: '重新整理全部費用', load_failed: '無法載入目前費用，請重新整理重試。',
+        prompt_price_per_1m: '普通輸入費率 / 百萬', completion_price_per_1m: '輸出費率 / 百萬', cache_read_price_per_1m: '快取讀取費率 / 百萬', cache_write_price_per_1m: '快取寫入費率 / 百萬', uncached_input_cost_usd: '未快取輸入費用', output_cost_usd: '輸出費用', cache_read_cost_usd: '快取讀取費用', cache_write_cost_usd: '快取寫入費用',
+        scopes: { credential_model: '憑證模型', credential_default: '憑證預設', channel_model: '渠道模型', channel_default: '渠道預設', legacy: '舊計價' }, modes: { multiplier: '倍率', fixed: '固定四項費率', legacy: '舊計價' },
+        reasons: { missing_baseline: '缺少基準價格', reference_overflow: '基準參考費用超出支援範圍', retained_evidence_incomplete: '保留的計價證據不完整', missing_price: '缺少配置價格', unknown_identity: '上游身分未知', unresolved_identity: '無法解析上游身分', unbound_channel: '憑證未綁定渠道' },
+      },
       pricing_identity_migration: {
         title: '身分遷移與更正', scope_help: '將精確的上游觀測身分關聯至已儲存的 Keeper 主體。名稱、端點、provider 類型和目錄位置都不會自動合併帳號。',
         refresh: '重新整理關聯', subject: '選擇要保留的已儲存主體', directory: '選擇新的目前身分', target: '選擇更正目標主體', binding: '選擇已儲存的身分關聯', owner: '已儲存歸屬', receipt: '已提交的關聯',

@@ -20,6 +20,7 @@ import { sparklineOptions } from '@/utils/usage/chartConfig';
 import type { UsageOverviewPayload, UsagePayload } from './hooks/useUsageData';
 import type { SparklineBundle } from './hooks/useSparklines';
 import { buildDailyAverageMetrics, DailyAverageCard } from './DailyAverageCard';
+import { DualCostsDisplay } from './DualCosts';
 import styles from '@/pages/UsagePage.module.scss';
 
 interface StatCardData {
@@ -257,7 +258,7 @@ export function StatCards({
             {t('usage_stats.total_tokens')}:{' '}
             {loading ? '-' : formatCompactNumber(usageSnapshot?.total_tokens ?? 0)}
           </span>
-          {!costAvailable && (
+          {!usage?.summary?.dual_costs && !costAvailable && (
             <span className={`${styles.statMetaItem} ${styles.statSubtle}`}>
               {t('usage_stats.cost_need_price')}
             </span>
@@ -288,7 +289,7 @@ export function StatCards({
         </div>
         <span className={styles.statIconBadge}>{card.icon}</span>
       </div>
-      <div className={styles.statValue}>{card.value}</div>
+      {card.key === 'cost' && !loading ? <DualCostsDisplay costs={usage?.summary?.dual_costs} configuredFallback={totalCost} valueClassName={styles.statValue} /> : <div className={styles.statValue}>{card.value}</div>}
       {card.meta && <div className={styles.statMetaRow}>{card.meta}</div>}
       <div className={styles.statTrend}>
         {card.trend ? (

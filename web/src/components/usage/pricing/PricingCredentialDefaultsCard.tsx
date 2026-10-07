@@ -8,7 +8,7 @@ import { ApiError, clearPricingCredentialDefault, fetchCredentialPricingSubjects
 import type { PricingCredential, PricingCredentialDefault } from '@/lib/types';
 import styles from './PricingCredentialDefaultsCard.module.scss';
 
-export function PricingCredentialDefaultsCard({ canManage = true }: { canManage?: boolean }) {
+export function PricingCredentialDefaultsCard({ canManage = true, onChanged }: { canManage?: boolean; onChanged?: () => void }) {
   const { t } = useTranslation();
   const [subjects, setSubjects] = useState<PricingCredential[]>([]);
   const [selected, setSelected] = useState('');
@@ -20,6 +20,13 @@ export function PricingCredentialDefaultsCard({ canManage = true }: { canManage?
   const [fieldError, setFieldError] = useState('');
   const [notice, setNotice] = useState('');
   const requestRef = useRef<AbortController | null>(null);
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+  const notifyChanged = () => {
+    // A parent refresh is fire-and-forget, not part of the committed mutation.
+    try { void Promise.resolve(onChangedRef.current?.()).catch(() => {}); }
+    catch { /* Refresh errors must not become mutation errors. */ }
+  };
 
   const beginRequest = () => {
     requestRef.current?.abort();
@@ -126,6 +133,7 @@ export function PricingCredentialDefaultsCard({ canManage = true }: { canManage?
       // Retain the committed canonical value even if the subsequent GET fails.
       applyConfig(saved);
       setNotice(clear ? 'pricing_credential_defaults.cleared' : 'pricing_credential_defaults.saved');
+      notifyChanged();
       try {
         const readback = await fetchPricingCredentialDefault(selected, controller.signal);
         if (!controller.signal.aborted) applyConfig(readback);

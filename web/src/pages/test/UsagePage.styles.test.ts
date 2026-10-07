@@ -37,10 +37,17 @@ const relativeLuminance = (hex: string) => {
 }
 
 describe('UsagePage responsive layout and accessibility', () => {
+  it('wraps both long cost labels, independent reasons and expandable safe pricing evidence on mobile', () => {
+    const styles = readSource(new URL('../../components/usage/DualCosts.module.scss', import.meta.url));
+    expect(styles).toMatch(/\.costs\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/);
+    expect(styles).toMatch(/\.explanation\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/);
+    expect(styles).toContain('@media (max-width: 600px)');
+    expect(styles).toContain('white-space: normal; overflow: visible; overflow-wrap: anywhere;');
+  });
   it('mounts separate identity migration/correction with safe wrapping and mobile actions', () => {
     const card = readSource(new URL('../../components/usage/pricing/PricingIdentityMigrationCard.tsx', import.meta.url))
     const styles = readSource(new URL('../../components/usage/pricing/PricingIdentityMigrationCard.module.scss', import.meta.url))
-    expect(readSource(new URL('../UsagePage.tsx', import.meta.url))).toContain('<PricingIdentityMigrationCard />')
+    expect(readSource(new URL('../UsagePage.tsx', import.meta.url))).toContain('<PricingIdentityMigrationCard onChanged={handlePricingChanged} />')
     expect(card).toContain('pricing_identity_migration.migrate_title')
     expect(card).toContain('pricing_identity_migration.correction_title')
     expect(styles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
@@ -53,7 +60,7 @@ describe('UsagePage responsive layout and accessibility', () => {
   it('mounts model exceptions as a distinct card reusing narrow-screen wrapping styles', () => {
     const card = readSource(new URL('../../components/usage/pricing/PricingCredentialModelsCard.tsx', import.meta.url))
     const page = readSource(new URL('../UsagePage.tsx', import.meta.url))
-    expect(page).toContain('<PricingCredentialModelsCard />')
+    expect(page).toContain('<PricingCredentialModelsCard onChanged={handlePricingChanged} />')
     expect(card).toContain("import styles from './PricingCredentialDefaultsCard.module.scss'")
     expect(card).toContain('dropdownClassName={styles.options}')
     expect(card).toContain('className={styles.readback}')
@@ -66,7 +73,7 @@ describe('UsagePage responsive layout and accessibility', () => {
     const app = readSource(new URL('../../App.tsx', import.meta.url))
     const settingsStart = page.indexOf("{activeTab === 'settings' && (\n              <div className={styles.settingsSections}>")
     expect(settingsStart).toBeGreaterThan(0)
-    expect(page.indexOf('<PricingChannelModelsCard />')).toBeGreaterThan(settingsStart)
+    expect(page.indexOf('<PricingChannelModelsCard onChanged={handlePricingChanged} />')).toBeGreaterThan(settingsStart)
     expect(app).toMatch(/else if \(authRole === 'api_key_viewer'\)[\s\S]*KeyOverviewPage[\s\S]*else\s*\{\s*page = <UsagePage/)
     expect(card).toContain("import styles from './PricingCredentialDefaultsCard.module.scss'")
     expect(card).toContain('dropdownClassName={styles.options}')

@@ -80,7 +80,55 @@ export interface UsageOverviewUsageSnapshot {
   total_tokens: number
 }
 
+// Additive authoritative estimates. Older servers may omit these fields; clients must not infer a reference.
+export interface PriceEstimate {
+  total_cost_usd: number | null
+  uncached_input_cost_usd: number
+  output_cost_usd: number
+  cache_read_cost_usd: number
+  cache_write_cost_usd: number
+  complete: boolean
+  has_known: boolean
+  status: 'complete' | 'partial' | 'unavailable'
+  unavailable_reason?: string
+}
+
+export interface DualCosts {
+  configured: PriceEstimate
+  reference: PriceEstimate
+}
+
+export interface PricingSelection {
+  snapshot_id: string
+  scope: string
+  mode: string
+  subject_id?: string
+  subject_name?: string
+  channel_id?: string
+  channel_name?: string
+  selected_model?: string
+  selected_by?: string
+  baseline_model?: string
+  baseline_by?: string
+  multiplier?: number
+  fixed?: PricingCredentialFixed
+  pricing_style?: PricingStyle
+  unavailable_reason?: string
+  baseline_unavailable_reason?: string
+  attribution_warning?: string
+  legacy?: boolean
+  legacy_adjustments_replaced?: boolean
+  legacy_model_multiplier?: number
+  legacy_rule_multiplier?: number
+  final_multiplier?: number
+  matched_rules?: Array<{ key: string; multiplier: number }>
+  dual_costs?: DualCosts
+}
+
 export interface UsageOverviewSummary {
+  dual_costs?: DualCosts
+  daily_average_dual_costs?: DualCosts
+  pricing_snapshot_id?: string
   rpm: number
   tpm: number
   total_cost: number
@@ -96,6 +144,7 @@ export interface UsageOverviewSummary {
 }
 
 export interface UsageOverviewSeries {
+  dual_costs?: DualCosts[]
   buckets: string[]
   requests: number[]
   tokens: number[]
@@ -145,6 +194,7 @@ export interface UsageActivityResponse {
 export type OverviewRealtimeWindow = '15m' | '30m' | '60m'
 
 export interface RealtimeTokenVelocityPoint {
+  dual_costs?: DualCosts
   bucket: string
   tokens_per_minute: number
   tokens: number
@@ -161,6 +211,7 @@ export interface RealtimeLatencyScatter {
 }
 
 export interface RealtimeUsageTopItem {
+  dual_costs?: DualCosts
   key: string
   label: string
   tokens: number
@@ -191,6 +242,7 @@ export interface RealtimeCacheLevelPoint {
 }
 
 export interface RealtimeWindowSummary {
+  dual_costs?: DualCosts
   requests: number
   failures: number
   token_requests: number
@@ -210,6 +262,7 @@ export interface RealtimeInsights {
 }
 
 export interface OverviewRealtimeBlock {
+  pricing_snapshot_id?: string
   insights?: RealtimeInsights
   window: OverviewRealtimeWindow
   timezone?: string
@@ -224,6 +277,7 @@ export interface OverviewRealtimeBlock {
 }
 
 export interface UsageComparisonItem {
+  dual_costs?: DualCosts
   token_series?: number[]
   key: string
   label: string
@@ -251,6 +305,7 @@ export interface UsageOverviewComparisons {
 }
 
 export interface UsageOverviewResponse {
+  pricing_snapshot_id?: string
   comparisons?: UsageOverviewComparisons
   usage: UsageOverviewUsageSnapshot
   summary?: UsageOverviewSummary
@@ -268,6 +323,8 @@ export interface UsageEventTokens {
 }
 
 export interface UsageEvent {
+  dual_costs?: DualCosts
+  pricing_selection?: PricingSelection
   id?: string
   request_id?: string
   timestamp: string
@@ -311,6 +368,7 @@ export interface UsageSourceFilterOption {
 }
 
 export interface UsageEventsResponse {
+  pricing_snapshot_id?: string
   events: UsageEvent[]
   total_count: number
   page: number
@@ -685,6 +743,7 @@ export interface UsageQuotaRefreshResponse {
 }
 
 export interface AnalysisTokenUsageBucket {
+  dual_costs?: DualCosts
 	bucket: string
 	input_tokens: number
 	output_tokens: number
@@ -709,6 +768,7 @@ export interface AnalysisModelUsagePayload {
 }
 
 export interface AnalysisCompositionItem {
+  dual_costs?: DualCosts
   key: string
   label: string
   total_tokens: number
@@ -724,6 +784,7 @@ export interface AnalysisCompositionItem {
 }
 
 export interface AnalysisHeatmapCell {
+  dual_costs?: DualCosts
   api_key: string
   model: string
 	input_tokens: number
@@ -739,6 +800,8 @@ export interface AnalysisHeatmapCell {
 }
 
 export interface AnalysisHeatmapPayload {
+  row_dual_costs?: Record<string, DualCosts>
+  column_dual_costs?: Record<string, DualCosts>
   api_keys: string[]
   api_key_labels: Record<string, string>
   models: string[]
@@ -746,6 +809,8 @@ export interface AnalysisHeatmapPayload {
 }
 
 export interface AnalysisCostBreakdown {
+  pricing_snapshot_id?: string
+  dual_costs?: DualCosts
 	uncached_input_cost_usd: number
 	cache_read_cost_usd: number
 	cache_write_cost_usd: number
@@ -755,6 +820,7 @@ export interface AnalysisCostBreakdown {
 }
 
 export interface AnalysisModelEfficiencyItem {
+  dual_costs?: DualCosts
   model: string
   requests: number
 	input_tokens: number
@@ -798,6 +864,7 @@ export interface AnalysisLatencyDiagnostics {
 }
 
 export interface AnalysisResponse {
+  pricing_snapshot_id?: string
   granularity: 'hourly' | 'daily'
   timezone: string
   range_start?: string

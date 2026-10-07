@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RealtimeUsageTopItem } from '@/lib/types';
-import { formatCompactNumber, formatFixedTwoDecimals, formatUsd } from '@/utils/usage';
+import { formatCompactNumber, formatFixedTwoDecimals } from '@/utils/usage';
+import { DualCostsDisplay } from './DualCosts';
 import styles from '@/pages/UsagePage.module.scss';
 
 const COLORS = ['#4d8bdc', '#269c85', '#9671ce', '#d99637', '#d1698c', '#a5b0c0'];
@@ -124,7 +125,7 @@ export function RealtimeTokenShareRibbons({ items, loading }: { items: readonly 
               <div className={`${styles.overviewRealtimeUsageMeta} ${styles.overviewRealtimeRibbonMeta}`}>
                 <MetaPill label={t('usage_stats.overview_realtime_tokens_label')} value={formatCompactNumber(item.tokens)} />
                 <MetaPill label={t('usage_stats.overview_realtime_requests_label')} value={item.requests.toLocaleString()} />
-                <MetaPill label={t('usage_stats.overview_realtime_cost_label')} value={item.cost == null ? '—' : formatUsd(item.cost)} />
+                <DualCostsDisplay costs={item.dual_costs} configuredFallback={item.cost} />
               </div>
             </div>
           );

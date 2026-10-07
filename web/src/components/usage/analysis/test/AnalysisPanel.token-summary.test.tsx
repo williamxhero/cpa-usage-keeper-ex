@@ -69,8 +69,8 @@ describe('AnalysisPanel token chart summary', () => {
     expect(summary.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect([...summary.children].map((metric) => metric.textContent)).toEqual([
       'usage_stats.total_tokens3.00M',
-      'usage_stats.total_cost$6.00',
-      'usage_stats.analysis_cost_per_million_tokens$2.00',
+      'usage_stats.total_costcost_estimates.configured$6.00cost_estimates.not_providedcost_estimates.reference—cost_estimates.not_provided',
+      'cost_estimates.configured · usage_stats.analysis_cost_per_million_tokens$2.00',
     ]);
     expect([...container.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual([
       'usage_stats.analysis_token_usage_title',
@@ -89,7 +89,7 @@ describe('AnalysisPanel token chart summary', () => {
     const tokenCard = container.querySelector('section')!;
     expect(tokenCard.textContent).toContain('usage_stats.cost_need_price');
     const values = [...tokenCard.querySelectorAll('[class*="analysisSummary"] dd')].map((value) => value.textContent);
-    expect(values).toEqual(['0', '$6.00', '$0.0000']);
+    expect(values).toEqual(['0', 'cost_estimates.configured$6.00cost_estimates.not_providedcost_estimates.reference—cost_estimates.not_provided', '$0.0000']);
     expect(tokenCard.textContent).not.toMatch(/NaN|Infinity/);
   });
 });

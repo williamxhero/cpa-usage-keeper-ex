@@ -5,7 +5,8 @@ import { Chart, Doughnut } from 'react-chartjs-2';
 import { Chart as ChartJS, type ChartData, type ChartOptions, type Plugin } from 'chart.js';
 import type { RealtimeCacheLevelPoint, RealtimeInsights, RealtimeWindowSummary } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
-import { formatCompactNumber, formatUsd } from '@/utils/usage';
+import { formatCompactNumber } from '@/utils/usage';
+import { DualCostsDisplay } from './DualCosts';
 import { buildUsageChartTooltipStyle, getUsageChartTheme, toUsageChartGradientFill, USAGE_CHART_REALTIME_COLORS as REALTIME_COLORS, USAGE_CHART_TOKEN_COLORS as COLORS } from '@/utils/usage/chartConfig';
 import usageStyles from '@/pages/UsagePage.module.scss';
 import styles from './RealtimeInsights.module.scss';
@@ -82,12 +83,12 @@ export function RealtimeWindowCards({ summary: s, window }: { summary: RealtimeW
     { label: 'requests', value: s.requests.toLocaleString(), color: COLORS.input.base },
     { label: 'tokens', value: formatCompactNumber(s.total_tokens), color: COLORS.reasoning.base },
     { label: 'cache_reach', value: percent(ratio(s.cached_requests, s.token_requests), 2), color: COLORS.cacheRead.base },
-    { label: 'cost', value: s.cost === null ? '—' : formatUsd(s.cost), color: COLORS.output.base },
+    { label: 'cost', value: <DualCostsDisplay costs={s.dual_costs} configuredFallback={s.cost} />, color: COLORS.output.base },
   ];
   return <div className={styles.summaryGrid} data-realtime-summary>
     {cards.map(card => <div key={card.label} className={`${usageStyles.statCard} ${styles.summaryCard}`} style={{'--accent':card.color, '--accent-soft':`${card.color}18`, '--accent-border':`${card.color}55`} as CSSProperties}>
       <div className={styles.summaryLabel}><span>{t(`usage_stats.insights_${card.label}`)}</span><span className={styles.window}>{window}</span></div>
-      <strong>{card.value}</strong>
+      {card.label === 'cost' ? card.value : <strong>{card.value}</strong>}
     </div>)}
   </div>;
 }

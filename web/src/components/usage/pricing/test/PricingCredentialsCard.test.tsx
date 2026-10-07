@@ -11,6 +11,7 @@ const response = (body: unknown, status = 200) => new Response(JSON.stringify(bo
 
 describe('PricingCredentialsCard', () => {
   let root: Root
+  const onChanged = vi.fn()
   let container: HTMLDivElement
   const button = (key: string) => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(item => item.textContent === `pricing_credentials.${key}`)!
   const selectCredential = async () => {
@@ -19,6 +20,7 @@ describe('PricingCredentialsCard', () => {
     await act(async () => option.click())
   }
   beforeEach(() => {
+    onChanged.mockReset()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -31,13 +33,13 @@ describe('PricingCredentialsCard', () => {
   it('does not expose or fetch the directory for read-only users', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => root.render(<PricingCredentialsCard canManage={false} />))
+    await act(async () => root.render(<PricingCredentialsCard canManage={false} onChanged={onChanged} />))
     expect(container.textContent).toBe('')
     expect(fetchMock).not.toHaveBeenCalled()
   })
   it('handles denied directory reads without exposing response secrets or controls', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response({ error: 'synthetic-private-token' }, 403)))
-    await act(async () => root.render(<PricingCredentialsCard />))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('pricing_credentials.permission_denied')
     expect(container.querySelector('[role="combobox"]')).toBeNull()
     expect(container.textContent).not.toContain('synthetic-private-token')
@@ -45,7 +47,7 @@ describe('PricingCredentialsCard', () => {
   it('shows a safe load failure and can retry through refresh', async () => {
     let failing = true
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => failing ? response({ error: 'synthetic-private-token' }, 500) : response({ credentials: String(input).endsWith('credential-subjects') ? [] : [credential] })))
-    await act(async () => root.render(<PricingCredentialsCard />))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('pricing_credentials.load_failed')
     expect(container.textContent).not.toContain('synthetic-private-token')
     expect(button('register').disabled).toBe(true)
@@ -64,12 +66,13 @@ describe('PricingCredentialsCard', () => {
       ? response({ error: 'synthetic-private-token' }, status)
       : response({ credentials: String(input).endsWith('credential-subjects') ? [] : [credential] }))
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => root.render(<PricingCredentialsCard />))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
     await selectCredential()
     await act(async () => button('register').click())
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(`pricing_credentials.${errorKey}`)
     expect(container.textContent).not.toContain('synthetic-private-token')
     expect(container.querySelector('code')).toBeNull()
+    expect(onChanged).not.toHaveBeenCalled()
     expect(container.textContent).not.toContain('pricing_credentials.saved')
     if (status === 403) expect(container.querySelector('[role="combobox"]')).toBeNull()
     else {
@@ -88,9 +91,10 @@ describe('PricingCredentialsCard', () => {
       if (saved) return response({ error: 'synthetic-private-token' }, 500)
       return response({ credentials: String(input).endsWith('credential-subjects') ? [] : [credential] })
     }))
-    await act(async () => root.render(<PricingCredentialsCard />))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
     await selectCredential()
     await act(async () => button('register').click())
+    expect(onChanged).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('cred_committed')
     expect(container.textContent).toContain('pricing_credentials.saved')
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('pricing_credentials.load_failed')
@@ -98,6 +102,48 @@ describe('PricingCredentialsCard', () => {
     await act(async () => container.querySelector<HTMLButtonElement>('[role="combobox"]')!.click())
     expect(document.body.querySelector('[role="option"]')?.getAttribute('aria-disabled')).toBe('true')
     expect(button('register').disabled).toBe(true)
+  })
+  it.each(['mutation', 'readback'])('notifies only for a commit received before %s cancellation', async phase => {
+    const pending = Promise.withResolvers<Response>()
+    const saved = { ...credential, subject_id: 'cred_committed', binding_status: 'bound' }
+    let committed = false
+    let signal: AbortSignal | undefined
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        if (phase === 'mutation') { signal = init.signal as AbortSignal; return pending.promise }
+        committed = true; return response(saved)
+      }
+      if (committed) { signal = init?.signal as AbortSignal; return pending.promise.then(result => result.clone()) }
+      return response({ credentials: String(url).endsWith('credential-subjects') ? [] : [credential] })
+    }))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
+    await selectCredential()
+    expect(onChanged).not.toHaveBeenCalled()
+    await act(async () => button('register').click())
+    expect(onChanged).toHaveBeenCalledTimes(phase === 'readback' ? 1 : 0)
+    await act(async () => root.render(null))
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { pending.resolve(response(phase === 'mutation' ? saved : { credentials: [saved] })); await pending.promise })
+    expect(onChanged).toHaveBeenCalledTimes(phase === 'readback' ? 1 : 0)
+  })
+  it.each(['throw', 'reject', 'pending'])('does not treat callback %s as a failed registration or wait for refresh', async mode => {
+    let committed = false
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const saved = { ...credential, subject_id: 'cred_committed', binding_status: 'bound' }
+      if (init?.method === 'POST') { committed = true; return response(saved) }
+      return response({ credentials: String(url).endsWith('credential-subjects') ? (committed ? [saved] : []) : [committed ? saved : credential] })
+    }))
+    onChanged.mockImplementation(() => {
+      if (mode === 'throw') throw new Error('refresh failed')
+      return mode === 'reject' ? Promise.reject(new Error('refresh failed')) : new Promise<void>(() => {})
+    })
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
+    await selectCredential()
+    await act(async () => button('register').click())
+    expect(onChanged).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.textContent).toContain('pricing_credentials.saved')
+    expect(container.textContent).toContain('cred_committed')
   })
   it('aborts the current refresh when unmounted', async () => {
     const signals: AbortSignal[] = []
@@ -109,7 +155,7 @@ describe('PricingCredentialsCard', () => {
       }
       return response({ credentials: [] })
     }))
-    await act(async () => root.render(<PricingCredentialsCard />))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
     refreshing = true
     const refresh = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(item => item.textContent === 'pricing_credentials.refresh')!
     await act(async () => refresh.click())
@@ -132,7 +178,7 @@ describe('PricingCredentialsCard', () => {
       return response({ credentials: url.endsWith('credential-subjects') ? (saved ? [{ ...credential, subject_id: 'cred_synthetic', binding_status: 'bound' }] : []) : [{ ...credential, ...(saved ? { subject_id: 'cred_synthetic', binding_status: 'bound' } : {}) }] })
     })
     vi.stubGlobal('fetch', fetchMock)
-    await act(async () => { root.render(<PricingCredentialsCard />) })
+    await act(async () => { root.render(<PricingCredentialsCard onChanged={onChanged} />) })
     const selector = container.querySelector<HTMLButtonElement>('[role="combobox"]')!
     expect(selector).not.toBeNull()
     await act(async () => selector.click())
@@ -142,6 +188,7 @@ describe('PricingCredentialsCard', () => {
     const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(item => item.textContent === 'pricing_credentials.register')!
     expect(save.disabled).toBe(false)
     await act(async () => save.click())
+    expect(onChanged).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('cred_synthetic')
     expect(container.textContent).toContain('Selected account')
     expect(save.disabled).toBe(true)
