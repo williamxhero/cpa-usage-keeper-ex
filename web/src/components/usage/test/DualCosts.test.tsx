@@ -62,6 +62,41 @@ describe('authoritative dual cost display', () => {
     expect(container.textContent).toContain('cost_estimates.reasons.retained_evidence_incomplete');
     expect(container.textContent).toContain('cost_estimates.reasons.missing_baseline');
   });
+  it.each([
+    { reason: 'retained_pricing_evidence_incomplete', amount: 2 },
+    { reason: 'retained_pricing_evidence_incomplete', amount: null },
+    { reason: 'retained_evidence_incomplete', amount: 2 },
+    { reason: 'retained_evidence_incomplete', amount: null },
+  ])('localizes configured historical proof loss $reason with subtotal $amount across the API and explanation', async ({ reason, amount }) => {
+    const status = amount === null ? 'unavailable' : 'partial';
+    const costs: DualCosts = { configured: { ...estimate(amount, status), unavailable_reason: reason }, reference: { ...estimate(null), unavailable_reason: 'missing_baseline' } };
+    const selection: PricingSelection = { snapshot_id: 'a', scope: 'legacy', mode: 'legacy', unavailable_reason: reason, baseline_unavailable_reason: 'missing_baseline', dual_costs: costs };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ events: [{ dual_costs: costs, pricing_selection: selection }], total_count: 1, page: 1, page_size: 50, total_pages: 1 }))));
+    const response = await fetchUsageEvents({ range: '24h' });
+    act(() => root.render(<><DualCostsDisplay costs={response.events[0].dual_costs} /><PricingExplanation selection={response.events[0].pricing_selection} /></>));
+    for (const group of container.querySelectorAll('[data-cost-estimate="configured"]')) {
+      expect(group.textContent).toContain('cost_estimates.reasons.retained_evidence_incomplete');
+      expect(group.textContent).toContain(`cost_estimates.${status}`);
+      expect(group.querySelector('strong')?.textContent).toBe(amount === null ? '—' : '$2.00');
+    }
+    for (const group of container.querySelectorAll('[data-cost-estimate="reference"]')) {
+      expect(group.textContent).toContain('cost_estimates.reasons.missing_baseline');
+      expect(group.querySelector('strong')?.textContent).toBe('—');
+    }
+    const explanationReasons = Array.from(container.querySelectorAll('details > p')).map(node => node.textContent);
+    expect(explanationReasons).toContain('cost_estimates.reasons.retained_evidence_incomplete');
+    expect(explanationReasons).toContain('cost_estimates.reasons.missing_baseline');
+    expect(container.textContent).not.toContain('retained_pricing_evidence_incomplete');
+    expect(container.textContent).not.toContain('cost_estimates.known_zero');
+  });
+  it('localizes the backend proof-loss alias independently in the reference lane and baseline explanation reason', () => {
+    const costs: DualCosts = { configured: estimate(3), reference: { ...estimate(null), unavailable_reason: 'retained_pricing_evidence_incomplete' } };
+    act(() => root.render(<PricingExplanation selection={{ snapshot_id: 'a', scope: 'legacy', mode: 'legacy', baseline_unavailable_reason: 'retained_pricing_evidence_incomplete', dual_costs: costs }} />));
+    expect(container.querySelector('[data-cost-estimate="configured"]')?.textContent).toContain('$3.00');
+    expect(container.querySelector('[data-cost-estimate="reference"]')?.textContent).toContain('cost_estimates.reasons.retained_evidence_incomplete');
+    expect(Array.from(container.querySelectorAll('details > p')).map(node => node.textContent)).toContain('cost_estimates.reasons.retained_evidence_incomplete');
+    expect(container.textContent).not.toContain('retained_pricing_evidence_incomplete');
+  });
   it('never fabricates a baseline or completeness on an older server', () => {
     act(() => root.render(<DualCostsDisplay configuredFallback={2} />));
     expect(container.textContent).toContain('$2.00');
@@ -86,8 +121,10 @@ describe('authoritative dual cost display', () => {
     expect(container.querySelector('details')?.open).toBe(true);
   });
   it('does not render arbitrary reason, scope, style, or matched-rule condition values', () => {
-    const selection = { snapshot_id: 'safe', scope: 'SECRET_SCOPE', mode: 'SECRET_MODE', pricing_style: 'SECRET_STYLE', unavailable_reason: 'SECRET_REASON', matched_rules: [{ key: 'rule', multiplier: 2, condition: 'SECRET_CONDITION' }], dual_costs: { configured: { ...estimate(null), unavailable_reason: 'SECRET_REASON' }, reference: estimate(null) } } as unknown as PricingSelection;
+    const selection = { snapshot_id: 'safe', scope: 'SECRET_SCOPE', mode: 'SECRET_MODE', pricing_style: 'SECRET_STYLE', unavailable_reason: 'SECRET_REASON', baseline_unavailable_reason: 'SECRET_REFERENCE_REASON', attribution_warning: 'SECRET_ATTRIBUTION', matched_rules: [{ key: 'rule', multiplier: 2, condition: 'SECRET_CONDITION' }], dual_costs: { configured: { ...estimate(null), unavailable_reason: 'retained_pricing_evidence_incomplete_SECRET' }, reference: { ...estimate(null), unavailable_reason: 'SECRET_REFERENCE_REASON' } } } as unknown as PricingSelection;
     act(() => root.render(<PricingExplanation selection={selection} />));
     expect(container.textContent).not.toContain('SECRET');
+    expect(container.querySelector('[data-cost-estimate="configured"]')?.textContent).not.toContain('cost_estimates.reasons.retained_evidence_incomplete');
+    expect(Array.from(container.querySelectorAll('details > p')).slice(1).map(node => node.textContent)).toEqual(['cost_estimates.unavailable', 'cost_estimates.unavailable', 'cost_estimates.unavailable']);
   });
 });

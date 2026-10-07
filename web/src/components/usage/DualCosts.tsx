@@ -5,7 +5,10 @@ import styles from './DualCosts.module.scss';
 
 type Translate = (key: string) => string;
 const REASONS = new Set(['missing_baseline', 'reference_overflow', 'retained_evidence_incomplete', 'missing_price', 'unknown_identity', 'unresolved_identity', 'unbound_channel']);
-export const pricingReasonLabel = (reason: string | undefined, t: Translate) => reason ? t(REASONS.has(reason) ? `cost_estimates.reasons.${reason}` : 'cost_estimates.unavailable') : '';
+export const pricingReasonLabel = (reason: string | undefined, t: Translate) => {
+  const normalized = reason === 'retained_pricing_evidence_incomplete' ? 'retained_evidence_incomplete' : reason;
+  return normalized ? t(REASONS.has(normalized) ? `cost_estimates.reasons.${normalized}` : 'cost_estimates.unavailable') : '';
+};
 const knownAmount = (estimate?: PriceEstimate) => estimate?.has_known === true && typeof estimate.total_cost_usd === 'number' && Number.isFinite(estimate.total_cost_usd);
 export function estimateAmount(estimate?: PriceEstimate, fallback?: number | null): string {
   if (estimate) return knownAmount(estimate) ? formatUsd(estimate.total_cost_usd!) : '—';
