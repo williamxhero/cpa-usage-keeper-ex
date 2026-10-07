@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"cpa-usage-keeper/internal/cpa/dto/providerconfig"
+	"cpa-usage-keeper/internal/cpa/dto/response"
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/helper"
 	"cpa-usage-keeper/internal/repository"
@@ -110,6 +112,141 @@ func (f channelFixture) assertChannels(t *testing.T, expected map[string]float64
 		}
 	}
 }
+func TestChannelCredentialModelCombinedPersistedPrecedenceAllCostFamilies(t *testing.T) {
+	f := newChannelFixture(t)
+	ctx := context.Background()
+	f.set(t, f.ids[0], ".2")
+	f.set(t, f.ids[1], ".5")
+	if _, err := f.defaults.SetCredentialDefault(ctx, f.subjects[0], ".3"); err != nil {
+		t.Fatal(err)
+	}
+	models := f.prices.(service.PricingCredentialModelsProvider)
+	// Both Model and Alias have exceptions. Model wins independently of the
+	// baseline, which exists only for Alias; none of the lower layers stack.
+	for model, text := range map[string]string{"observed-model": ".4", "base": ".9"} {
+		if _, err := models.SetCredentialModel(ctx, f.subjects[0], model, text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertStage := func(scope, selectedModel, selectedBy string, first, second float64) {
+		t.Helper()
+		f.assertCostFamilies(t, first+second, true)
+		f.assertChannels(t, map[string]float64{f.ids[0]: first, f.ids[1]: second})
+		page, err := service.NewUsageService(f.db, f.catalog).ListUsageEvents(ctx, servicedto.UsageFilter{StartTime: &f.start, EndTime: &f.end, EndExclusive: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range page.Events {
+			if event.AuthIndex != "synthetic-a" {
+				continue
+			}
+			if event.ChannelID != f.ids[0] || event.ChannelName != "Channel A" || event.AttributionWarning != "" || event.PricingSnapshotID != f.catalog.Snapshot().ID() {
+				t.Fatalf("lost channel evidence: %+v", event)
+			}
+			if scope != "" && (event.PricingSelection == nil || event.PricingSelection.Scope != scope || event.PricingSelection.SelectedModel != selectedModel || event.PricingSelection.SelectedBy != selectedBy || event.PricingSelection.BaselineModel != "base" || event.PricingSelection.BaselineBy != "model_alias") {
+				t.Fatalf("wrong composed selection: %+v", event.PricingSelection)
+			}
+		}
+	}
+	assertStage("credential_model", "observed-model", "model", 4, 5)
+	// Recover all three persisted override layers through the full loader.
+	f.prices, f.catalog = newCatalogPricingService(t, f.db)
+	f.channels = f.prices.(service.PricingChannelsProvider)
+	f.defaults = f.prices.(service.PricingCredentialDefaultsProvider)
+	models = f.prices.(service.PricingCredentialModelsProvider)
+	read, err := models.GetCredentialModel(ctx, f.subjects[0], "observed-model")
+	if err != nil || read.Multiplier == nil || *read.Multiplier != .4 {
+		t.Fatalf("restarted model: %+v %v", read, err)
+	}
+	assertStage("credential_model", "observed-model", "model", 4, 5)
+	if _, err := models.ClearCredentialModel(ctx, f.subjects[0], "observed-model"); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("credential_model", "base", "model_alias", 9, 5)
+	if _, err := models.ClearCredentialModel(ctx, f.subjects[0], "base"); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("credential_default", "", "", 3, 5)
+	if _, err := f.defaults.ClearCredentialDefault(ctx, f.subjects[0]); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("channel_default", "", "", 2, 5)
+	for _, id := range f.ids {
+		if _, err := f.channels.ClearChannelDefault(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Full old model multiplier and both old rules return only after clearing
+	// every override; membership remains usable for named comparison evidence.
+	assertStage("", "", "", 30, 30)
+	if f.catalog.NewResolver().HasPricingOverrides() {
+		t.Fatal("cleared configuration still reports an override")
+	}
+}
+
+func TestChannelMetadataCommitReloadFailureSanitizesLabelsAndRecovers(t *testing.T) {
+	f := newChannelFixture(t)
+	ctx := context.Background()
+	f.set(t, f.ids[0], ".2")
+	f.set(t, f.ids[1], ".5")
+	old := f.catalog.Snapshot()
+	fetcher := newMetadataTestFetcher()
+	fetcher.managementAPIKeysResult.Payload.APIKeys = []string{"synthetic-downstream"}
+	fetcher.openAIResult = &response.OpenAICompatibilityResult{StatusCode: 200, Payload: []providerconfig.OpenAICompatibilityConfig{{Name: "Fresh provider", APIKeyEntries: []providerconfig.OpenAIApiKeyEntry{{AuthIndex: "synthetic-a", APIKey: "Channel A"}, {AuthIndex: "synthetic-b", APIKey: "synthetic-new-key-b"}}}}}
+	syncer := service.NewSyncServiceWithOptions(f.db, service.SyncServiceOptions{BaseURL: "https://cpa.example.invalid", MetadataFetcher: fetcher, Now: func() time.Time { return f.now }, PricingCatalog: f.catalog})
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	callbackName := "synthetic_channel_cancel_pricing_reload"
+	if err := f.db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "credential_price_defaults" {
+			cancel()
+			tx.AddError(cancelCtx.Err())
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncer.SyncMetadata(cancelCtx); err == nil {
+		t.Fatal("expected pricing reload failure after metadata commit")
+	}
+	if err := f.db.Callback().Query().Remove(callbackName); err != nil {
+		t.Fatal(err)
+	}
+	var directory entities.UsageIdentity
+	if err := f.db.First(&directory, "identity = ? AND auth_type = ?", "synthetic-a", entities.UsageIdentityAuthTypeAIProvider).Error; err != nil || directory.LookupKey != "Channel A" {
+		t.Fatalf("metadata did not commit: %+v %v", directory, err)
+	}
+	read, err := f.channels.GetPricingChannel(ctx, f.ids[0])
+	if err != nil || read.Name != "Channel" || read.Multiplier == nil || *read.Multiplier != .2 || len(read.MemberSubjectIDs) != 1 || read.MemberSubjectIDs[0] != f.subjects[0] {
+		t.Fatalf("unsafe failed-reload channel: %+v %v", read, err)
+	}
+	list, err := f.channels.ListPricingChannels(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, channel := range list {
+		if channel.Name != "Channel" {
+			t.Fatalf("unsafe failed-reload list: %+v", channel)
+		}
+	}
+	if old.Channels()[0].Name == "Channel" {
+		t.Fatal("fallback mutated a pinned snapshot")
+	}
+	cost := f.catalog.NewResolver().Calculate(repository.UsageEventCostSubject(f.events[0]))
+	if cost.Scope != "" || cost.ChannelID != "" || cost.AttributionWarning != "unresolved_identity" {
+		t.Fatalf("fallback retained stale attribution: %+v", cost)
+	}
+	closeCost(t, cost.Cost.TotalCostUSD, 30)
+	if err := syncer.SyncMetadata(ctx); err != nil {
+		t.Fatal(err)
+	}
+	read, err = f.channels.GetPricingChannel(ctx, f.ids[0])
+	if err != nil || read.Name != "Channel" {
+		t.Fatalf("unsafe recovered label: %+v %v", read, err)
+	}
+	f.assertCostFamilies(t, 7, true)
+	f.assertChannels(t, map[string]float64{f.ids[0]: 2, f.ids[1]: 5})
+}
+
 func TestChannelNamesExcludeKnownSecretsAndSanitizeRefreshedMetadata(t *testing.T) {
 	f := newChannelFixture(t)
 	ctx := context.Background()

@@ -58,6 +58,13 @@ type credentialIdentity struct{ authType, authIndex string }
 // CompileSnapshotWithCredentials validates the whole candidate, including
 // unadjusted baseline safety even when legacy model multipliers are zero.
 func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialBinding, defaults []CredentialConfig, extra ...OverrideConfig) (*Snapshot, error) {
+	if len(extra) > 1 {
+		return nil, fmt.Errorf("expected at most one override configuration")
+	}
+	var options OverrideConfig
+	if len(extra) == 1 {
+		options = extra[0]
+	}
 	snapshot, err := CompileSnapshot(models)
 	if err != nil {
 		return nil, err
@@ -123,14 +130,10 @@ func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialB
 		}
 		snapshot.credentialDefaults[config.SubjectID] = config.Multiplier
 	}
-	if len(extra) > 1 {
-		return nil, fmt.Errorf("expected at most one override config")
+	if err := snapshot.compileChannels(options.Channels); err != nil {
+		return nil, err
 	}
-	var channels []ChannelConfig
-	if len(extra) == 1 {
-		channels = extra[0].Channels
-	}
-	if err := snapshot.compileChannels(channels); err != nil {
+	if err := snapshot.compileCredentialModels(options.CredentialModels); err != nil {
 		return nil, err
 	}
 	snapshot.legacyActiveFields = snapshot.activeFields
@@ -195,12 +198,7 @@ func (r Resolver) credentialDefault(subject CostSubject) (string, float64, bool)
 	if r.snapshot == nil {
 		return "", 0, false
 	}
-	id := ""
-	if subject.AuthType == "" && !subject.ObservedIdentity {
-		id = r.snapshot.credentialIndexes[subject.IdentityAuthIndex]
-	} else {
-		id = r.snapshot.credentials[credentialIdentity{subject.AuthType, subject.IdentityAuthIndex}]
-	}
+	id := r.credentialSubject(subject)
 	multiplier, ok := r.snapshot.credentialDefaults[id]
 	return id, multiplier, ok
 }
@@ -241,6 +239,18 @@ func (s *Snapshot) WithoutCredentialAttribution() *Snapshot {
 	candidate := *s
 	candidate.credentials = make(map[credentialIdentity]string)
 	candidate.credentialIndexes = make(map[string]string)
+	// Newly committed metadata can make any old friendly label secret evidence.
+	// Without a successful reload, publish only generic labels, preserving all
+	// saved configuration and the names in readers' already pinned snapshots.
+	candidate.channels = make(map[string]ChannelConfig, len(s.channels))
+	for id, channel := range s.channels {
+		channel.Name = "Channel"
+		candidate.channels[id] = channel
+	}
+	candidate.credentialSubjects = make(map[string]string, len(s.credentialSubjects))
+	for id := range s.credentialSubjects {
+		candidate.credentialSubjects[id] = "Credential"
+	}
 	candidate.id = strings.TrimSuffix(s.id, "-unattributed") + "-unattributed"
 	return &candidate
 }

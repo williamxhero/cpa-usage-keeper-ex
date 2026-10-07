@@ -37,6 +37,8 @@ type CostResult struct {
 	ChannelID           string
 	ChannelName         string
 	AttributionWarning  string
+	SelectedModel       string
+	SelectedBy          string
 }
 
 // Resolver 在创建时固定绑定一个 Snapshot，确保单个响应不会混用新旧价格。
@@ -54,7 +56,11 @@ func (r Resolver) ActiveFields() ActiveFields {
 func (r Resolver) Calculate(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
 	var result CostResult
-	if id, multiplier, selected := r.credentialDefault(subject); selected {
+	if id, multiplier, selectedModel, selectedBy, selected := r.credentialModel(subject); selected {
+		result = calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+		result.Scope = "credential_model"
+		result.SelectedModel, result.SelectedBy = selectedModel, selectedBy
+	} else if id, multiplier, selected := r.credentialDefault(subject); selected {
 		result = calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
 	} else if _, multiplier, selected := r.channelDefault(subject); selected {
 		result = calculateCredentialDefault(subject, r.credentialSubject(subject), multiplier, model, matchedModel, matchedBy, found)

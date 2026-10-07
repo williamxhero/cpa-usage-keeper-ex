@@ -12,6 +12,7 @@ import (
 
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/helper"
+	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/service"
 	servicedto "cpa-usage-keeper/internal/service/dto"
 	"cpa-usage-keeper/internal/timeutil"
@@ -76,6 +77,7 @@ type usageEventPayload struct {
 	CostUSD             float64                `json:"cost_usd"`
 	CostAvailable       bool                   `json:"cost_available"`
 	PricingStyle        string                 `json:"pricing_style,omitempty"`
+	PricingSelection    *pricing.CostSelection `json:"pricing_selection,omitempty"`
 }
 
 type usageEventTokenPayload struct {
@@ -465,6 +467,7 @@ func buildUsageEventsPayload(rows []servicedto.UsageEventRecord, resolver usageI
 			CostAvailable:       row.CostAvailable,
 			PricingStyle:        strings.TrimSpace(row.PricingStyle),
 			ChannelID:           row.ChannelID, ChannelName: row.ChannelName, AttributionWarning: row.AttributionWarning, PricingSnapshotID: row.PricingSnapshotID,
+			PricingSelection: row.PricingSelection,
 			Tokens: usageEventTokenPayload{
 				InputTokens:         row.InputTokens,
 				OutputTokens:        row.OutputTokens,

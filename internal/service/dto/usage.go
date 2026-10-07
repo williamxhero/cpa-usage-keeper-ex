@@ -3,6 +3,7 @@ package dto
 import (
 	"time"
 
+	"cpa-usage-keeper/internal/pricing"
 	repodto "cpa-usage-keeper/internal/repository/dto"
 )
 
@@ -95,6 +96,7 @@ type UsageEventRecord struct {
 	CostUSD             float64
 	CostAvailable       bool
 	PricingStyle        string
+	PricingSelection    *pricing.CostSelection
 }
 
 // UsageOverviewSummary 是 overview summary 的服务层结果。

@@ -37,6 +37,16 @@ const relativeLuminance = (hex: string) => {
 }
 
 describe('UsagePage responsive layout and accessibility', () => {
+  it('mounts model exceptions as a distinct card reusing narrow-screen wrapping styles', () => {
+    const card = readSource(new URL('../../components/usage/pricing/PricingCredentialModelsCard.tsx', import.meta.url))
+    const page = readSource(new URL('../UsagePage.tsx', import.meta.url))
+    expect(page).toContain('<PricingCredentialModelsCard />')
+    expect(card).toContain("import styles from './PricingCredentialDefaultsCard.module.scss'")
+    expect(card).toContain('dropdownClassName={styles.options}')
+    expect(card).toContain('className={styles.readback}')
+    expect(card).toMatch(/className=\{styles.actions\}><div className=\{styles.selector\}>/)
+  })
+
   it('wraps credential default metadata, options, errors and actions on narrow screens', () => {
     expect(credentialDefaultsStyles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
     expect(credentialDefaultsStyles).toMatch(/\.actions\s*\{[^}]*flex-wrap:\s*wrap;/)

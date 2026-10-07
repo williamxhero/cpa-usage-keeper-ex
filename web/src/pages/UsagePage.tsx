@@ -2,6 +2,7 @@ import { CredentialEditModal } from '@/components/usage/credentials/CredentialEd
 import { PricingCredentialsCard } from '@/components/usage/pricing/PricingCredentialsCard';
 import { PricingCredentialDefaultsCard } from '@/components/usage/pricing/PricingCredentialDefaultsCard';
 import { PricingChannelsCard } from '@/components/usage/pricing/PricingChannelsCard';
+import { PricingCredentialModelsCard } from '@/components/usage/pricing/PricingCredentialModelsCard';
 import { UsageComparisonCharts } from '@/components/usage/UsageComparisonCharts';
 import { useState, useMemo, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -2469,6 +2470,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                 <PricingCredentialsCard />
                 <PricingCredentialDefaultsCard />
                 <PricingChannelsCard />
+                <PricingCredentialModelsCard />
                 <PriceSettingsCard
                   modelNames={modelNames}
                   modelPrices={modelPrices}

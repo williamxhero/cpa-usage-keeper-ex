@@ -924,6 +924,16 @@ export interface PricingChannelsResponse {
   channels: PricingChannel[]
 }
 
+export interface PricingCredentialModel extends PricingCredentialDefault {
+  model: string
+}
+
+export interface PricingCredentialModelsResponse {
+  subject_id: string
+  models: PricingCredentialModel[]
+  snapshot_id: string
+}
+
 export interface PricingRule {
   key: string
   value: string

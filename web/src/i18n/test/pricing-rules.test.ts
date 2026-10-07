@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import i18n, { SUPPORTED_LANGUAGES } from '../index'
 
+describe('credential model exception translations', () => {
+  it('has complete nonempty exact-match, inheritance, baseline and history copy in every language', () => {
+    const keys = ['title', 'scope_help', 'history_warning', 'replacement_warning', 'select', 'empty', 'refresh', 'model', 'model_search', 'no_models', 'model_help', 'current', 'inherited', 'active', 'canonical', 'multiplier', 'input_help', 'save', 'clear', 'saved', 'cleared', 'invalid_multiplier', 'load_failed', 'save_failed', 'clear_failed', 'permission_denied', 'conflict']
+    for (const language of SUPPORTED_LANGUAGES) {
+      const bundle = i18n.getResourceBundle(language, 'translation').pricing_credential_models
+      expect(Object.keys(bundle).sort()).toEqual([...keys].sort())
+      for (const key of keys) {
+        const path = `pricing_credential_models.${key}`
+        expect(i18n.exists(path, { lng: language, fallbackLng: false }), `${language}: ${path}`).toBe(true)
+        expect(i18n.t(path, { lng: language, fallbackLng: false }).trim()).not.toBe('')
+        expect(i18n.t(path, { lng: language, fallbackLng: false })).not.toBe(path)
+      }
+      expect(bundle.model_help).toContain('ModelAlias')
+      expect(bundle.input_help).toContain('0')
+      expect(bundle.replacement_warning).toContain('reasoning')
+    }
+  })
+})
+
 describe('credential default multiplier translations', () => {
   it('has complete nonempty copy without fallback in every language', () => {
     const keys = ['title', 'scope_help', 'history_warning', 'replacement_warning', 'select', 'empty', 'refresh', 'current', 'inherited', 'active', 'canonical', 'multiplier', 'input_help', 'save', 'clear', 'saved', 'cleared', 'invalid_multiplier', 'load_failed', 'save_failed', 'clear_failed', 'permission_denied', 'conflict']

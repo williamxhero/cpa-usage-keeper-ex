@@ -1,4 +1,4 @@
-import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingChannel, type PricingChannelInput, type PricingChannelsResponse, type PricingCredential, type PricingCredentialDefault, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
+import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingChannel, type PricingChannelInput, type PricingChannelsResponse, type PricingCredentialModel, type PricingCredentialModelsResponse, type PricingCredential, type PricingCredentialDefault, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed'
 import { resolveUsageRequestRange } from '@/utils/usage/rangeQuery'
 
@@ -1059,6 +1059,36 @@ export async function savePricingChannelDefault(channelId: string, multiplier: s
 export async function clearPricingChannelDefault(channelId: string, signal?: AbortSignal): Promise<PricingChannel> {
   const response = await apiFetch(apiPath(`/pricing/channels/${encodeURIComponent(channelId)}/default`), { method: 'DELETE', signal })
   if (!response.ok) await parseApiError(response, 'Unable to clear channel default')
+  return response.json()
+}
+
+export async function fetchPricingCredentialModels(subjectId: string, signal?: AbortSignal): Promise<PricingCredentialModelsResponse> {
+  const response = await apiFetch(apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/models`), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load credential model exceptions')
+  return response.json()
+}
+
+function pricingCredentialModelPath(subjectId: string, model: string): string {
+  return `${apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/model`)}?${new URLSearchParams({ model })}`
+}
+
+export async function fetchPricingCredentialModel(subjectId: string, model: string, signal?: AbortSignal): Promise<PricingCredentialModel> {
+  const response = await apiFetch(pricingCredentialModelPath(subjectId, model), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load credential model exception')
+  return response.json()
+}
+
+export async function savePricingCredentialModel(subjectId: string, model: string, multiplier: string, signal?: AbortSignal): Promise<PricingCredentialModel> {
+  const response = await apiFetch(pricingCredentialModelPath(subjectId, model), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ multiplier }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save credential model exception')
+  return response.json()
+}
+
+export async function clearPricingCredentialModel(subjectId: string, model: string, signal?: AbortSignal): Promise<PricingCredentialModel> {
+  const response = await apiFetch(pricingCredentialModelPath(subjectId, model), { method: 'DELETE', signal })
+  if (!response.ok) await parseApiError(response, 'Unable to clear credential model exception')
   return response.json()
 }
 

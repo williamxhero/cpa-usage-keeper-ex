@@ -10,7 +10,10 @@ import (
 )
 
 // OverrideConfig extends the same immutable candidate, not a second catalog.
-type OverrideConfig struct{ Channels []ChannelConfig }
+type OverrideConfig struct {
+	Channels         []ChannelConfig
+	CredentialModels []CredentialModelConfig
+}
 
 type ChannelConfig struct {
 	ID               string
@@ -137,7 +140,7 @@ func (r Resolver) AttributionFields() ActiveFields {
 
 func (r Resolver) HasChannels() bool { return r.snapshot != nil && len(r.snapshot.channels) > 0 }
 func (r Resolver) HasPricingOverrides() bool {
-	if r.HasCredentialDefaults() {
+	if r.HasCredentialDefaults() || (r.snapshot != nil && len(r.snapshot.credentialModels) > 0) {
 		return true
 	}
 	if r.snapshot != nil {
@@ -150,6 +153,9 @@ func (r Resolver) HasPricingOverrides() bool {
 	return false
 }
 func (r Resolver) UsesPricingOverride(subject CostSubject) bool {
+	if _, _, _, _, selected := r.credentialModel(subject); selected {
+		return true
+	}
 	if r.UsesCredentialDefault(subject) {
 		return true
 	}
@@ -166,6 +172,12 @@ func (r Resolver) MayUsePricingOverride(subject CostSubject) bool {
 			continue
 		}
 		if _, ok := r.snapshot.credentialDefaults[id]; ok {
+			return true
+		}
+		if _, ok := r.snapshot.CredentialModel(id, subject.Dimensions.Model); ok {
+			return true
+		}
+		if _, ok := r.snapshot.CredentialModel(id, subject.Dimensions.ModelAlias); ok {
 			return true
 		}
 		if channel := r.snapshot.channels[r.snapshot.subjectChannels[id]]; channel.Multiplier != nil {

@@ -39,8 +39,8 @@ func registerPricingCredentialDefaultRoutes(router gin.IRoutes, pricingProvider 
 				invalidCredentialMultiplier(c)
 				return
 			}
-			text, valid := multiplierJSONText(request.Multiplier)
-			if !valid {
+			text, parseErr := credentialMultiplierText(request.Multiplier)
+			if parseErr != nil {
 				invalidCredentialMultiplier(c)
 				return
 			}
@@ -64,27 +64,28 @@ func registerPricingCredentialDefaultRoutes(router gin.IRoutes, pricingProvider 
 	router.DELETE("/pricing/credentials/:subjectID/default", handler)
 }
 
-// Numeric JSON may use exponents; string forms use domain decimal parsing.
-func multiplierJSONText(raw json.RawMessage) (string, bool) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return "", false
-	}
+// Numeric JSON may use exponents; normalize to decimal text before the same
+// domain validation used by form strings. Omitted/null are never inheritance.
+func credentialMultiplierText(raw json.RawMessage) (string, error) {
 	var text string
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", errors.New("multiplier required")
+	}
 	if json.Unmarshal(raw, &text) == nil {
-		return text, true
+		return text, nil
 	}
 	var number json.Number
-	if json.Unmarshal(raw, &number) != nil {
-		return "", false
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return "", err
 	}
 	value, err := number.Float64()
 	if err != nil || value < 0 {
-		return "", false
+		return "", errors.New("invalid multiplier")
 	}
 	if value == 0 {
 		value = 0
 	}
-	return strconv.FormatFloat(value, 'f', -1, 64), true
+	return strconv.FormatFloat(value, 'f', -1, 64), nil
 }
 
 func invalidCredentialMultiplier(c *gin.Context) {

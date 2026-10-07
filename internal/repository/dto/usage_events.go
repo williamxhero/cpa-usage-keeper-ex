@@ -1,6 +1,9 @@
 package dto
 
-import "time"
+import (
+	"cpa-usage-keeper/internal/pricing"
+	"time"
+)
 
 // UsageEventsPageRecord 是 usage events 列表的仓储查询结果。
 type UsageEventsPageRecord struct {
@@ -60,4 +63,5 @@ type UsageEventRecord struct {
 	CostUSD                 float64
 	CostAvailable           bool
 	PricingStyle            string
+	PricingSelection        *pricing.CostSelection
 }

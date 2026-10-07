@@ -23,7 +23,7 @@ const resources = {
       pricing_channels: {
         title: 'Named pricing channels', scope_help: 'Create a Keeper channel and explicitly select registered upstream credential subjects. Provider types, names and endpoints are labels, not channel identities.',
         history_warning: 'Saving prices or members, clearing and deleting recalculates historical costs and attribution using current configuration. Estimates are not a frozen bill.',
-        priority_help: 'Credential defaults take priority over channel defaults. An active channel multiplier replaces all legacy model multipliers and rules, never multiplies them. Clearing all new overrides restores legacy pricing.',
+        priority_help: 'Exact credential model exceptions take priority over credential defaults, then channel defaults. An active channel multiplier replaces all legacy model multipliers and rules, never multiplies them. Clearing all new overrides restores legacy pricing.',
         select: 'Select a channel', new: 'New channel', refresh: 'Refresh', name: 'Channel name',
         members_help: 'Choose each member explicitly, then add it. One subject can belong to at most one channel. Occupied, shared or ambiguous identities cannot be added; register subjects above and refresh first.',
         member_select: 'Select a registered member', no_subjects: 'No selectable registered subjects', add_member: 'Add selected member', members: 'Selected members', remove_member: 'Remove member', no_members: 'No members selected. Saving creates an empty channel; no identities are guessed.',
@@ -37,6 +37,21 @@ const resources = {
         load_failed: 'Unable to read saved channels. The last confirmed configuration is shown; refresh to retry.', save_failed: 'Unable to save the channel. Check its name and explicit members, then refresh before retrying.',
         save_default_failed: 'Unable to save the channel multiplier. The last confirmed value is shown; refresh before retrying.', clear_failed: 'Unable to clear the channel override. Refresh before retrying.', delete_failed: 'Unable to delete the channel. Dependencies may have changed; refresh and confirm again.',
         permission_denied: 'Administrator access is required.', conflict: 'Membership or identity is occupied, shared, ambiguous or has changed. Refresh; the entire change was rejected.'
+      },
+      pricing_credential_models: {
+        title: 'Credential model exceptions',
+        scope_help: 'Set an exact-model exception above the credential default. Other and future models still inherit the credential default or next pricing layer.',
+        history_warning: 'Saving or clearing recalculates historical estimates using current prices; this is not a bill frozen at request time.',
+        replacement_warning: 'An active exception replaces every legacy model multiplier and matching rule adjustment, including tier and reasoning; it does not stack with them. Clear explicitly to inherit the credential default, next pricing layer or legacy pricing.',
+        select: 'Select a registered credential', empty: 'No registered credentials. Register a subject above, then refresh.',
+        refresh: 'Refresh', model: 'Select an exact model', model_search: 'Search existing models', no_models: 'No existing models',
+        model_help: 'Choices include used models and saved baseline models, even without a baseline price. Exact request Model is checked before the existing ModelAlias; no case folding or guessed aliases. Baseline lookup remains independent.',
+        current: 'Saved exception', inherited: 'Not configured / inherit', active: 'Active override', canonical: 'Saved canonical multiplier', multiplier: 'Model multiplier',
+        input_help: 'Enter a nonnegative decimal, optionally x, X or %: 0.2, 0.2x and 20% are equivalent. Explicit 0 and 1 are active overrides; blank is not saved. A missing usable baseline remains unavailable, even with multiplier 0.',
+        save: 'Save exception', clear: 'Clear exception / inherit', saved: 'Exception saved; historical estimates use current prices.', cleared: 'Exception cleared; pricing now inherits.',
+        invalid_multiplier: 'Enter a finite nonnegative decimal, optionally x, X or %. Blank, signs, scientific notation, mixed units and values outside the supported pricing range cannot be saved.',
+        load_failed: 'Unable to load saved exceptions. Refresh and retry.', save_failed: 'Unable to save the exception. The last confirmed value is shown; refresh and retry.', clear_failed: 'Unable to clear the exception. The last confirmed value is shown; refresh and retry.',
+        permission_denied: 'Administrator permission is required.', conflict: 'The subject or binding changed, or attribution is ambiguous. Refresh and retry.'
       },
       pricing_credential_defaults: {
         title: 'Credential default multiplier',
@@ -1003,7 +1018,7 @@ const resources = {
       pricing_channels: {
         title: '具体命名定价渠道', scope_help: '创建 Keeper 渠道并明确选择已登记的上游凭证主体。provider 类型、名称和端点只是识别信息，不是渠道身份。',
         history_warning: '保存价格或成员、清除与删除操作会按当前配置回算历史费用和归属。估算值不是冻结账单。',
-        priority_help: '凭证默认优先于渠道默认。生效渠道倍率替代全部旧模型倍率及规则，不与它们连乘。清除全部新覆盖后恢复完整旧定价。',
+        priority_help: '精确凭证模型例外优先于凭证默认，再到渠道默认。生效渠道倍率替代全部旧模型倍率及规则，不与它们连乘。清除全部新覆盖后恢复完整旧定价。',
         select: '选择渠道', new: '新建渠道', refresh: '刷新', name: '渠道名称',
         members_help: '明确选择每个成员并添加。一个主体最多属于一个渠道。已占用、共享或有歧义的身份不能添加；请先在上方登记主体并刷新。',
         member_select: '选择已登记成员', no_subjects: '没有可选的已登记主体', add_member: '添加所选成员', members: '已选成员', remove_member: '移除成员', no_members: '尚未选择成员。保存将创建空渠道，不会猜测身份。',
@@ -1017,6 +1032,21 @@ const resources = {
         load_failed: '无法回读已保存渠道。显示最后确认的配置，请刷新重试。', save_failed: '无法保存渠道。请检查名称和明确选择的成员，刷新后重试。',
         save_default_failed: '无法保存渠道倍率。显示最后确认的值，请刷新后重试。', clear_failed: '无法清除渠道覆盖，请刷新后重试。', delete_failed: '无法删除渠道。依赖可能已变化，请刷新并再次确认。',
         permission_denied: '此操作需要管理员权限。', conflict: '成员或身份已占用、共享、有歧义或发生变化。请刷新；整个修改已拒绝。'
+      },
+      pricing_credential_models: {
+        title: '凭证模型例外倍率',
+        scope_help: '精确模型例外优先于凭证默认倍率；其他和未来模型继续继承凭证默认值或下一定价层。',
+        history_warning: '保存或清除会使用当前价格回算历史估算费用，不是请求发生时冻结的账单。',
+        replacement_warning: '生效例外替代全部旧模型倍率和命中的规则调整，包括 tier 与 reasoning，不与它们连乘。显式清除后继承凭证默认值、下一定价层或旧定价。',
+        select: '选择已登记凭证', empty: '暂无已登记凭证。请先在上方登记主体，再刷新。',
+        refresh: '刷新', model: '选择精确模型', model_search: '搜索现有模型', no_models: '暂无现有模型',
+        model_help: '选项包含已使用模型及已保存基准价模型，即使没有基准价也可选择。先精确匹配请求 Model，再匹配已有 ModelAlias；不忽略大小写或猜测别名。基准价查找独立进行。',
+        current: '已保存例外', inherited: '未配置／继承', active: '生效覆盖', canonical: '已保存规范倍率', multiplier: '模型倍率',
+        input_help: '输入非负十进制数，可加 x、X 或 %：0.2、0.2x 与 20% 等价。显式 0 和 1 都是生效覆盖；空白不会保存。即使倍率为 0，缺少可用基准价仍表示费用不可用。',
+        save: '保存例外', clear: '清除例外／继承', saved: '例外已保存，历史估算费用使用当前价格。', cleared: '例外已清除，定价恢复继承。',
+        invalid_multiplier: '请输入有限非负十进制数，可加 x、X 或 %。空白、正负号、科学计数法、混合单位及超出支持计价范围的数值无法保存。',
+        load_failed: '无法读取已保存例外，请刷新重试。', save_failed: '无法保存例外。当前显示最后确认的值，请刷新后重试。', clear_failed: '无法清除例外。当前显示最后确认的值，请刷新后重试。',
+        permission_denied: '此操作需要管理员权限。', conflict: '该主体或绑定已变化，或归属存在歧义，请刷新后重试。'
       },
       pricing_credential_defaults: {
         title: '凭证全模型默认倍率',
@@ -1983,7 +2013,7 @@ const resources = {
       pricing_channels: {
         title: '具體命名定價渠道', scope_help: '建立 Keeper 渠道並明確選擇已登記的上游憑證主體。provider 類型、名稱和端點只是識別資訊，不是渠道身分。',
         history_warning: '儲存價格或成員、清除與刪除操作會按目前設定回算歷史費用和歸屬。估算值不是凍結帳單。',
-        priority_help: '憑證預設值優先於渠道預設值。生效渠道倍率取代全部舊模型倍率及規則，不與它們連乘。清除全部新覆蓋後恢復完整舊定價。',
+        priority_help: '精確憑證模型例外優先於憑證預設值，再到渠道預設值。生效渠道倍率取代全部舊模型倍率及規則，不與它們連乘。清除全部新覆蓋後恢復完整舊定價。',
         select: '選擇渠道', new: '新增渠道', refresh: '重新整理', name: '渠道名稱',
         members_help: '明確選擇每個成員並新增。一個主體最多屬於一個渠道。已佔用、共用或有歧義的身分不能新增；請先在上方登記主體並重新整理。',
         member_select: '選擇已登記成員', no_subjects: '沒有可選的已登記主體', add_member: '新增所選成員', members: '已選成員', remove_member: '移除成員', no_members: '尚未選擇成員。儲存將建立空渠道，不會猜測身分。',
@@ -1997,6 +2027,21 @@ const resources = {
         load_failed: '無法回讀已儲存渠道。顯示最後確認的設定，請重新整理後重試。', save_failed: '無法儲存渠道。請檢查名稱和明確選擇的成員，重新整理後重試。',
         save_default_failed: '無法儲存渠道倍率。顯示最後確認的值，請重新整理後重試。', clear_failed: '無法清除渠道覆蓋，請重新整理後重試。', delete_failed: '無法刪除渠道。依賴可能已變更，請重新整理並再次確認。',
         permission_denied: '此操作需要管理員權限。', conflict: '成員或身分已佔用、共用、有歧義或發生變更。請重新整理；整個修改已拒絕。'
+      },
+      pricing_credential_models: {
+        title: '憑證模型例外倍率',
+        scope_help: '精確模型例外優先於憑證預設倍率；其他和未來模型繼續繼承憑證預設值或下一定價層。',
+        history_warning: '儲存或清除會使用目前價格回算歷史估算費用，不是請求發生時凍結的帳單。',
+        replacement_warning: '生效例外取代全部舊模型倍率和命中的規則調整，包括 tier 與 reasoning，不與它們連乘。明確清除後繼承憑證預設值、下一定價層或舊定價。',
+        select: '選擇已登記憑證', empty: '暫無已登記憑證。請先在上方登記主體，再重新整理。',
+        refresh: '重新整理', model: '選擇精確模型', model_search: '搜尋現有模型', no_models: '暫無現有模型',
+        model_help: '選項包含已使用模型及已儲存基準價模型，即使沒有基準價也可選擇。先精確匹配請求 Model，再匹配已有 ModelAlias；不忽略大小寫或猜測別名。基準價查找獨立進行。',
+        current: '已儲存例外', inherited: '未設定／繼承', active: '生效覆蓋', canonical: '已儲存標準倍率', multiplier: '模型倍率',
+        input_help: '輸入非負十進位數，可加 x、X 或 %：0.2、0.2x 與 20% 等價。明確設定的 0 和 1 都是生效覆蓋；空白不會儲存。即使倍率為 0，缺少可用基準價仍表示費用不可用。',
+        save: '儲存例外', clear: '清除例外／繼承', saved: '例外已儲存，歷史估算費用使用目前價格。', cleared: '例外已清除，定價恢復繼承。',
+        invalid_multiplier: '請輸入有限非負十進位數，可加 x、X 或 %。空白、正負號、科學記號、混合單位及超出支援計價範圍的數值無法儲存。',
+        load_failed: '無法讀取已儲存例外，請重新整理後重試。', save_failed: '無法儲存例外。目前顯示最後確認的值，請重新整理後重試。', clear_failed: '無法清除例外。目前顯示最後確認的值，請重新整理後重試。',
+        permission_denied: '此操作需要管理員權限。', conflict: '該主體或綁定已變更，或歸屬存在歧義，請重新整理後重試。'
       },
       pricing_credential_defaults: {
         title: '憑證全模型預設倍率',

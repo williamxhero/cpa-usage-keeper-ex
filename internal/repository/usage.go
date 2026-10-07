@@ -238,6 +238,7 @@ func streamUsageEventRecordsForQuery(db *gorm.DB, query *gorm.DB, emit func(dto.
 		if costResolver.HasPricingOverrides() || costResolver.HasChannels() {
 			record.PricingSnapshotID = costResolver.SnapshotID()
 		}
+		record.PricingSelection = costResolver.Selection(cost)
 		if err := emit(record); err != nil {
 			return err
 		}

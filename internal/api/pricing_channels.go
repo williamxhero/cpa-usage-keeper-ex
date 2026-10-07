@@ -120,8 +120,8 @@ func registerPricingChannelRoutes(router gin.IRoutes, pricingProvider service.Pr
 			if !decodeChannelRequest(c, &input) {
 				return
 			}
-			text, valid := multiplierJSONText(input.Multiplier)
-			if !valid {
+			text, parseErr := credentialMultiplierText(input.Multiplier)
+			if parseErr != nil {
 				invalidCredentialMultiplier(c)
 				return
 			}
