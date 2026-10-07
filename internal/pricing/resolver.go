@@ -34,6 +34,9 @@ type CostResult struct {
 	Scope               string
 	Multiplier          *float64
 	UnavailableReason   string
+	ChannelID           string
+	ChannelName         string
+	AttributionWarning  string
 	SelectedModel       string
 	SelectedBy          string
 }
@@ -52,16 +55,21 @@ func (r Resolver) ActiveFields() ActiveFields {
 
 func (r Resolver) Calculate(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
+	var result CostResult
 	if id, multiplier, selectedModel, selectedBy, selected := r.credentialModel(subject); selected {
-		result := calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+		result = calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
 		result.Scope = "credential_model"
 		result.SelectedModel, result.SelectedBy = selectedModel, selectedBy
-		return result
+	} else if id, multiplier, selected := r.credentialDefault(subject); selected {
+		result = calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+	} else if _, multiplier, selected := r.channelDefault(subject); selected {
+		result = calculateCredentialDefault(subject, r.credentialSubject(subject), multiplier, model, matchedModel, matchedBy, found)
+		result.Scope = "channel_default"
+	} else {
+		result = r.CalculateLegacy(subject)
 	}
-	if id, multiplier, selected := r.credentialDefault(subject); selected {
-		return calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
-	}
-	return r.CalculateLegacy(subject)
+	result.ChannelID, result.ChannelName, result.AttributionWarning = r.ChannelAttribution(subject)
+	return result
 }
 
 func calculateCredentialDefault(subject CostSubject, id string, multiplier float64, model compiledModel, matchedModel, matchedBy string, found bool) CostResult {

@@ -44,6 +44,8 @@ type Snapshot struct {
 	credentialIndexes  map[string]string
 	credentialSubjects map[string]string
 	credentialDefaults map[string]float64
+	channels           map[string]ChannelConfig
+	subjectChannels    map[string]string
 	credentialModels   map[credentialModelKey]float64
 }
 

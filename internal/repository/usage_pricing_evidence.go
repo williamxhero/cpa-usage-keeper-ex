@@ -50,7 +50,7 @@ func pricingEvidenceBucket(timestamp time.Time, grain string) time.Time {
 // against counting an accidentally duplicated stored ID twice. It does not
 // change which events an existing endpoint includes in its usage totals.
 func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, end time.Time, grain string, resolver pricing.Resolver) (usagePricingEvidenceMap, error) {
-	if !resolver.HasPricingOverrides() {
+	if !resolver.HasPricingOverrides() && !resolver.HasChannels() {
 		return nil, nil
 	}
 	columns := "id, api_group_key, model, model_alias, auth_index, auth_type, service_tier, response_service_tier, reasoning_effort, endpoint, executor_type, timestamp, failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
@@ -100,7 +100,7 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 		// cohort may contain several typed credentials, so it has no single ID
 		// or multiplier, but must not masquerade as an unmatched model.
 		if cost.Scope != "" {
-			evidence.Result.Scope = cost.Scope
+			evidence.Result.Scope = "pricing_override"
 		}
 		if cost.MatchedModel != "" {
 			evidence.Result.MatchedModel = cost.MatchedModel

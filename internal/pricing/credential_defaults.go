@@ -61,9 +61,9 @@ func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialB
 	if len(extra) > 1 {
 		return nil, fmt.Errorf("expected at most one override configuration")
 	}
-	var exceptions []CredentialModelConfig
+	var options OverrideConfig
 	if len(extra) == 1 {
-		exceptions = extra[0].CredentialModels
+		options = extra[0]
 	}
 	snapshot, err := CompileSnapshot(models)
 	if err != nil {
@@ -130,11 +130,14 @@ func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialB
 		}
 		snapshot.credentialDefaults[config.SubjectID] = config.Multiplier
 	}
-	if err := snapshot.compileCredentialModels(exceptions); err != nil {
+	if err := snapshot.compileChannels(options.Channels); err != nil {
+		return nil, err
+	}
+	if err := snapshot.compileCredentialModels(options.CredentialModels); err != nil {
 		return nil, err
 	}
 	snapshot.legacyActiveFields = snapshot.activeFields
-	if len(defaults) > 0 || len(exceptions) > 0 {
+	if (Resolver{snapshot: snapshot}).HasPricingOverrides() {
 		// Retained-event reconciliation must identify the original rollup cohorts,
 		// including dimensions not used by current legacy rules.
 		for field := RuleFieldAPIGroupKey; field < ruleFieldCount; field++ {
@@ -186,7 +189,7 @@ func (r Resolver) LegacyActiveFields() ActiveFields {
 	if r.snapshot == nil {
 		return 0
 	}
-	if r.HasPricingOverrides() {
+	if r.HasPricingOverrides() || r.HasChannels() {
 		return r.snapshot.legacyActiveFields
 	}
 	return r.snapshot.activeFields
@@ -236,6 +239,18 @@ func (s *Snapshot) WithoutCredentialAttribution() *Snapshot {
 	candidate := *s
 	candidate.credentials = make(map[credentialIdentity]string)
 	candidate.credentialIndexes = make(map[string]string)
+	// Newly committed metadata can make any old friendly label secret evidence.
+	// Without a successful reload, publish only generic labels, preserving all
+	// saved configuration and the names in readers' already pinned snapshots.
+	candidate.channels = make(map[string]ChannelConfig, len(s.channels))
+	for id, channel := range s.channels {
+		channel.Name = "Channel"
+		candidate.channels[id] = channel
+	}
+	candidate.credentialSubjects = make(map[string]string, len(s.credentialSubjects))
+	for id := range s.credentialSubjects {
+		candidate.credentialSubjects[id] = "Credential"
+	}
 	candidate.id = strings.TrimSuffix(s.id, "-unattributed") + "-unattributed"
 	return &candidate
 }
