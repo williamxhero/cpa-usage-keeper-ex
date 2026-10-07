@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, fetchUsageOverviewComparisons, isUsageRangeBoundsConflict } from '@/lib/api'
 import type { UsageCustomRangeUnit, UsageOverviewComparisons, UsageTimeRange } from '@/lib/types'
 import { buildUsageRangeQuery } from '@/utils/usage/rangeQuery'
+import { buildUsageStatsQueryKey } from '@/stores/useUsageStatsStore'
 
 export interface UseUsageComparisonsDataOptions {
   onAuthRequired?: () => void
@@ -22,11 +23,14 @@ interface LoadComparisonsOptions {
 export function useUsageComparisonsData(options: UseUsageComparisonsDataOptions = {}) {
   const { onAuthRequired, onRangeBoundsConflict, enabled = true, keyViewer = false, apiKeyId, range = 'today', customUnit, customStart, customEnd } = options
   const [comparisons, setComparisons] = useState<UsageOverviewComparisons | null>(null)
+  const [loadedQueryKey, setLoadedQueryKey] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const requestSequence = useRef(0)
   const activeController = useRef<AbortController | null>(null)
   const rangeQuery = useMemo(() => buildUsageRangeQuery({ range, customUnit, customStart, customEnd }), [customEnd, customStart, customUnit, range])
+
+  const queryKey = rangeQuery.valid ? `${keyViewer ? 'key' : 'admin'}:${buildUsageStatsQueryKey(rangeQuery, apiKeyId)}` : null
 
   const loadComparisons = useCallback(async (options: LoadComparisonsOptions = {}) => {
     if (!rangeQuery.valid) return
@@ -39,7 +43,10 @@ export function useUsageComparisonsData(options: UseUsageComparisonsDataOptions 
     setError('')
     try {
       const nextComparisons = await fetchUsageOverviewComparisons(rangeQuery, { apiKeyId, keyViewer, signal: controller.signal })
-      if (sequence === requestSequence.current) setComparisons(nextComparisons)
+      if (sequence === requestSequence.current && !controller.signal.aborted) {
+        setComparisons(nextComparisons)
+        setLoadedQueryKey(queryKey)
+      }
     } catch (nextError) {
       if (controller.signal.aborted || sequence !== requestSequence.current) return
       if (isUsageRangeBoundsConflict(nextError) && onRangeBoundsConflict?.(nextError)) return
@@ -49,7 +56,7 @@ export function useUsageComparisonsData(options: UseUsageComparisonsDataOptions 
       if (sequence === requestSequence.current) setLoading(false)
       if (sequence === requestSequence.current) activeController.current = null
     }
-  }, [apiKeyId, keyViewer, onAuthRequired, onRangeBoundsConflict, rangeQuery])
+  }, [apiKeyId, keyViewer, onAuthRequired, onRangeBoundsConflict, queryKey, rangeQuery])
 
   useEffect(() => {
     if (!enabled || !rangeQuery.valid) return
@@ -62,5 +69,5 @@ export function useUsageComparisonsData(options: UseUsageComparisonsDataOptions 
     }
   }, [enabled, loadComparisons, rangeQuery.valid])
 
-  return { comparisons, loading, error, loadComparisons }
+  return { comparisons, currentComparisons: queryKey !== null && loadedQueryKey === queryKey ? comparisons : null, loading, error, loadComparisons }
 }

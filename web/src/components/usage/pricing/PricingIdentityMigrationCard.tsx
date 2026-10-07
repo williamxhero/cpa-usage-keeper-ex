@@ -10,7 +10,7 @@ import styles from './PricingIdentityMigrationCard.module.scss';
 
 type Confirmation = { action: 'migrate' | 'unbind' | 'rebind'; snapshotId: string; subjectId: string; targetId: string; ref: string; label: string };
 
-export function PricingIdentityMigrationCard({ canManage = true }: { canManage?: boolean }) {
+export function PricingIdentityMigrationCard({ canManage = true, onChanged }: { canManage?: boolean; onChanged?: () => void }) {
   const { t } = useTranslation();
   const [state, setState] = useState<PricingIdentityState | null>(null);
   const [subject, setSubject] = useState('');
@@ -24,6 +24,13 @@ export function PricingIdentityMigrationCard({ canManage = true }: { canManage?:
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const requestRef = useRef<AbortController | null>(null);
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+  const notifyChanged = () => {
+    // A parent refresh is fire-and-forget, not part of the committed mutation.
+    try { void Promise.resolve(onChangedRef.current?.()).catch(() => {}); }
+    catch { /* Refresh errors must not become mutation errors. */ }
+  };
   const resetSelection = useCallback(() => {
     setSubject(''); setDirectory(''); setBinding(''); setTarget(''); setPending(null);
   }, []);
@@ -90,6 +97,7 @@ export function PricingIdentityMigrationCard({ canManage = true }: { canManage?:
       // Preserve the actual committed receipt even if canonical GET fails. Old
       // snapshot-scoped selections must never remain actionable after a write.
       setSaved(result); resetSelection(); setState(null); setNotice('pricing_identity_migration.saved');
+      notifyChanged();
       try {
         const readback = await fetchPricingIdentityState(controller.signal);
         if (!controller.signal.aborted) setState(readback);
@@ -149,7 +157,7 @@ export function PricingIdentityMigrationCard({ canManage = true }: { canManage?:
         <Modal open={!!pending} title={t(pending?.action === 'migrate' ? 'pricing_identity_migration.migrate_confirm' : 'pricing_identity_migration.correction_confirm')} onClose={() => { if (!busy) setPending(null); }} closeDisabled={busy}
           footer={<><Button variant="secondary" disabled={busy} onClick={() => setPending(null)}>{t('common.cancel')}</Button><Button disabled={busy || !pending} onClick={() => void submit()}>{t('pricing_identity_migration.confirm')}</Button></>}>
           {pending && <div className={styles.body}><p>{pending.label}</p><p>{t('pricing_identity_migration.owner')} {pending.subjectId}</p>
-            {pending.targetId && <p>{t('pricing_identity_migration.target')} {pending.targetId}</p>}
+            {pending.action === 'rebind' && pending.targetId && <p>{t('pricing_identity_migration.target')} {pending.targetId}</p>}
             <p>{t(pending.action === 'migrate' ? 'pricing_identity_migration.migrate_warning' : 'pricing_identity_migration.correction_warning')}</p>
             <p>{t(`pricing_identity_migration.${pending.action}_detail`)}</p>
           </div>}

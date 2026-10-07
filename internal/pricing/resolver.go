@@ -24,25 +24,33 @@ func NewCostSubject(dimensions UsageDimensions, tokens helper.UsageTokenCostInpu
 }
 
 type CostResult struct {
-	Cost                helper.UsageTokenCostBreakdown
-	Available           bool
-	PricingStyle        string
-	MatchedModel        string
-	MatchedBy           string
-	RuleMultiplier      float64
-	CredentialSubjectID string
-	Scope               string
-	Multiplier          *float64
-	UnavailableReason   string
-	ChannelID           string
-	ChannelName         string
-	AttributionWarning  string
-	SelectedModel       string
-	SelectedBy          string
-	Mode                string
-	Fixed               *FixedTariff
-	ReferenceCost       helper.UsageTokenCostBreakdown
-	ReferenceAvailable  bool
+	Cost                       helper.UsageTokenCostBreakdown
+	Available                  bool
+	PricingStyle               string
+	MatchedModel               string
+	MatchedBy                  string
+	RuleMultiplier             float64
+	CredentialSubjectID        string
+	Scope                      string
+	Multiplier                 *float64
+	UnavailableReason          string
+	ChannelID                  string
+	ChannelName                string
+	AttributionWarning         string
+	SelectedModel              string
+	SelectedBy                 string
+	Mode                       string
+	Fixed                      *FixedTariff
+	ReferenceCost              helper.UsageTokenCostBreakdown
+	ReferenceAvailable         bool
+	ConfiguredEstimate         PriceEstimate
+	ReferenceEstimate          PriceEstimate
+	ReferenceUnavailableReason string
+	LegacyModelMultiplier      float64
+	LegacyRuleMultiplier       float64
+	FinalMultiplier            float64
+	matchedRules               [ruleFieldCount]MatchedRule
+	matchedRuleCount           int
 }
 
 // Resolver 在创建时固定绑定一个 Snapshot，确保单个响应不会混用新旧价格。
@@ -76,8 +84,26 @@ func (r Resolver) Calculate(subject CostSubject) CostResult {
 	} else {
 		result = r.CalculateLegacy(subject)
 	}
-	if r.HasPricingOverrides() {
-		result = withBaselineReference(result, subject, model, found)
+	result = withBaselineReference(result, subject, model, found)
+	if result.CredentialSubjectID == "" {
+		result.CredentialSubjectID = r.credentialSubject(subject)
+	}
+	result.LegacyModelMultiplier = 1
+	if found && model.pricing.PriceMultiplier != nil {
+		result.LegacyModelMultiplier = *model.pricing.PriceMultiplier
+	}
+	result.LegacyRuleMultiplier = result.RuleMultiplier
+	result.FinalMultiplier = result.LegacyModelMultiplier * result.RuleMultiplier
+	if result.Scope != "" {
+		// Explain replaced adjustments from the same pinned baseline, without
+		// changing the selected configured result or its historical fields.
+		legacy := r.CalculateLegacy(subject)
+		result.LegacyRuleMultiplier = legacy.RuleMultiplier
+		result.matchedRules, result.matchedRuleCount = legacy.matchedRules, legacy.matchedRuleCount
+		result.FinalMultiplier = 1
+		if result.Multiplier != nil {
+			result.FinalMultiplier = *result.Multiplier
+		}
 	}
 	result.ChannelID, result.ChannelName, result.AttributionWarning = r.ChannelAttribution(subject)
 	return result
@@ -102,6 +128,12 @@ func withBaselineReference(result CostResult, subject CostSubject, model compile
 	result.ReferenceAvailable = found || !helper.UsageTokenInputRequiresPricing(subject.Tokens)
 	if found {
 		result.ReferenceCost = helper.CalculateUsageTokenCostBreakdown(subject.Tokens, unadjustedPricing(model))
+		if !finiteBreakdown(result.ReferenceCost) {
+			return result.IncompleteReference("reference_overflow")
+		}
+	}
+	if !result.ReferenceAvailable {
+		result.ReferenceUnavailableReason = "missing_baseline"
 	}
 	return result
 }
@@ -125,10 +157,10 @@ func calculateCredentialDefault(subject CostSubject, id string, multiplier float
 func (r Resolver) CalculateLegacy(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
 	if !found {
-		return CostResult{
+		return withBaselineReference(CostResult{
 			Available:      !helper.UsageTokenInputRequiresPricing(subject.Tokens),
-			RuleMultiplier: 1,
-		}
+			RuleMultiplier: 1, LegacyModelMultiplier: 1, LegacyRuleMultiplier: 1, FinalMultiplier: 1,
+		}, subject, model, false)
 	}
 
 	breakdown := helper.CalculateUsageTokenCostBreakdown(subject.Tokens, model.pricing)
@@ -137,14 +169,25 @@ func (r Resolver) CalculateLegacy(subject CostSubject) CostResult {
 		ruleMultiplier = matchingRuleMultiplier(model.rules, subject.Dimensions)
 		breakdown = helper.ScaleUsageTokenCostBreakdown(breakdown, ruleMultiplier)
 	}
-	return CostResult{
-		Cost:           breakdown,
-		Available:      true,
-		PricingStyle:   model.pricing.PricingStyle,
-		MatchedModel:   matchedModel,
-		MatchedBy:      matchedBy,
-		RuleMultiplier: ruleMultiplier,
+	modelMultiplier := 1.0
+	if model.pricing.PriceMultiplier != nil {
+		modelMultiplier = *model.pricing.PriceMultiplier
 	}
+	var matchedRules [ruleFieldCount]MatchedRule
+	matchedRuleCount := 0
+	if modelMultiplier != 0 {
+		for _, rule := range model.rules {
+			if subject.Dimensions.Value(rule.field) == rule.value {
+				matchedRules[matchedRuleCount] = MatchedRule{Key: rule.field.String(), Multiplier: rule.multiplier}
+				matchedRuleCount++
+			}
+		}
+	}
+	return withBaselineReference(CostResult{
+		Cost: breakdown, Available: true, PricingStyle: model.pricing.PricingStyle,
+		MatchedModel: matchedModel, MatchedBy: matchedBy, RuleMultiplier: ruleMultiplier,
+		LegacyModelMultiplier: modelMultiplier, LegacyRuleMultiplier: ruleMultiplier, FinalMultiplier: modelMultiplier * ruleMultiplier, matchedRules: matchedRules, matchedRuleCount: matchedRuleCount,
+	}, subject, model, true)
 }
 
 func (r Resolver) matchModel(dimensions UsageDimensions) (compiledModel, string, string, bool) {

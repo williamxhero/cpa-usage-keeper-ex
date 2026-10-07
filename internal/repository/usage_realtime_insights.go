@@ -24,10 +24,12 @@ func buildRealtimeInsights(buckets []usageOverviewRealtimeBucket) dto.RealtimeIn
 		s.CacheReadTokens += bucket.cacheReadTokens
 		s.CacheCreationTokens += bucket.cacheCreationTokens
 		s.CostUSD += bucket.costUSD
+		s.DualCosts.Merge(bucket.dualCosts)
 		s.CostAvailable = s.CostAvailable && bucket.costAvailable
 		result.Outcomes = append(result.Outcomes, dto.RealtimeOutcomePointRecord{
 			Bucket: timeutil.FormatStorageTime(bucket.bucketStart), Requests: bucket.requests, Failures: bucket.failures,
 		})
 	}
+	result.Summary.DualCosts = result.Summary.DualCosts.Normalized()
 	return result
 }

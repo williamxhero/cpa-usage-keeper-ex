@@ -21,6 +21,8 @@ import type { UsageOverviewPayload } from '@/components/usage/hooks/useUsageData
 import { getCurrentOverviewUsage, getDailyAverageCardUsage, getOverviewDisplayLoading, isDailyAverageRange } from '@/utils/usage/overview';
 import { clampStoredUsageRangeStateToCurrentBounds, resolveUsageRangeRecoveryTimeZone, type StoredUsageRangeState } from '@/utils/usage/customRange';
 import { buildUsageRangeQuery } from '@/utils/usage/rangeQuery';
+import { getOverviewPricingSnapshot, getPricingSnapshotId, pricingSnapshotsCompatible } from '@/utils/usage/pricingSnapshot';
+import { Button } from '@/components/ui/Button';
 import { loadKeyViewerTimeRange, persistKeyViewerTimeRange } from '@/features/key-viewer/timeRange';
 import styles from '@/features/key-viewer/KeyViewerShell.module.scss';
 
@@ -198,6 +200,7 @@ export function KeyOverviewPage({ page = 'overview', apiKey, onNavigate, onAuthR
   }, [rangeRecoveryTimeZone, timeRangeState]);
   const {
     comparisons: overviewComparisons,
+    currentComparisons: currentOverviewComparisons,
     loading: comparisonsLoading,
     error: comparisonsError,
     loadComparisons,
@@ -245,7 +248,7 @@ export function KeyOverviewPage({ page = 'overview', apiKey, onNavigate, onAuthR
         onAuthRequired?.();
         return;
       }
-      setError(nextError instanceof Error ? nextError.message : 'KEY_OVERVIEW_LOAD_FAILED');
+      setError('KEY_OVERVIEW_LOAD_FAILED');
     } finally {
       if (overviewRequestControllerRef.current === controller) {
         setLoading(false);
@@ -339,6 +342,10 @@ export function KeyOverviewPage({ page = 'overview', apiKey, onNavigate, onAuthR
 
   const overviewDisplayLoading = getOverviewDisplayLoading({ loading, hasUsage: Boolean(usage) });
   const currentOverviewUsage = getCurrentOverviewUsage(usage, usageRangeQueryKey, loadedUsageRange);
+  const overviewSnapshot = getOverviewPricingSnapshot(currentOverviewUsage);
+  const snapshotMismatch = !loading && !comparisonsLoading
+    && (overviewSnapshot.mixed || (Boolean(currentOverviewUsage && currentOverviewComparisons)
+      && !pricingSnapshotsCompatible(overviewSnapshot.id, getPricingSnapshotId(currentOverviewComparisons))));
   const reserveDailyAverageCard = isDailyAverageRange({
     range: timeRange,
     customUnit: customRange?.unit,
@@ -366,9 +373,6 @@ export function KeyOverviewPage({ page = 'overview', apiKey, onNavigate, onAuthR
     }
   }, [refreshDisabled, refreshKeyOverview]);
 
-  const displayError = error === 'KEY_OVERVIEW_LOAD_FAILED'
-    ? t('key_overview.load_failed')
-    : error;
   const displayRealtimeError = realtimeError
     ? t('usage_stats.overview_realtime_load_failed')
     : '';
@@ -387,7 +391,13 @@ export function KeyOverviewPage({ page = 'overview', apiKey, onNavigate, onAuthR
       onAuthRequired={onAuthRequired}
     >
       {page === 'overview' && <>
-      {(displayError || comparisonsError) && <div className={styles.errorBox}>{displayError || comparisonsError}</div>}
+      {(error || comparisonsError) && <div className={styles.errorBox}>{t('cost_estimates.load_failed')}</div>}
+      {snapshotMismatch && <div className={styles.errorBox} role="status" data-pricing-snapshot-notice>
+        {t('cost_estimates.snapshot_mismatch')}
+        <Button type="button" variant="secondary" size="sm" disabled={manualRefreshLoading || loading || comparisonsLoading} onClick={() => void handleManualRefresh()}>
+          {t('cost_estimates.refresh')}
+        </Button>
+      </div>}
 
       <StatCards
         usage={usage}

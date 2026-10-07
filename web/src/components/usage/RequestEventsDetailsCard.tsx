@@ -52,6 +52,7 @@ import {
 } from './requestEventColumns';
 import { RequestEventsColumnSettingsModal } from './RequestEventsColumnSettingsModal';
 import { RequestEventLogModal } from './RequestEventLogModal';
+import { DualCostsDisplay, PricingExplanation } from './DualCosts';
 import { RequestEventResultBadge } from './RequestEventResultBadge';
 
 export { splitRequestLogVirtualChunks } from './RequestEventLogModal';
@@ -370,6 +371,7 @@ export interface RequestEventsDetailsCardProps {
   requestLogDownloading?: boolean;
 }
 
+// The backend computes both estimates and selects the pricing explanation.
 const toNumber = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
@@ -1112,9 +1114,10 @@ export function RequestEventsDetailsCard({
         label: t('usage_stats.request_events_cost'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_events_cost')}</th>,
         renderCell: (row) => (
-          <td className={`${styles.requestEventsNoWrapCell} ${styles.requestEventsStackedCell}`} title={row.costAvailable ? undefined : t('usage_stats.cost_need_price')}>
-            <span className={styles.requestEventsStackedPrimary}>{row.costLabel}</span>
+          <td className={styles.requestEventsStackedCell} title={!row.event.dual_costs && !row.costAvailable ? t('usage_stats.cost_need_price') : undefined}>
+            <DualCostsDisplay costs={row.event.dual_costs} configuredFallback={row.cost} />
             <span className={styles.requestEventsStackedSecondary}>{row.pricingStyle}</span>
+            <PricingExplanation selection={row.event.pricing_selection} />
           </td>
         ),
       },

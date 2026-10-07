@@ -166,11 +166,22 @@ func applyUsageOverviewStatToOverviewWithCost(overview *dto.UsageOverviewRecord,
 			overview.Summary.UnavailableReason = result.UnavailableReason
 		}
 	}
+	overview.Summary.DualCosts.Add(result)
 	rowCost := result.Cost.TotalCostUSD
 	applyUsageOverviewStatToSummary(overview, row.InputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, rowCost)
 
 	bucketKey, bucketMinutes := usageOverviewBucket(timeutil.NormalizeStorageTime(row.BucketStart), bucketByDay)
 	applyUsageOverviewStatToSeries(&overview.Series, row.RequestCount, row.InputTokens, row.CacheReadTokens, row.TotalTokens, rowCost, bucketKey, bucketMinutes)
+	addUsageSeriesDualCosts(&overview.Series, bucketKey, result.DualCosts())
+}
+
+func addUsageSeriesDualCosts(series *dto.UsageOverviewSeriesRecord, bucket string, dual pricing.DualCosts) {
+	if series.DualCosts == nil {
+		series.DualCosts = map[string]pricing.DualCosts{}
+	}
+	total := series.DualCosts[bucket]
+	total.Merge(dual)
+	series.DualCosts[bucket] = total
 }
 
 func calculateUsageOverviewProjectionCost(costResolver pricing.Resolver, row usageOverviewStatProjection, grain string, evidence usagePricingEvidenceMap) pricing.CostResult {

@@ -7,7 +7,7 @@ import { ApiError, bindPricingCredential, fetchCredentialPricingSubjects, fetchP
 import type { PricingCredential } from '@/lib/types';
 import styles from './PricingCredentialsCard.module.scss';
 
-export function PricingCredentialsCard({ canManage = true }: { canManage?: boolean }) {
+export function PricingCredentialsCard({ canManage = true, onChanged }: { canManage?: boolean; onChanged?: () => void }) {
   const { t } = useTranslation();
   const [directory, setDirectory] = useState<PricingCredential[]>([]);
   const [subjects, setSubjects] = useState<PricingCredential[]>([]);
@@ -17,6 +17,13 @@ export function PricingCredentialsCard({ canManage = true }: { canManage?: boole
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const requestRef = useRef<AbortController | null>(null);
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+  const notifyChanged = () => {
+    // A parent refresh is fire-and-forget, not part of the committed mutation.
+    try { void Promise.resolve(onChangedRef.current?.()).catch(() => {}); }
+    catch { /* Refresh errors must not become mutation errors. */ }
+  };
 
   const load = async (signal: AbortSignal) => {
     const [rows, saved] = await Promise.all([fetchPricingCredentials(signal), fetchCredentialPricingSubjects(signal)]);
@@ -80,6 +87,7 @@ export function PricingCredentialsCard({ canManage = true }: { canManage?: boole
       setDirectory(current => current.map(item => item.directory_id === saved.directory_id ? saved : item));
       setSelected('');
       setNotice('pricing_credentials.saved');
+      notifyChanged();
       try { await load(controller.signal); }
       catch (cause) { if (!controller.signal.aborted) handleError(cause, 'pricing_credentials.load_failed'); }
     } catch (cause) {

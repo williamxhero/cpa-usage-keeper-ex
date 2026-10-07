@@ -134,8 +134,22 @@ func TestChannelModelsAdminHTTPFiveLayerMatrixReadbackSwitchClearRestart(t *test
 			}
 			selection := details.Events[0].Selection
 			if scope == "" {
-				if selection != nil {
-					t.Fatalf("legacy changed %+v", selection)
+				if selection == nil || selection.Scope != "legacy" || selection.Mode != "legacy" || !selection.Legacy || selection.LegacyAdjustmentsReplaced || selection.SnapshotID != catalog.NewResolver().SnapshotID() || selection.BaselineModel != "base" || selection.BaselineBy != "model_alias" || !selection.BaselineAvailable || selection.BaselineCostUSD == nil || *selection.BaselineCostUSD != 10 {
+					t.Fatalf("missing safe legacy selection/reference %+v", selection)
+				}
+				if selection.LegacyModelMultiplier != .5 || selection.LegacyRuleMultiplier != 6 || selection.FinalMultiplier != 3 || len(selection.MatchedRules) != 2 {
+					t.Fatalf("legacy multiplier explanation changed %+v", selection)
+				}
+				configured, reference := selection.DualCosts.Configured, selection.DualCosts.Reference
+				if !configured.Complete || !configured.HasKnown || configured.Status != "complete" || configured.TotalCostUSD == nil || *configured.TotalCostUSD != want || !reference.Complete || !reference.HasKnown || reference.Status != "complete" || reference.TotalCostUSD == nil || *reference.TotalCostUSD != 10 {
+					t.Fatalf("legacy configured/reference estimates changed %+v", selection.DualCosts)
+				}
+				evidence, err := json.Marshal(selection)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(evidence), identity.LookupKey) || strings.Contains(string(evidence), identity.Identity) {
+					t.Fatal("legacy pricing explanation leaked private evidence")
 				}
 			} else if selection == nil || selection.Scope != scope || selection.BaselineModel != "base" || selection.BaselineCostUSD == nil || *selection.BaselineCostUSD != 10 {
 				t.Fatalf("selection %s", res.Body.String())

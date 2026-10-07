@@ -25,9 +25,25 @@ const realtime: OverviewRealtimeBlock = {
 
 describe('useUsageStatsStore', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     useUsageStatsStore.getState().clearUsageStats()
   })
+
+  it.each(['overview', 'realtime'] as const)('forced %s pricing refresh cancels an in-flight same-query snapshot and ignores its late response', async (kind) => {
+    const old = Promise.withResolvers<unknown>();
+    const next = Promise.withResolvers<unknown>();
+    const fetcher = kind === 'overview' ? apiMocks.fetchUsageOverview : apiMocks.fetchUsageOverviewRealtime;
+    fetcher.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise);
+    const load = kind === 'overview' ? useUsageStatsStore.getState().loadUsageStats : useUsageStatsStore.getState().loadUsageStatsRealtime;
+    const first = load({ force: true, apiKeyId: 'safe-key' });
+    const signal: AbortSignal = kind === 'overview' ? fetcher.mock.calls[0][1] : fetcher.mock.calls[0][0].signal;
+    const refresh = load({ force: true, apiKeyId: 'safe-key' });
+    expect(signal.aborted).toBe(true); expect(fetcher).toHaveBeenCalledTimes(2);
+    const response = kind === 'overview' ? { usage: { total_requests: 1, success_count: 1, failure_count: 0, total_tokens: 20 } } : realtime;
+    next.resolve({ ...response, pricing_snapshot_id: 'new' }); await refresh;
+    old.resolve({ ...response, pricing_snapshot_id: 'old' }); await first;
+    expect((kind === 'overview' ? useUsageStatsStore.getState().usage : useUsageStatsStore.getState().realtime)?.pricing_snapshot_id).toBe('new');
+  });
 
   it('keeps overview and realtime loaders independent', async () => {
     const overview = Promise.withResolvers<unknown>()

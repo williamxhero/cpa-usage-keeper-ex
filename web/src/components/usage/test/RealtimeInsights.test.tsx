@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, expect, it, vi } from 'vitest';
-import type { RealtimeWindowSummary } from '@/lib/types';
+import type { PriceEstimate, RealtimeWindowSummary } from '@/lib/types';
 import i18n from '@/i18n';
 
 const charts = vi.hoisted(() => ({ mixed: [] as Array<Record<string, unknown>>, doughnut: [] as Array<Record<string, unknown>> }));
@@ -13,6 +13,22 @@ import { buildRealtimeCacheData, RealtimeDiagnostics, RealtimeWindowCards } from
 
 const summary: RealtimeWindowSummary = { requests: 10, failures: 2, token_requests: 5, cached_requests: 2, total_tokens: 1000, input_tokens: 800, output_tokens: 200, cache_read_tokens: 400, cache_creation_tokens: 100, reasoning_tokens: 80, cost: null };
 beforeEach(async () => { await i18n.changeLanguage('en'); charts.mixed = []; charts.doughnut = []; });
+
+it.each([
+  { amount: 0, status: 'complete' as const, expected: '$0.0000', state: 'Known zero' },
+  { amount: 5, status: 'partial' as const, expected: '$5.00', state: 'Partial · known subtotal' },
+  { amount: null, status: 'unavailable' as const, expected: '—', state: 'Unavailable' },
+])('shows authoritative $status costs in the realtime summary, not a fallback zero or multiplier guess', ({ amount, status, expected, state }) => {
+  const configured: PriceEstimate = { total_cost_usd: amount, uncached_input_cost_usd: amount ?? 0, output_cost_usd: 0, cache_read_cost_usd: 0, cache_write_cost_usd: 0, has_known: amount !== null, complete: status === 'complete', status };
+  const reference: PriceEstimate = { ...configured, total_cost_usd: 8, has_known: true, complete: true, status: 'complete' };
+  const html = renderToStaticMarkup(<RealtimeWindowCards summary={{ ...summary, cost: 99, dual_costs: { configured, reference } }} window="15m" />);
+  expect(html).toContain('Configured-price estimated cost');
+  expect(html).toContain(`>${expected}</strong>`);
+  expect(html).toContain(state);
+  expect(html).toContain('Baseline reference cost');
+  expect(html).toContain('>$8.00</strong>');
+  expect(html).not.toContain('$99.00');
+});
 
 it('shows cache reach and token cache share using their own denominators', () => {
   const html = renderToStaticMarkup(<><RealtimeWindowCards summary={summary} window="15m" /><RealtimeDiagnostics insights={{summary,outcomes:[]}} labels={[]} isDark={false} isMobile={false} /></>);

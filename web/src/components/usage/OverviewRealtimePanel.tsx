@@ -1,5 +1,6 @@
 import { RealtimeCacheChart, RealtimeDiagnostics, RealtimeWindowCards } from './RealtimeInsights';
 import { RealtimeTokenShareRibbons } from './RealtimeTokenShareRibbons';
+import { dualCostLines } from './DualCosts';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import '@/lib/chartjs';
@@ -7,6 +8,7 @@ import type { ChartData, ChartOptions, Plugin } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { LatencyScatterChart } from './LatencyScatterChart';
 import type {
+  DualCosts,
   OverviewRealtimeBlock,
   OverviewRealtimeWindow,
   RealtimeUsageTopItem,
@@ -46,6 +48,8 @@ interface RealtimeThroughputPoint {
   bucket: string;
   tokensPerMinute: number | null;
   requestsPerMinute: number | null;
+  cost?: number | null;
+  dualCosts?: DualCosts;
 }
 
 
@@ -167,6 +171,8 @@ function buildRealtimeThroughputPoints(data: OverviewRealtimeBlock): RealtimeThr
       bucket: point.bucket,
       tokensPerMinute: safeNumber(point.tokens_per_minute),
       requestsPerMinute: null,
+      cost: point.cost,
+      dualCosts: point.dual_costs,
     });
   });
   data.request_level.forEach((point) => {
@@ -175,6 +181,8 @@ function buildRealtimeThroughputPoints(data: OverviewRealtimeBlock): RealtimeThr
       bucket: point.bucket,
       tokensPerMinute: current?.tokensPerMinute ?? null,
       requestsPerMinute: safeNumber(point.requests_per_minute),
+      cost: current?.cost,
+      dualCosts: current?.dualCosts,
     });
   });
   return Array.from(points.values()).sort((left, right) => {
@@ -256,6 +264,7 @@ function buildThroughputOptions(
   tokenLabel: string,
   requestLabel: string,
   requestValues: Array<number | null>,
+  costTooltipLines: string[][],
 ): ChartOptions<'line'> {
   const gridColor = isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(17, 24, 39, 0.07)';
   const tickColor = isDark ? 'rgba(255, 255, 255, 0.66)' : 'rgba(17, 24, 39, 0.66)';
@@ -316,6 +325,7 @@ function buildThroughputOptions(
               : formatCompactNumber(value);
             return `${label}${formatted}`;
           },
+          afterBody: (items) => costTooltipLines[items[0]?.dataIndex ?? -1] ?? [],
         },
       },
     },
@@ -559,7 +569,8 @@ export function OverviewRealtimePanel({ realtime, loading, error, window, onWind
   const tokenShortLabel = t('usage_stats.tpm');
   const requestShortLabel = t('usage_stats.rpm');
 
-  const throughputOptions = useMemo(() => buildThroughputOptions(isDark, isMobile, tokenRateLabel, requestRateLabel, requestValues), [isDark, isMobile, requestRateLabel, requestValues, tokenRateLabel]);
+  const costTooltipLines = useMemo(() => throughputPoints.map((point) => dualCostLines(point.dualCosts, t, point.cost)), [throughputPoints, t]);
+  const throughputOptions = useMemo(() => buildThroughputOptions(isDark, isMobile, tokenRateLabel, requestRateLabel, requestValues, costTooltipLines), [isDark, isMobile, requestRateLabel, requestValues, tokenRateLabel, costTooltipLines]);
   const throughputChartData = useMemo(() => buildThroughputData(labels, tokenRateLabel, requestRateLabel, tokenValues, requestValues), [labels, requestRateLabel, requestValues, tokenRateLabel, tokenValues]);
   const latencyLabels = useMemo(() => ({
     ttft: t('usage_stats.ttft'),

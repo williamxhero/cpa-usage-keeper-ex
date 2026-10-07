@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Interaction, Tooltip } from 'chart.js';
 import type { ChartData, ChartOptions, Plugin } from 'chart.js';
-import type { AnalysisCompositionItem, AnalysisLatencyDiagnostics, AnalysisModelEfficiencyItem, AnalysisResponse, AnalysisTokenUsageBucket } from '@/lib/types';
+import type { AnalysisCompositionItem, AnalysisLatencyDiagnostics, AnalysisModelEfficiencyItem, AnalysisResponse, AnalysisTokenUsageBucket, PriceEstimate } from '@/lib/types';
 
 type TokenAverageLinePluginOptions = {
   value: number;
@@ -109,6 +109,17 @@ const tokenBucket = (overrides: Partial<AnalysisTokenUsageBucket> = {}): Analysi
   ...overrides,
 });
 
+const estimate = (amount: number | null, status: PriceEstimate['status'] = 'complete'): PriceEstimate => ({
+  total_cost_usd: amount,
+  uncached_input_cost_usd: amount ?? 0,
+  output_cost_usd: 0,
+  cache_read_cost_usd: 0,
+  cache_write_cost_usd: 0,
+  complete: status === 'complete',
+  has_known: amount !== null,
+  status,
+});
+
 describe('AnalysisPanel token chart data', () => {
   beforeEach(() => {
     vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(260);
@@ -128,6 +139,72 @@ describe('AnalysisPanel token chart data', () => {
   afterEach(() => {
     document.body.replaceChildren();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    { amount: 0, status: 'complete' as const, expected: '$0.0000 · cost_estimates.complete · cost_estimates.known_zero' },
+    { amount: 4, status: 'partial' as const, expected: '$4.00 · cost_estimates.partial' },
+    { amount: null, status: 'unavailable' as const, expected: '— · cost_estimates.unavailable' },
+  ])('renders backend $status estimates in summaries, rankings and token tooltip without changing chart values', ({ amount, status, expected }) => {
+    const dualCosts = { configured: estimate(amount, status), reference: estimate(7) };
+    const analysis: AnalysisResponse = {
+      ...emptyAnalysis,
+      token_usage: [tokenBucket({ cost_usd: 99, dual_costs: dualCosts })],
+      cost_breakdown: { ...emptyAnalysis.cost_breakdown, total_cost_usd: 99, dual_costs: dualCosts },
+      model_composition: [composition({ label: 'gpt-4o', dual_costs: dualCosts })],
+      model_usage: { buckets: ['2026-05-28T01:00:00Z'], series: [{ model: 'gpt-4o', total_tokens: [1000], requests: [4] }] },
+    };
+    const container = renderAnalysisPanel({ analysis, compositionDimensions: ['model'] });
+    const summary = container.querySelector('[class*="analysisSummary"]')!;
+    expect(summary.querySelector('[data-cost-estimate="configured"] strong')?.textContent).toBe(amount === null ? '—' : amount === 0 ? '$0.0000' : '$4.00');
+    expect(summary.querySelector('[data-cost-estimate="reference"] strong')?.textContent).toBe('$7.00');
+    for (const ranking of container.querySelectorAll('[class*="rankingList"]')) {
+      expect(ranking.querySelector('[data-cost-estimate="configured"]')?.textContent).toContain(`cost_estimates.${status}`);
+      expect(ranking.querySelector('[data-cost-estimate="reference"] strong')?.textContent).toBe('$7.00');
+      expect(ranking.querySelector('button')?.getAttribute('aria-label')).toContain(`cost_estimates.configured: ${expected}`);
+      expect(ranking.querySelector('button')?.getAttribute('aria-label')).toContain('cost_estimates.reference: $7.00 · cost_estimates.complete');
+    }
+    expect(chartCapture.barData?.datasets.find(dataset => dataset.yAxisID === 'cost')?.data).toEqual([99]);
+    expect(chartCapture.barOptions?.plugins?.tooltip?.callbacks?.label!({ dataset: { yAxisID: 'cost' }, dataIndex: 0, parsed: { y: 99 } } as never)).toEqual([
+      `cost_estimates.configured: ${expected}`,
+      'cost_estimates.reference: $7.00 · cost_estimates.complete',
+    ]);
+  });
+
+  it('uses authoritative heatmap row and column estimates without summing cell references', () => {
+    const key = '9007199254740993';
+    const cellCosts = { configured: estimate(1), reference: estimate(2) };
+    const analysis: AnalysisResponse = {
+      ...emptyAnalysis,
+      heatmap: {
+        api_keys: [key], api_key_labels: { [key]: 'Primary Key' }, models: ['gpt-4o'],
+        row_dual_costs: { [key]: { configured: estimate(11, 'partial'), reference: estimate(22) } },
+        column_dual_costs: { 'gpt-4o': { configured: estimate(33), reference: estimate(null, 'unavailable') } },
+        cells: [{ ...tokenBucket({ cost_usd: 99, dual_costs: cellCosts }), api_key: key, model: 'gpt-4o', intensity: 1 }],
+      },
+    };
+    const container = renderAnalysisPanel({ analysis });
+    const row = container.querySelector('[class*="heatmapRowContents"]')!;
+    const costCell = row.querySelector('[class*="heatmapTotalCostColumn"]')!;
+    expect(costCell.textContent).toBe('$11.00');
+    expect(costCell.getAttribute('aria-label')).toContain('cost_estimates.configured: $11.00 · cost_estimates.partial');
+    expect(costCell.getAttribute('aria-label')).toContain('cost_estimates.reference: $22.00 · cost_estimates.complete');
+    expect(row.querySelector('[class*="heatmapCell"]')?.getAttribute('data-tooltip')).toContain('cost_estimates.reference: $2.00 · cost_estimates.complete');
+    expect(container.querySelector('[data-full-name="gpt-4o"]')?.getAttribute('aria-label')).toBe('gpt-4o, cost_estimates.configured: $33.00 · cost_estimates.complete, cost_estimates.reference: — · cost_estimates.unavailable');
+    expect(container.textContent).not.toContain(key);
+  });
+
+  it('appends backend estimates to model-efficiency hover groups while keeping the existing configured rate', () => {
+    const analysis: AnalysisResponse = { ...emptyAnalysis, model_efficiency: [efficiency({ dual_costs: { configured: estimate(8, 'partial'), reference: estimate(0) } })] };
+    renderAnalysisPanel({ analysis });
+    const external = chartCapture.scatterOptions[0].plugins?.tooltip?.external;
+    external!({
+      chart: { canvas: { getBoundingClientRect: () => ({ left: 0, top: 0 }) } },
+      tooltip: { opacity: 1, caretX: 100, caretY: 60, dataPoints: [{ dataIndex: 0 }] },
+    } as never);
+    expect(document.getElementById('analysis-model-efficiency-tooltip')?.textContent).toContain('cost_estimates.configured · usage_stats.analysis_cost_per_million_tokens: $1.00');
+    expect(document.getElementById('analysis-model-efficiency-tooltip')?.textContent).toContain('cost_estimates.configured: $8.00 · cost_estimates.partial');
+    expect(document.getElementById('analysis-model-efficiency-tooltip')?.textContent).toContain('cost_estimates.reference: $0.0000 · cost_estimates.complete · cost_estimates.known_zero');
   });
 
   it('splits cache read and write from input while keeping total tooltip values', () => {
@@ -152,8 +229,8 @@ describe('AnalysisPanel token chart data', () => {
     expect(datasets.find((dataset) => dataset.label === 'usage_stats.cache_creation_tokens')?.data).toEqual([100]);
     expect(datasets.find((dataset) => dataset.label === 'usage_stats.output_tokens')?.data).toEqual([50]);
     expect(datasets.find((dataset) => dataset.label === 'usage_stats.reasoning_tokens')?.data).toEqual([50]);
-    expect(datasets.find((dataset) => dataset.label === 'usage_stats.total_cost')?.data).toEqual([0.0123]);
-    expect(datasets.find((dataset) => dataset.label === 'usage_stats.total_cost')?.yAxisID).toBe('cost');
+    expect(datasets.find((dataset) => dataset.label === 'cost_estimates.configured')?.data).toEqual([0.0123]);
+    expect(datasets.find((dataset) => dataset.label === 'cost_estimates.configured')?.yAxisID).toBe('cost');
     expect(chartCapture.barOptions?.scales).toHaveProperty('cost');
     const tooltipLabel = chartCapture.barOptions?.plugins?.tooltip?.callbacks?.label;
     expect(tooltipLabel!({
@@ -757,14 +834,18 @@ describe('AnalysisPanel token chart data', () => {
     expect([...groups[0].children].map((metric) => metric.textContent)).toEqual([
       'gpt-4o',
       'usage_stats.total_tokens: 2.00M',
-      'usage_stats.analysis_cost_per_million_tokens: $1.00',
+      'cost_estimates.configured · usage_stats.analysis_cost_per_million_tokens: $1.00',
       'usage_stats.requests_count: 4',
+      'cost_estimates.configured: $2.00 · cost_estimates.not_provided',
+      'cost_estimates.reference: — · cost_estimates.not_provided',
     ]);
     expect([...groups[1].children].map((metric) => metric.textContent)).toEqual([
       'claude-sonnet',
       'usage_stats.total_tokens: 2.00M',
-      'usage_stats.analysis_cost_per_million_tokens: $1.00',
+      'cost_estimates.configured · usage_stats.analysis_cost_per_million_tokens: $1.00',
       'usage_stats.requests_count: 6',
+      'cost_estimates.configured: $2.00 · cost_estimates.not_provided',
+      'cost_estimates.reference: — · cost_estimates.not_provided',
     ]);
   });
 
@@ -877,7 +958,7 @@ describe('AnalysisPanel token chart data', () => {
     const container = renderAnalysisPanel({ analysis });
     const markup = container.innerHTML;
 
-    const costDataset = chartCapture.barData?.datasets.find((dataset) => dataset.label === 'usage_stats.total_cost');
+    const costDataset = chartCapture.barData?.datasets.find((dataset) => dataset.label === 'cost_estimates.configured');
     expect(costDataset?.data).toEqual([0]);
     expect(chartCapture.scatterData).toHaveLength(0);
     expect(markup).toMatch(/Unpriced Key[\s\S]*\$0\.0000/);
@@ -885,7 +966,8 @@ describe('AnalysisPanel token chart data', () => {
     expect(markup).not.toContain('usage_stats.analysis_token_usage_subtitle (usage_stats.cost_need_price)');
     expect([...container.querySelectorAll('h2')].filter((heading) => heading.parentElement?.textContent?.includes('usage_stats.cost_need_price'))).toHaveLength(4);
     expect(container.querySelector('[class*="analysisSummary"]')?.textContent).toContain('usage_stats.analysis_cost_per_million_tokens$0.0000');
-    expect(markup).toContain('usage_stats.total_cost: $0.0000');
+    expect(markup).toContain('cost_estimates.configured: $0.0000 · cost_estimates.not_provided');
+    expect(markup).toContain('cost_estimates.reference: — · cost_estimates.not_provided');
   });
 
   it('keeps partially priced summary rates visible under the token chart pricing hint', () => {
@@ -908,10 +990,10 @@ describe('AnalysisPanel token chart data', () => {
     const container = renderAnalysisPanel({ analysis });
     const markup = container.innerHTML;
 
-    const costDataset = chartCapture.barData?.datasets.find((dataset) => dataset.label === 'usage_stats.total_cost');
+    const costDataset = chartCapture.barData?.datasets.find((dataset) => dataset.label === 'cost_estimates.configured');
     expect(costDataset?.data).toEqual([9]);
     expect(markup).toContain('usage_stats.cost_need_price');
-    expect([...container.querySelectorAll('[class*="analysisSummary"] dd')].map((value) => value.textContent)).toEqual(['1.10K', '$9.00', '$8,181.82']);
+    expect([...container.querySelectorAll('[class*="analysisSummary"] dd')].map((value) => value.textContent)).toEqual(['1.10K', 'cost_estimates.configured$9.00cost_estimates.not_providedcost_estimates.reference—cost_estimates.not_provided', '$8,181.82']);
   });
 
   it('shows compact heatmap cells with id keys and display labels', () => {
@@ -947,12 +1029,13 @@ describe('AnalysisPanel token chart data', () => {
     expect(markup).toContain('Primary Key');
     expect(markup).not.toContain(responseKey);
     expect(markup).toContain('data-full-name="claude-3-7-sonnet-20250219-long-context"');
-    expect(markup).toContain('aria-label="claude-3-7-sonnet-20250219-long-context"');
+    expect(markup).toContain('aria-label="claude-3-7-sonnet-20250219-long-context, cost_estimates.configured: — · cost_estimates.not_provided, cost_estimates.reference: — · cost_estimates.not_provided"');
     expect(markup).not.toContain('title="claude-3-7-sonnet-20250219-long-context"');
     expect(markup).toContain('usage_stats.requests_count');
     expect(markup).toContain('usage_stats.input_tokens');
     expect(markup).toContain('usage_stats.reasoning_tokens');
-    expect(markup).toContain('usage_stats.total_cost');
+    expect(markup).toContain('cost_estimates.configured');
+    expect(markup).toContain('cost_estimates.reference');
     expect(markup).not.toContain('usage_stats.analysis_heatmap_tokens_prefix');
     expect(markup).not.toContain('usage_stats.analysis_heatmap_requests_prefix');
   });

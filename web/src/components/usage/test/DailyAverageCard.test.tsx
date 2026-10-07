@@ -62,6 +62,13 @@ describe('buildDailyAverageMetrics', () => {
 });
 
 describe('DailyAverageCard', () => {
+  it('uses backend daily dual amounts without dividing range totals or reinterpreting cost_available', () => {
+    const estimate = (value: number) => ({ total_cost_usd: value, uncached_input_cost_usd: value, output_cost_usd: 0, cache_read_cost_usd: 0, cache_write_cost_usd: 0, complete: true, has_known: true, status: 'complete' as const });
+    const html = renderToStaticMarkup(<DailyAverageCard usage={{ ...usageWithDailyAverages, summary: { ...usageWithDailyAverages.summary, daily_average_dual_costs: { configured: estimate(2), reference: estimate(10) } } }} loading={false} />);
+    expect(html).toContain('Configured-price estimated cost'); expect(html).toContain('Baseline reference cost');
+    expect(html).toContain('$2.00'); expect(html).toContain('$10.00'); expect(html).not.toContain('$8.07');
+    expect(html).not.toContain('Set pricing to calculate cost');
+  });
   it('renders the three backend averages in one compact summary card', () => {
     const html = renderToStaticMarkup(<DailyAverageCard usage={usageWithDailyAverages} loading={false} />);
 

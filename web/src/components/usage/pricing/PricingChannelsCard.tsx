@@ -9,7 +9,7 @@ import { ApiError, clearPricingChannelDefault, deletePricingChannel, fetchCreden
 import type { PricingChannel, PricingCredential } from '@/lib/types';
 import styles from './PricingChannelsCard.module.scss';
 
-export function PricingChannelsCard({ canManage = true }: { canManage?: boolean }) {
+export function PricingChannelsCard({ canManage = true, onChanged }: { canManage?: boolean; onChanged?: () => void }) {
   const { t } = useTranslation();
   const [channels, setChannels] = useState<PricingChannel[]>([]);
   const [subjects, setSubjects] = useState<PricingCredential[]>([]);
@@ -26,6 +26,13 @@ export function PricingChannelsCard({ canManage = true }: { canManage?: boolean 
   const [fieldError, setFieldError] = useState('');
   const [notice, setNotice] = useState('');
   const requestRef = useRef<AbortController | null>(null);
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+  const notifyChanged = () => {
+    // A parent refresh is fire-and-forget, not part of the committed mutation.
+    try { void Promise.resolve(onChangedRef.current?.()).catch(() => {}); }
+    catch { /* Refresh errors must not become mutation errors. */ }
+  };
   const reset = useCallback(() => {
     setSelected(''); setConfig(null); setName(''); setMembers([]); setCandidate(''); setMultiplier(''); setConfirmDelete(false);
   }, []);
@@ -98,6 +105,7 @@ export function PricingChannelsCard({ canManage = true }: { canManage?: boolean 
     // Preserve the committed canonical response if the subsequent GET fails.
     applyConfig(saved);
     setNotice('pricing_channels.saved');
+    notifyChanged();
     try {
       const result = await fetchPricingChannel(saved.id, controller.signal);
       if (!controller.signal.aborted) applyConfig(result);
@@ -139,6 +147,7 @@ export function PricingChannelsCard({ canManage = true }: { canManage?: boolean 
       await deletePricingChannel(config.id, true, controller.signal);
       if (controller.signal.aborted) return;
       setChannels(rows => rows.filter(item => item.id !== config.id)); reset(); setNotice('pricing_channels.deleted');
+      notifyChanged();
     } catch (cause) {
       if (!controller.signal.aborted) handleError(cause, 'pricing_channels.delete_failed');
     } finally { if (!controller.signal.aborted) setBusy(false); }

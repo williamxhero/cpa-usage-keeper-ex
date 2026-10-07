@@ -84,7 +84,8 @@ export const useUsageStatsStore = create<UsageStatsState>((set, get) => ({
     }
 
     if (loading && activeOverviewRequest) {
-      if (activeOverviewRequestKey === queryKey) {
+      // A forced pricing refresh must not reuse an older in-flight snapshot.
+      if (!force && activeOverviewRequestKey === queryKey) {
         return activeOverviewRequest;
       }
       activeOverviewRequestController?.abort();
@@ -156,7 +157,7 @@ export const useUsageStatsStore = create<UsageStatsState>((set, get) => ({
     }
 
     if (realtimeLoading && activeRealtimeRequest) {
-      if (activeRealtimeRequestKey === realtimeQueryKey) {
+      if (!force && activeRealtimeRequestKey === realtimeQueryKey) {
         return activeRealtimeRequest;
       }
       activeRealtimeRequestController?.abort();

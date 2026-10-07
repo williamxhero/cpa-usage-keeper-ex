@@ -7,6 +7,7 @@ import { ProviderBrandIcon } from '@/components/ProviderBrandIcon'
 import { RequestEventLogModal } from '@/components/usage/RequestEventLogModal'
 import { ApiError, fetchErrorEvents, fetchUsageEvents } from '@/lib/api'
 import type { ErrorEvent, UsageEvent, UsageEventRequestLogResponse } from '@/lib/types'
+import { eventSnapshotsCompatible, getEventsPricingSnapshot, pricingSnapshotsCompatible, type PricingSnapshotState } from '@/utils/usage/pricingSnapshot'
 import { AuthFileQuotaPanel } from './AuthFileCredentialsSection'
 import { CredentialErrorEventsList } from './CredentialErrorEventsList'
 import { CredentialHealthPanel } from './CredentialHealthPanel'
@@ -28,6 +29,9 @@ interface CredentialDetailDrawerProps {
   open: boolean
   selection: CredentialDetailSelection | null
   timeZone?: string
+  pricingRefreshRevision?: number
+  pricingSnapshotId?: string
+  onRefreshPricing?: () => void | Promise<void>
   onAuthRequired?: () => void
   onResetStats?: (id: string) => Promise<void>
   requestLogAccessEnabled?: boolean
@@ -75,6 +79,9 @@ export function CredentialDetailDrawer({
   open,
   selection,
   timeZone,
+  pricingRefreshRevision = 0,
+  pricingSnapshotId,
+  onRefreshPricing,
   onAuthRequired,
   onResetStats,
   requestLogAccessEnabled = false,
@@ -110,6 +117,8 @@ export function CredentialDetailDrawer({
   const [eventsLoadingMore, setEventsLoadingMore] = useState(false)
   const [eventsAutoLoadMore, setEventsAutoLoadMore] = useState(true)
   const [eventsError, setEventsError] = useState('')
+  const [snapshotMismatch, setSnapshotMismatch] = useState(false)
+  const eventsSnapshotRef = useRef<PricingSnapshotState>({ mixed: false })
   const [eventsNextCursor, setEventsNextCursor] = useState<string | null>(null)
   const firstPageControllerRef = useRef<AbortController | null>(null)
   const loadMoreControllerRef = useRef<AbortController | null>(null)
@@ -159,6 +168,8 @@ export function CredentialDetailDrawer({
     setEventsLoadingMore(false)
     setEventsAutoLoadMore(true)
     setEventsError('')
+    setSnapshotMismatch(false)
+    eventsSnapshotRef.current = { mixed: false }
     setEventsNextCursor(null)
   }, [])
 
@@ -195,7 +206,7 @@ export function CredentialDetailDrawer({
     if (activeTab === 'quota-history' && !hasQuotaHistory) setActiveTab('overview')
   }, [activeTab, hasQuotaHistory])
 
-  const loadFirstPage = useCallback(async () => {
+  const loadFirstPage = useCallback(async (snapshotRecovery = false) => {
     if (!open || activeTab !== 'requests' || !sourceFilter) return
     firstPageControllerRef.current?.abort()
     loadMoreControllerRef.current?.abort()
@@ -204,7 +215,10 @@ export function CredentialDetailDrawer({
     firstPageControllerRef.current = controller
     setEventsLoading(true)
     setEventsLoadingMore(false)
-    setEventsAutoLoadMore(true)
+    // Do not automatically paginate again after a snapshot recovery.
+    setEventsAutoLoadMore(!snapshotRecovery)
+    setSnapshotMismatch(snapshotRecovery)
+    setEventsNextCursor(null)
     setEventsError('')
     try {
       // 详情列表固定从当前凭证最近的原始事件开始，不继承外层页面的查询条件。
@@ -215,6 +229,15 @@ export function CredentialDetailDrawer({
         source: sourceFilter,
       })
       if (firstPageControllerRef.current !== controller) return
+      const snapshot = getEventsPricingSnapshot(response)
+      eventsSnapshotRef.current = snapshot
+      if (snapshot.mixed) {
+        setSnapshotMismatch(true)
+        setEventsAutoLoadMore(false)
+        setEvents([])
+        setEventsNextCursor(null)
+        return
+      }
       setEvents(response.events)
       setEventsNextCursor(response.has_more === true ? response.next_cursor?.trim() || null : null)
     } catch (error) {
@@ -225,7 +248,7 @@ export function CredentialDetailDrawer({
         onAuthRequired?.()
         return
       }
-      setEventsError(error instanceof Error ? error.message : t('usage_stats.credentials_detail_requests_load_failed'))
+      setEventsError(t('cost_estimates.load_failed'))
     } finally {
       if (firstPageControllerRef.current === controller) {
         firstPageControllerRef.current = null
@@ -243,7 +266,7 @@ export function CredentialDetailDrawer({
       loadMoreControllerRef.current?.abort()
       loadMoreControllerRef.current = null
     }
-  }, [activeTab, loadFirstPage, open])
+  }, [activeTab, loadFirstPage, open, pricingRefreshRevision])
 
   const loadFirstErrorPage = useCallback(async () => {
     if (!open || activeTab !== 'errors' || !identityId) return
@@ -357,8 +380,15 @@ export function CredentialDetailDrawer({
         source: sourceFilter,
       })
       if (loadMoreControllerRef.current !== controller) return
+      const snapshot = getEventsPricingSnapshot(response)
+      if (!eventSnapshotsCompatible(eventsSnapshotRef.current, snapshot)) {
+        setEventsNextCursor(null)
+        await loadFirstPage(true)
+        return
+      }
+      eventsSnapshotRef.current = { id: eventsSnapshotRef.current.id ?? snapshot.id, mixed: false }
       setEvents((current) => appendCredentialDetailEvents(current, response.events))
-      setEventsAutoLoadMore(true)
+      setEventsAutoLoadMore(!snapshotMismatch)
       setEventsNextCursor(response.has_more === true ? response.next_cursor?.trim() || null : null)
     } catch (error) {
       if (controller.signal.aborted) return
@@ -367,14 +397,14 @@ export function CredentialDetailDrawer({
         return
       }
       setEventsAutoLoadMore(false)
-      setEventsError(error instanceof Error ? error.message : t('usage_stats.credentials_detail_requests_load_failed'))
+      setEventsError(t('cost_estimates.load_failed'))
     } finally {
       if (loadMoreControllerRef.current === controller) {
         loadMoreControllerRef.current = null
         setEventsLoadingMore(false)
       }
     }
-  }, [authTypeFilter, eventsLoading, eventsLoadingMore, eventsNextCursor, onAuthRequired, sourceFilter, t])
+  }, [authTypeFilter, eventsLoading, eventsLoadingMore, eventsNextCursor, loadFirstPage, onAuthRequired, snapshotMismatch, sourceFilter, t])
 
   const loadMoreErrorEvents = useCallback(async () => {
     const cursor = errorEventsNextCursor?.trim()
@@ -405,6 +435,17 @@ export function CredentialDetailDrawer({
       }
     }
   }, [errorEventsLoading, errorEventsLoadingMore, errorEventsNextCursor, identityId, onAuthRequired, t])
+
+  const relatedSnapshotMismatch = !eventsLoading
+    && !pricingSnapshotsCompatible(pricingSnapshotId, eventsSnapshotRef.current.id)
+  const refreshPricing = async () => {
+    try {
+      if (onRefreshPricing) await onRefreshPricing()
+      else await loadFirstPage()
+    } catch {
+      setEventsError(t('cost_estimates.load_failed'))
+    }
+  }
 
   if (!selection || !row || !identity) return null
 
@@ -584,6 +625,12 @@ export function CredentialDetailDrawer({
           </section>
         ) : activeTab === 'requests' ? (
           <section id={requestsPanelId} role="tabpanel" aria-labelledby={requestsTabId} className={styles.requestsPanel}>
+            {snapshotMismatch || relatedSnapshotMismatch ? <div className={styles.requestError} role="status" data-pricing-snapshot-notice>
+              {t('cost_estimates.snapshot_mismatch')}
+              <Button type="button" variant="secondary" size="sm" disabled={eventsLoading} onClick={() => void refreshPricing()}>
+                {t('cost_estimates.refresh')}
+              </Button>
+            </div> : null}
             {eventsError ? <div className={styles.requestError} role="status">{eventsError}</div> : null}
             {eventsError && events.length === 0 ? null : (
               <CredentialRequestEventsList

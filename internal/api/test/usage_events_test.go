@@ -756,8 +756,8 @@ func TestUsageEventsExportCSVReturnsFilteredRowsWithoutPagination(t *testing.T) 
 	if contains(body, "is_deleted") {
 		t.Fatalf("expected export to use is_identity_deleted instead of is_deleted, got %s", body)
 	}
-	if contains(body, "cost_available") || contains(body, "pricing_style") {
-		t.Fatalf("expected csv export to omit cost availability metadata, got %s", body)
+	if !contains(body, "cost_available") || !contains(body, "pricing_selection") || contains(body, "pricing_style") {
+		t.Fatalf("expected additive cost availability and selection metadata without a pricing_style column, got %s", body)
 	}
 	if !contains(body, "Export Key") || !contains(body, ",7,") || !contains(body, "authidx-export-main") || !contains(body, "sonnet-export") || !contains(body, "actual-export-model") || !contains(body, "responses") || !contains(body, "failed") {
 		t.Fatalf("expected exported row values, got %s", body)
@@ -927,6 +927,7 @@ func TestUsageEventsExportJSONIncludesAllExportFields(t *testing.T) {
 		`"service_tier":"auto"`, `"response_service_tier":"default"`, `"client_ip":"192.0.2.11"`,
 		`"x_forwarded_for":"203.0.113.6"`, `"user_agent":"json-client/1.0"`, `"cache_read_tokens":3`,
 		`"cache_creation_tokens":4`, `"cache_read_rate":33.33333333333333`, `"status_code":200`, `"stream":true`,
+		`"cost_available":true`, `"pricing_selection":null`, `"dual_costs":`, `"pricing_snapshot_id":`,
 	} {
 		if !contains(body, fragment) {
 			t.Fatalf("missing JSON field/value %s in %s", fragment, body)
@@ -935,7 +936,7 @@ func TestUsageEventsExportJSONIncludesAllExportFields(t *testing.T) {
 	for _, fragment := range []string{
 		`"page"`, `"page_size"`, `\u003c`,
 		`\u0026`, `\u003e`, `"cached_tokens"`,
-		`"is_deleted"`, `"cost_available"`, `"pricing_style"`,
+		`"is_deleted"`, `"pricing_style"`,
 	} {
 		if contains(body, fragment) {
 			t.Fatalf("unexpected JSON field/value %s in %s", fragment, body)

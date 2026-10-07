@@ -50,7 +50,7 @@ func applyUsageEventToComparisonOnly(comparisons *dto.UsageOverviewComparisonsRe
 		failed = 1
 	}
 	result := resolver.Calculate(UsageEventCostSubject(event))
-	row := dto.UsageComparisonItemRecord{Requests: 1, Failures: failed, InputTokens: event.InputTokens, OutputTokens: event.OutputTokens, CacheReadTokens: event.CacheReadTokens, CacheCreationTokens: event.CacheCreationTokens, ReasoningTokens: event.ReasoningTokens, TotalTokens: event.TotalTokens, CostUSD: result.Cost.TotalCostUSD, CostAvailable: result.Available}
+	row := dto.UsageComparisonItemRecord{Requests: 1, Failures: failed, InputTokens: event.InputTokens, OutputTokens: event.OutputTokens, CacheReadTokens: event.CacheReadTokens, CacheCreationTokens: event.CacheCreationTokens, ReasoningTokens: event.ReasoningTokens, TotalTokens: event.TotalTokens, CostUSD: result.Cost.TotalCostUSD, CostAvailable: result.Available, DualCosts: result.DualCosts()}
 	row.Bucket, _ = usageOverviewBucket(event.Timestamp, comparisons.Granularity == "daily")
 	applyUsageOverviewComparison(comparisons, event.Model, event.APIGroupKey, row)
 	if resolver.HasPricingOverrides() || resolver.HasChannels() {
@@ -114,6 +114,7 @@ func addUsageOverviewComparison(items map[string]*dto.UsageComparisonItemRecord,
 	if row.Bucket != "" {
 		item.TokenBuckets[row.Bucket] += row.TotalTokens
 	}
+	item.DualCosts.Merge(row.DualCosts)
 	item.CostUSD += row.CostUSD
 	item.CostAvailable = item.CostAvailable && row.CostAvailable
 }
@@ -130,7 +131,15 @@ func loadAndApplyUsageOverviewStats(overview *dto.UsageOverviewRecord, db *gorm.
 	if filter.ComparisonOnly && !resolver.HasPricingOverrides() && !resolver.HasChannels() {
 		evidenceGrain = "range"
 	}
-	evidence, err := loadUsagePricingEvidence(db, filter, start, end, evidenceGrain, resolver)
+	fields := resolver.ActiveFields()
+	if filter.ComparisonOnly && (resolver.HasPricingOverrides() || resolver.HasChannels()) {
+		fields = resolver.AttributionFields()
+	}
+	columns := UsagePricingDimensionColumns(fields)
+	if filter.ComparisonOnly && !resolver.HasPricingOverrides() && !resolver.HasChannels() {
+		columns = append(columns, "api_group_key", "auth_index")
+	}
+	evidence, err := loadUsagePricingEvidence(db, filter, start, end, evidenceGrain, resolver, columns)
 	if err != nil {
 		return err
 	}
@@ -159,7 +168,7 @@ func loadAndApplyUsageOverviewStats(overview *dto.UsageOverviewRecord, db *gorm.
 		}
 		for _, row := range rows {
 			result := calculateUsageOverviewComparisonProjectionCost(resolver, row, evidence)
-			comparison := dto.UsageComparisonItemRecord{Requests: row.RequestCount, Failures: row.FailureCount, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens, ReasoningTokens: row.ReasoningTokens, TotalTokens: row.TotalTokens, CostUSD: result.Cost.TotalCostUSD, CostAvailable: result.Available}
+			comparison := dto.UsageComparisonItemRecord{Requests: row.RequestCount, Failures: row.FailureCount, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens, ReasoningTokens: row.ReasoningTokens, TotalTokens: row.TotalTokens, CostUSD: result.Cost.TotalCostUSD, CostAvailable: result.Available, DualCosts: result.DualCosts()}
 			applyUsageOverviewComparison(overview.Comparisons, row.Model, row.APIGroupKey, comparison)
 			applyUsageOverviewIdentityComparison(overview.Comparisons, identityLookup, row.AuthIndex, comparison)
 		}
@@ -202,7 +211,7 @@ func loadAndApplyPricedUsageComparisons(overview *dto.UsageOverviewRecord, db *g
 	}
 	for _, row := range rows {
 		result := calculateUsageOverviewProjectionCost(resolver, row, grain, evidence)
-		comparison := dto.UsageComparisonItemRecord{Requests: row.RequestCount, Failures: row.FailureCount, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens, ReasoningTokens: row.ReasoningTokens, TotalTokens: row.TotalTokens, CostUSD: result.Cost.TotalCostUSD, CostAvailable: result.Available}
+		comparison := dto.UsageComparisonItemRecord{Requests: row.RequestCount, Failures: row.FailureCount, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens, ReasoningTokens: row.ReasoningTokens, TotalTokens: row.TotalTokens, CostUSD: result.Cost.TotalCostUSD, CostAvailable: result.Available, DualCosts: result.DualCosts()}
 		applyUsageOverviewComparison(overview.Comparisons, row.Model, row.APIGroupKey, comparison)
 		subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, 0, 0, 0, 0)
 		key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}

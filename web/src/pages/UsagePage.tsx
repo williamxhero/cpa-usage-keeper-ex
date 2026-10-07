@@ -23,7 +23,7 @@ import { CREDENTIAL_PAGES_REFRESH_INTERVAL_MS } from '@/components/usage/credent
 import { buildCredentialProviderSearch } from '@/components/usage/credentials/credentialProviderFilters';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useThemeStore } from '@/stores';
+import { buildUsageStatsQueryKey, useThemeStore, useUsageStatsStore } from '@/stores';
 import {
   StatCards,
   RecentActivityPanel,
@@ -57,6 +57,7 @@ import {
 import { clampCustomRangeToCurrentBounds, clampStoredUsageRangeStateToCurrentBounds, parseLegacyCustomRange, parseStoredUsageRangeState, resolveUsageRangeRecoveryTimeZone, serializeUsageRangeState, type StoredUsageRangeState } from '@/utils/usage/customRange';
 import { buildUsageRangeQuery } from '@/utils/usage/rangeQuery';
 import { getDailyAverageCardUsage, isDailyAverageRange } from '@/utils/usage/overview';
+import { eventSnapshotsCompatible, getAnalysisPricingSnapshot, getEventsPricingSnapshot, getOverviewPricingSnapshot, getPricingSnapshotId, pricingSnapshotsCompatible, type PricingSnapshotState } from '@/utils/usage/pricingSnapshot';
 import type { Theme } from '@/types';
 import { BrandLink } from '@/components/BrandLink';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -834,6 +835,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   });
   const {
     comparisons: overviewComparisons,
+    currentComparisons: currentOverviewComparisons,
     loading: comparisonsLoading,
     error: comparisonsError,
     loadComparisons,
@@ -889,6 +891,10 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     apiKeyId: requestApiKeyId,
     realtimeWindow,
   });
+  const refreshAllPricingCostsRef = useRef<(() => Promise<void>) | null>(null);
+  const handlePricingChanged = useCallback(() => {
+    void refreshAllPricingCostsRef.current?.().catch(() => {});
+  }, []);
   const {
     modelNames,
     modelPrices,
@@ -903,6 +909,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     previewPricingSync,
   } = usePricingData({
     onAuthRequired,
+    onChanged: handlePricingChanged,
     enabled: activeTab === 'settings',
   });
   const [apiKeySettings, setApiKeySettings] = useState<CpaApiKeySettingsItem[]>([]);
@@ -926,6 +933,8 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const [initialRequestEventsPreferences] = useState(loadRequestEventsPreferences);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventsError, setEventsError] = useState('');
+  const [eventsSnapshotMismatch, setEventsSnapshotMismatch] = useState(false);
+  const eventsSnapshotRef = useRef<PricingSnapshotState>({ mixed: false });
   const [eventsData, setEventsData] = useState<UsageEvent[]>([]);
   const [eventsPage, setEventsPage] = useState(1);
   const [eventsTotalCount, setEventsTotalCount] = useState(0);
@@ -947,6 +956,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const [credentialEditSelection, setCredentialEditSelection] = useState<CredentialDetailSelection | null>(null);
   const [credentialDetailOpen, setCredentialDetailOpen] = useState(false);
   const [credentialPriorityRevision, setCredentialPriorityRevision] = useState(0);
+  const [pricingRefreshRevision, setPricingRefreshRevision] = useState(0);
   const credentialDetailRequestRef = useRef<{ id: string; controller: AbortController } | null>(null);
   const [requestLogResponse, setRequestLogResponse] = useState<UsageEventRequestLogResponse | null>(null);
   const [requestLogError, setRequestLogError] = useState('');
@@ -1047,6 +1057,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState('');
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
+  const [loadedAnalysisQueryKey, setLoadedAnalysisQueryKey] = useState<string | null>(null);
+  const analysisQueryKey = usageRangeQuery.valid && apiKeyFilterReady ? buildUsageStatsQueryKey(usageRangeQuery, requestApiKeyId) : null;
+  const currentAnalysisData = analysisQueryKey !== null && loadedAnalysisQueryKey === analysisQueryKey ? analysisData : null;
   const [analysisLatencyLoading, setAnalysisLatencyLoading] = useState(false);
   const [analysisLatencyError, setAnalysisLatencyError] = useState('');
   const [analysisLatencyData, setAnalysisLatencyData] = useState<AnalysisLatencyDiagnostics | null>(null);
@@ -1268,8 +1281,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
       loadCore: () => fetchAnalysis(usageRangeQuery, controller.signal, requestApiKeyId),
       loadLatency: () => fetchAnalysisLatency(usageRangeQuery, controller.signal, requestApiKeyId),
       onCoreLoaded: (response) => {
-        if (analysisRequestControllerRef.current !== controller) return;
+        if (controller.signal.aborted || analysisRequestControllerRef.current !== controller) return;
         setAnalysisData(response);
+        setLoadedAnalysisQueryKey(analysisQueryKey);
         setAnalysisLoading(false);
       },
       onCoreError: (error) => {
@@ -1281,7 +1295,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
           onAuthRequired?.();
           return;
         }
-        setAnalysisError(error instanceof Error ? error.message : 'Failed to load usage analysis');
+        setAnalysisError(t('cost_estimates.load_failed'));
       },
       onLatencyLoaded: (response) => {
         if (analysisRequestControllerRef.current !== controller) return;
@@ -1297,14 +1311,14 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
           onAuthRequired?.();
           return;
         }
-        setAnalysisLatencyError(error instanceof Error ? error.message : 'Failed to load analysis latency');
+        setAnalysisLatencyError(t('cost_estimates.load_failed'));
       },
     });
 
     if (analysisRequestControllerRef.current === controller) {
       analysisRequestControllerRef.current = null;
     }
-  }, [apiKeyFilterReady, onAuthRequired, recoverRangeBoundsConflict, requestApiKeyId, usageRangeQuery]);
+  }, [analysisQueryKey, apiKeyFilterReady, onAuthRequired, recoverRangeBoundsConflict, requestApiKeyId, t, usageRangeQuery]);
 
   useEffect(() => {
     try {
@@ -1487,7 +1501,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     }
   }, [onAuthRequired]);
 
-  const loadEvents = useCallback(async () => {
+  const loadEvents = useCallback(async (snapshotRecovery = false) => {
     if (!usageRangeQuery.valid || !apiKeyFilterReady) return;
     eventsRequestControllerRef.current?.abort();
     eventsLoadMoreRequestControllerRef.current?.abort();
@@ -1498,7 +1512,10 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     setEventsLoading(true);
     setEventsLoadingMore(false);
     setEventsError('');
-    setEventsAutoLoadMore(true);
+    setEventsSnapshotMismatch(snapshotRecovery);
+    // A recovery is bounded to one first-page fetch; scrolling must not retry it forever.
+    setEventsAutoLoadMore(!snapshotRecovery);
+    setEventsNextCursor(null);
     try {
       const response = await fetchUsageEvents(usageRangeQuery, controller.signal, {
         pageSize: REQUEST_EVENTS_DEFAULT_PAGE_SIZE,
@@ -1509,6 +1526,17 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         apiKeyId: requestApiKeyId,
       });
       if (eventsRequestControllerRef.current !== controller) {
+        return;
+      }
+      const snapshot = getEventsPricingSnapshot(response);
+      eventsSnapshotRef.current = snapshot;
+      if (snapshot.mixed) {
+        setEventsSnapshotMismatch(true);
+        setEventsAutoLoadMore(false);
+        setEventsData([]);
+        setEventsTotalCount(0);
+        setEventsNextCursor(null);
+        setEventsPage(1);
         return;
       }
       setEventsData(response.events);
@@ -1529,18 +1557,18 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         onAuthRequired?.();
         return;
       }
-      setEventsError(error instanceof Error ? error.message : 'Failed to load usage events');
+      setEventsError(t('cost_estimates.load_failed'));
     } finally {
       if (eventsRequestControllerRef.current === controller) {
         setEventsLoading(false);
         eventsRequestControllerRef.current = null;
       }
     }
-  }, [apiKeyFilterReady, eventsModelFilter, eventsResultFilter, eventsSourceFilter, onAuthRequired, recoverRangeBoundsConflict, requestApiKeyId, usageRangeQuery]);
+  }, [apiKeyFilterReady, eventsModelFilter, eventsResultFilter, eventsSourceFilter, onAuthRequired, recoverRangeBoundsConflict, requestApiKeyId, t, usageRangeQuery]);
 
   const loadMoreEvents = useCallback(async () => {
     const cursor = eventsNextCursor?.trim();
-    if (!cursor || !eventsHasMore || eventsLoadMoreRequestControllerRef.current) return;
+    if (!cursor || !eventsHasMore || eventsLoading || eventsRequestControllerRef.current || eventsLoadMoreRequestControllerRef.current) return;
     if (!usageRangeQuery.valid || !apiKeyFilterReady) return;
 
     const controller = new AbortController();
@@ -1558,7 +1586,14 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         apiKeyId: requestApiKeyId,
       });
       if (eventsLoadMoreRequestControllerRef.current !== controller) return;
-      setEventsAutoLoadMore(true);
+      const snapshot = getEventsPricingSnapshot(response);
+      if (!eventSnapshotsCompatible(eventsSnapshotRef.current, snapshot)) {
+        setEventsNextCursor(null);
+        await loadEvents(true);
+        return;
+      }
+      eventsSnapshotRef.current = { id: eventsSnapshotRef.current.id ?? snapshot.id, mixed: false };
+      setEventsAutoLoadMore(!eventsSnapshotMismatch);
       setEventsData((currentEvents) => appendUniqueUsageEvents(currentEvents, response.events));
       if (response.total_count >= 0) {
         setEventsTotalCount(response.total_count);
@@ -1572,7 +1607,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         pauseAutoLoadMore: () => setEventsAutoLoadMore(false),
         recoverRangeBoundsConflict,
         onAuthRequired,
-        setError: setEventsError,
+        setError: () => setEventsError(t('cost_estimates.load_failed')),
       });
     } finally {
       if (eventsLoadMoreRequestControllerRef.current === controller) {
@@ -1580,7 +1615,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         setEventsLoadingMore(false);
       }
     }
-  }, [apiKeyFilterReady, eventsHasMore, eventsModelFilter, eventsNextCursor, eventsResultFilter, eventsSourceFilter, onAuthRequired, recoverRangeBoundsConflict, requestApiKeyId, usageRangeQuery]);
+  }, [apiKeyFilterReady, eventsHasMore, eventsLoading, eventsModelFilter, eventsNextCursor, eventsResultFilter, eventsSnapshotMismatch, eventsSourceFilter, loadEvents, onAuthRequired, recoverRangeBoundsConflict, requestApiKeyId, t, usageRangeQuery]);
 
   const resetEventsPage = useCallback(() => {
     eventsLoadMoreRequestControllerRef.current?.abort();
@@ -1770,6 +1805,34 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     });
   }, [onAuthRequired, requestLogAccessEnabled, showTopNotice, t]);
 
+  const refreshAllPricingCosts = useCallback(async () => {
+    setPricingRefreshRevision((revision) => revision + 1);
+    if (!apiKeyFilterReady) {
+      // Do not retain a fresh-looking old snapshot while the saved Key is still resolving.
+      useUsageStatsStore.getState().clearUsageStats();
+      return;
+    }
+    setManualRefreshLoading(true);
+    try {
+      // Every cost query owns its cancellation/identity guards; retain all query inputs.
+      await Promise.all([loadUsage(), loadComparisons(), loadEvents(), loadRealtime(), loadAnalysis()]);
+    } catch (error) {
+      if (recoverRangeBoundsConflict(error)) return;
+      if (error instanceof ApiError && error.status === 401) {
+        onAuthRequired?.();
+        return;
+      }
+      setStatusError(t('cost_estimates.load_failed'));
+    } finally {
+      setManualRefreshLoading(false);
+    }
+  }, [apiKeyFilterReady, loadAnalysis, loadComparisons, loadEvents, loadRealtime, loadUsage, onAuthRequired, recoverRangeBoundsConflict, t]);
+
+  useEffect(() => {
+    refreshAllPricingCostsRef.current = refreshAllPricingCosts;
+    return () => { refreshAllPricingCostsRef.current = null; };
+  }, [refreshAllPricingCosts]);
+
   const refreshActiveTab = useCallback(async () => {
     if (!apiKeyFilterReady && shouldShowApiKeyFilter(activeTab)) return;
     if (activeTab === 'realtime') {
@@ -1822,8 +1885,8 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
       onAuthRequired?.();
       return;
     }
-    setStatusError(error instanceof Error ? error.message : 'REFRESH_FAILED');
-  }, [onAuthRequired, recoverRangeBoundsConflict]);
+    setStatusError(activeTab === 'overview' || activeTab === 'events' || activeTab === 'realtime' || activeTab === 'analysis' ? t('cost_estimates.load_failed') : error instanceof Error ? error.message : 'REFRESH_FAILED');
+  }, [activeTab, onAuthRequired, recoverRangeBoundsConflict, t]);
 
   const autoRefreshEnabled = shouldAutoRefreshUsageTab({
     activeTab,
@@ -1840,11 +1903,11 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         onAuthRequired?.();
         return;
       }
-      setStatusError(error instanceof Error ? error.message : 'REFRESH_FAILED');
+      setStatusError(activeTab === 'overview' || activeTab === 'events' || activeTab === 'realtime' || activeTab === 'analysis' ? t('cost_estimates.load_failed') : error instanceof Error ? error.message : 'REFRESH_FAILED');
     } finally {
       setManualRefreshLoading(false);
     }
-  }, [onAuthRequired, recoverRangeBoundsConflict, refreshActiveTab]);
+  }, [activeTab, onAuthRequired, recoverRangeBoundsConflict, refreshActiveTab, t]);
 
   const handleRequestLogout = useCallback(() => {
     setLogoutConfirmOpen(true);
@@ -2022,6 +2085,29 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     costSparkline
   } = useSparklines({ usage, loading });
 
+  const overviewSnapshot = getOverviewPricingSnapshot(currentOverviewUsage);
+  const overviewSnapshotMismatch = activeTab === 'overview' && !loading && !comparisonsLoading
+    && (overviewSnapshot.mixed || (Boolean(currentOverviewUsage && currentOverviewComparisons)
+      && !pricingSnapshotsCompatible(overviewSnapshot.id, getPricingSnapshotId(currentOverviewComparisons))));
+  // Some tabs clamp a saved custom range; do not pin them to an old, wider Overview query.
+  const overviewMatchesActiveQuery = timeRange !== 'custom' || (customRange?.unit === activeCustomRange?.unit
+    && customRange?.start === activeCustomRange?.start && customRange?.end === activeCustomRange?.end);
+  const eventsRelatedSnapshotMismatch = activeTab === 'events' && !eventsLoading && !loading && !comparisonsLoading
+    && ((overviewMatchesActiveQuery && Boolean(currentOverviewUsage)
+      && !eventSnapshotsCompatible(eventsSnapshotRef.current, overviewSnapshot))
+      || (Boolean(currentOverviewComparisons)
+        && !pricingSnapshotsCompatible(eventsSnapshotRef.current.id, getPricingSnapshotId(currentOverviewComparisons))));
+  const analysisSnapshot = getAnalysisPricingSnapshot(currentAnalysisData);
+  const analysisSnapshotMismatch = activeTab === 'analysis' && !analysisLoading && Boolean(currentAnalysisData)
+    && (analysisSnapshot.mixed || (!loading && !comparisonsLoading
+      && ((overviewMatchesActiveQuery && Boolean(currentOverviewUsage)
+        && !eventSnapshotsCompatible(analysisSnapshot, overviewSnapshot))
+        || (Boolean(currentOverviewComparisons)
+          && !pricingSnapshotsCompatible(analysisSnapshot.id, getPricingSnapshotId(currentOverviewComparisons))))));
+  const relatedPricingSnapshotId = !loading && !comparisonsLoading && !overviewSnapshot.mixed
+    && pricingSnapshotsCompatible(overviewSnapshot.id, getPricingSnapshotId(currentOverviewComparisons))
+    ? overviewSnapshot.id ?? getPricingSnapshotId(currentOverviewComparisons)
+    : undefined;
   const overviewDisplayLoading = getOverviewDisplayLoading({ loading, hasUsage: Boolean(usage) });
   const reserveDailyAverageCard = isDailyAverageRange({
     range: timeRange,
@@ -2248,11 +2334,20 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
               refreshing={manualRefreshLoading}
             />}
 
-            {activeTab === 'overview' && (error || comparisonsError) && <div className={styles.errorBox}>{(error || comparisonsError) === 'AUTH_REQUIRED' ? t('auth.session_expired') : (error || comparisonsError)}</div>}
+            {activeTab === 'overview' && (error || comparisonsError) && <div className={styles.errorBox}>{(error || comparisonsError) === 'AUTH_REQUIRED' ? t('auth.session_expired') : t('cost_estimates.load_failed')}</div>}
             {activeTab === 'settings' && pricingError && <div className={styles.errorBox}>{pricingError === 'AUTH_REQUIRED' ? t('auth.session_expired') : pricingError}</div>}
             {activeTab === 'settings' && authSessionsError && <div className={styles.errorBox}>{authSessionsError}</div>}
             {activeTab === 'settings' && apiKeySettingsError && <div className={styles.errorBox}>{apiKeySettingsError}</div>}
             {!(activeTab === 'overview' ? error : activeTab === 'settings' ? (pricingError || authSessionsError || apiKeySettingsError) : '') && displayStatusError && <div className={styles.errorBox}>{displayStatusError}</div>}
+
+            {(overviewSnapshotMismatch || analysisSnapshotMismatch || eventsRelatedSnapshotMismatch || (activeTab === 'events' && eventsSnapshotMismatch)) && (
+              <div className={styles.errorBox} role="status" data-pricing-snapshot-notice>
+                {t('cost_estimates.snapshot_mismatch')}
+                <Button type="button" variant="secondary" size="sm" disabled={manualRefreshLoading || (activeTab === 'overview' ? loading || comparisonsLoading : activeTab === 'analysis' ? analysisLoading : eventsLoading)} onClick={() => void refreshAllPricingCosts()}>
+                  {t('cost_estimates.refresh')}
+                </Button>
+              </div>
+            )}
 
             {activeTab === 'overview' && (
               <>
@@ -2469,12 +2564,12 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                   onSaveAlias={handleSaveApiKeyAlias}
                   onNotice={showTopNotice}
                 />
-                <PricingCredentialsCard />
-                <PricingIdentityMigrationCard />
-                <PricingCredentialDefaultsCard />
-                <PricingChannelsCard />
-                <PricingCredentialModelsCard />
-                <PricingChannelModelsCard />
+                <PricingCredentialsCard onChanged={handlePricingChanged} />
+                <PricingIdentityMigrationCard onChanged={handlePricingChanged} />
+                <PricingCredentialDefaultsCard onChanged={handlePricingChanged} />
+                <PricingChannelsCard onChanged={handlePricingChanged} />
+                <PricingCredentialModelsCard onChanged={handlePricingChanged} />
+                <PricingChannelModelsCard onChanged={handlePricingChanged} />
                 <PriceSettingsCard
                   modelNames={modelNames}
                   modelPrices={modelPrices}
@@ -2507,6 +2602,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         open={credentialDetailOpen}
         selection={currentCredentialDetailSelection}
         timeZone={credentialTimeZone}
+        pricingRefreshRevision={pricingRefreshRevision}
+        pricingSnapshotId={relatedPricingSnapshotId}
+        onRefreshPricing={refreshAllPricingCosts}
         onResetStats={handleCredentialStatsReset}
         onAuthRequired={onAuthRequired}
         requestLogAccessEnabled={requestLogAccessEnabled}

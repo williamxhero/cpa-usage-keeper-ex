@@ -42,9 +42,10 @@ func TestChannelModelPersistedFiveLayerAddClearModelAliasAllCostFamilies(t *test
 			}
 			selection := event.PricingSelection
 			if scope == "" {
-				if selection != nil {
-					t.Fatalf("legacy output changed %+v", selection)
+				if selection == nil || !selection.Legacy || selection.Scope != "legacy" || selection.LegacyAdjustmentsReplaced || !selection.BaselineAvailable || selection.SnapshotID != page.PricingSnapshotID {
+					t.Fatalf("legacy explanation %+v", selection)
 				}
+				closeCost(t, *selection.BaselineCostUSD, 10)
 				continue
 			}
 			if selection == nil || selection.Scope != scope || selection.SelectedModel != selected || selection.SelectedBy != by || selection.BaselineModel != "base" || selection.BaselineBy != "model_alias" || !selection.BaselineAvailable {
@@ -510,9 +511,11 @@ func TestChannelModelExactIdentityAmbiguityStyleLossAndLegacyCompatibility(t *te
 	if _, err := models.ClearChannelModel(ctx, f.ids[0], "base"); err != nil {
 		t.Fatal(err)
 	}
-	// No pricing selection/reference metadata is added when all overrides disappear.
+	// Clearing overrides preserves configured legacy fees; additive explanation
+	// and independent baseline reference remain available under ticket 8.
 	restored := f.catalog.NewResolver().Calculate(repository.UsageEventCostSubject(f.events[1]))
-	if !reflect.DeepEqual(legacy.Cost, restored.Cost) || f.catalog.NewResolver().Selection(restored) != nil {
+	selection := f.catalog.NewResolver().Selection(restored)
+	if !reflect.DeepEqual(legacy.Cost, restored.Cost) || selection == nil || !selection.Legacy || !selection.BaselineAvailable || selection.Scope != "legacy" {
 		t.Fatalf("legacy changed %+v %+v", legacy, restored)
 	}
 }

@@ -470,6 +470,101 @@ func TestPricingCredentialBindingDoesNotChangeLegacyCostsOrRequestAttributes(t *
 	router, cookie := credentialPricingRouter(t, db, catalog)
 	query := url.Values{"range": {"custom"}, "unit": {"hour"}, "start": {now.Add(-5 * time.Hour).Format(time.RFC3339)}, "end": {now.Format(time.RFC3339)}}.Encode()
 	paths := []string{"/api/v1/usage/overview?" + query, "/api/v1/usage/overview/comparisons?" + query, "/api/v1/usage/events?" + query, "/api/v1/pricing", "/api/v1/pricing/rules?model=model-a"}
+	legacyPayload := func(body string) any {
+		t.Helper()
+		var payload any
+		if err := json.Unmarshal([]byte(body), &payload); err != nil {
+			t.Fatal(err)
+		}
+		var stripAdditivePricing func(any)
+		stripAdditivePricing = func(value any) {
+			switch item := value.(type) {
+			case map[string]any:
+				delete(item, "pricing_snapshot_id")
+				delete(item, "pricing_selection")
+				delete(item, "dual_costs")
+				for _, child := range item {
+					stripAdditivePricing(child)
+				}
+			case []any:
+				for _, child := range item {
+					stripAdditivePricing(child)
+				}
+			}
+		}
+		stripAdditivePricing(payload)
+		return payload
+	}
+	assertPricingMetadata := func(path, body, snapshotID string) {
+		t.Helper()
+		if !strings.HasPrefix(path, "/api/v1/usage/") {
+			return
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(body), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if snapshotID == "" || payload["pricing_snapshot_id"] != snapshotID {
+			t.Fatalf("missing current root pricing snapshot on %s: %s", path, body)
+		}
+		var assertSnapshotIDs func(any)
+		assertSnapshotIDs = func(value any) {
+			switch item := value.(type) {
+			case map[string]any:
+				if id, exists := item["pricing_snapshot_id"]; exists && id != snapshotID {
+					t.Fatalf("mixed pricing snapshots on %s: %s", path, body)
+				}
+				for _, child := range item {
+					assertSnapshotIDs(child)
+				}
+			case []any:
+				for _, child := range item {
+					assertSnapshotIDs(child)
+				}
+			}
+		}
+		assertSnapshotIDs(payload)
+		if !strings.HasPrefix(path, "/api/v1/usage/events?") {
+			return
+		}
+		var events struct {
+			Events []struct {
+				Model      string                 `json:"model"`
+				Cost       float64                `json:"cost_usd"`
+				Available  bool                   `json:"cost_available"`
+				SnapshotID string                 `json:"pricing_snapshot_id"`
+				DualCosts  pricing.DualCosts      `json:"dual_costs"`
+				Selection  *pricing.CostSelection `json:"pricing_selection"`
+			}
+		}
+		if err := json.Unmarshal([]byte(body), &events); err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range events.Events {
+			selection := event.Selection
+			if event.SnapshotID != snapshotID || selection == nil || selection.SnapshotID != snapshotID || selection.Scope != "legacy" || selection.Mode != "legacy" || !selection.Legacy || selection.LegacyAdjustmentsReplaced || !reflect.DeepEqual(selection.DualCosts, event.DualCosts) {
+				t.Fatalf("missing legacy snapshot/explanation contract: %+v", event)
+			}
+			configured, reference := event.DualCosts.Configured, event.DualCosts.Reference
+			if event.Available {
+				if configured.TotalCostUSD == nil || *configured.TotalCostUSD != event.Cost || !configured.Complete || !configured.HasKnown || configured.Status != "complete" || reference.TotalCostUSD == nil || *reference.TotalCostUSD != 3.875 || !reference.Complete || !reference.HasKnown || reference.Status != "complete" || !selection.BaselineAvailable || selection.BaselineCostUSD == nil || *selection.BaselineCostUSD != 3.875 || selection.LegacyModelMultiplier != .5 || selection.LegacyRuleMultiplier != 2 || selection.FinalMultiplier != 1 {
+					t.Fatalf("priced legacy evidence changed: %+v", event)
+				}
+			} else if configured.TotalCostUSD != nil || configured.Complete || configured.HasKnown || configured.Status != "unavailable" || reference.TotalCostUSD != nil || reference.Complete || reference.HasKnown || reference.Status != "unavailable" || selection.BaselineAvailable || selection.BaselineCostUSD != nil {
+				t.Fatalf("missing-price legacy evidence fabricated coverage: %+v", event)
+			}
+			explanation, err := json.Marshal(selection)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, private := range []string{"synthetic-index", "downstream-a", "downstream-b", "https://synthetic.example/v1"} {
+				if strings.Contains(string(explanation), private) {
+					t.Fatalf("legacy explanation leaked %s", private)
+				}
+			}
+		}
+	}
+	beforeSnapshotID := catalog.NewResolver().SnapshotID()
 	before := map[string]string{}
 	for _, path := range paths {
 		res := serveAPIGet(router, path, cookie)
@@ -477,6 +572,7 @@ func TestPricingCredentialBindingDoesNotChangeLegacyCostsOrRequestAttributes(t *
 			t.Fatalf("baseline %s: %d %s", path, res.Code, res.Body.String())
 		}
 		before[path] = res.Body.String()
+		assertPricingMetadata(path, before[path], beforeSnapshotID)
 	}
 	if !strings.Contains(before[paths[0]], `"cost_available":false`) || !strings.Contains(before[paths[2]], `"cost_available":true`) || !strings.Contains(before[paths[2]], `"cost_available":false`) {
 		t.Fatal("baseline must exercise both known and missing-price availability")
@@ -496,16 +592,33 @@ func TestPricingCredentialBindingDoesNotChangeLegacyCostsOrRequestAttributes(t *
 	if res.Code != http.StatusCreated {
 		t.Fatalf("save: %d %s", res.Code, res.Body.String())
 	}
+	var saved safeCredential
+	if err := json.Unmarshal(res.Body.Bytes(), &saved); err != nil || saved.SubjectID == "" {
+		t.Fatalf("missing saved credential subject: %+v, %v", saved, err)
+	}
+	afterSnapshotID := catalog.NewResolver().SnapshotID()
+	if afterSnapshotID == beforeSnapshotID {
+		t.Fatal("binding did not publish a new pricing snapshot")
+	}
 	for _, path := range paths {
 		res = serveAPIGet(router, path, cookie)
-		if res.Code != http.StatusOK || res.Body.String() != before[path] {
+		if res.Code != http.StatusOK || !reflect.DeepEqual(legacyPayload(res.Body.String()), legacyPayload(before[path])) {
 			t.Fatalf("binding changed legacy response %s: %d %s", path, res.Code, res.Body.String())
 		}
+		assertPricingMetadata(path, res.Body.String(), afterSnapshotID)
 	}
 	// Ticket 3 publishes bindings in the same immutable candidate. The snapshot
 	// pointer must change, but legacy model prices, fees and match metadata must not.
-	if !reflect.DeepEqual(catalog.Snapshot().ModelConfigs(), baselineSnapshot.ModelConfigs()) || !reflect.DeepEqual(catalog.NewResolver().Calculate(costSubject), baselineCost) {
-		t.Fatal("binding changed published prices, cost or matching metadata")
+	currentCost := catalog.NewResolver().Calculate(costSubject)
+	if baselineCost.CredentialSubjectID != "" || currentCost.CredentialSubjectID != saved.SubjectID {
+		t.Fatalf("binding did not add the exact safe credential subject: before=%+v after=%+v", baselineCost, currentCost)
+	}
+	// Legacy calculations now carry bound-subject evidence even without overrides.
+	// Compare every other field, including all original cost and match metadata.
+	legacyCurrentCost := currentCost
+	legacyCurrentCost.CredentialSubjectID = baselineCost.CredentialSubjectID
+	if !reflect.DeepEqual(catalog.Snapshot().ModelConfigs(), baselineSnapshot.ModelConfigs()) || !reflect.DeepEqual(legacyCurrentCost, baselineCost) {
+		t.Fatalf("binding changed published prices, cost or matching metadata: before=%+v after=%+v", baselineCost, currentCost)
 	}
 	var persisted []entities.UsageEvent
 	if err := db.Order("id").Find(&persisted).Error; err != nil {

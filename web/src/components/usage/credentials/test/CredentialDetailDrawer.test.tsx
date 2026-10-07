@@ -415,6 +415,136 @@ describe('CredentialDetailDrawer', () => {
     expect(document.body.textContent).toContain('model-2')
   })
 
+  const openRequests = async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(2000)
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400)
+    await renderDrawer()
+    await act(async () => document.body.querySelector<HTMLButtonElement>('[data-credential-detail-tab="requests"]')!.click())
+  }
+  const scrollRequests = async () => {
+    const scroller = document.body.querySelector<HTMLElement>('[class*="scroller"]')!
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 1800 },
+    })
+    scroller.scrollTop = 1_300
+    await act(async () => scroller.dispatchEvent(new Event('scroll', { bubbles: true })))
+  }
+
+  it.each(['root', 'selection', 'mixed'] as const)('discards the %s snapshot cursor and reloads the same independent credential query once', async (metadata) => {
+    fetchUsageEvents.mockReset()
+      .mockResolvedValueOnce({ ...response('1', 'cursor-a'), pricing_snapshot_id: 'a' })
+      .mockResolvedValueOnce({ ...response('unsafe'), pricing_snapshot_id: metadata === 'root' ? 'b' : undefined,
+        events: [{ ...response('unsafe').events[0], pricing_snapshot_id: metadata === 'mixed' ? 'a' : undefined,
+          pricing_selection: metadata !== 'root' ? { snapshot_id: 'b' } : undefined }] })
+      .mockResolvedValueOnce({ ...response('fresh', 'cursor-b'), pricing_snapshot_id: 'b' })
+      .mockResolvedValue({ ...response('manual'), pricing_snapshot_id: 'b' })
+    await openRequests()
+    await scrollRequests()
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(3)
+    expect(fetchUsageEvents.mock.lastCall).toEqual([undefined, expect.any(AbortSignal), { authType: 2, cursorMode: true, pageSize: 50, source: 'auth-provider-1' }])
+    expect(document.body.textContent).not.toContain('model-unsafe')
+    expect(document.body.textContent).not.toContain('model-1')
+    expect(document.body.textContent).toContain('model-fresh')
+    expect(document.body.textContent).toContain('cost_estimates.snapshot_mismatch')
+    await scrollRequests()
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(3)
+    await act(async () => document.body.querySelector<HTMLButtonElement>('[data-pricing-snapshot-notice] button')!.click())
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(4)
+    expect(fetchUsageEvents.mock.lastCall![2].cursor).toBeUndefined()
+    expect(document.body.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+  })
+
+  it('appends unchanged snapshot pages and rejects an internally mixed first page without retrying', async () => {
+    fetchUsageEvents.mockReset()
+      .mockResolvedValueOnce({ ...response('1', 'cursor-a'), pricing_snapshot_id: 'a' })
+      .mockResolvedValueOnce({ ...response('2'), pricing_snapshot_id: 'a' })
+    await openRequests()
+    await scrollRequests()
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('model-2')
+    expect(document.body.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+    await renderDrawer({ open: false })
+    fetchUsageEvents.mockResolvedValue({ ...response('unsafe', 'cursor-unsafe'), pricing_snapshot_id: 'a', events: [{ ...response('unsafe').events[0], pricing_selection: { snapshot_id: 'b' } }] })
+    await openRequests()
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(3)
+    expect(document.body.textContent).not.toContain('model-unsafe')
+    expect(document.body.querySelector('[data-pricing-snapshot-notice]')).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(3)
+  })
+
+  it('aborts a pending pagination recovery and ignores its late first page when the credential changes', async () => {
+    let resolveRecovery!: (value: ReturnType<typeof response>) => void
+    fetchUsageEvents.mockReset()
+      .mockResolvedValueOnce({ ...response('1', 'cursor-a'), pricing_snapshot_id: 'a' })
+      .mockResolvedValueOnce({ ...response('unsafe'), pricing_snapshot_id: 'b' })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveRecovery = resolve }))
+      .mockResolvedValue({ ...response('other'), pricing_snapshot_id: 'c' })
+    await openRequests()
+    await scrollRequests()
+    const recoverySignal = fetchUsageEvents.mock.lastCall![1] as AbortSignal
+    await renderDrawer({ selection: secondSelection })
+    expect(recoverySignal.aborted).toBe(true)
+    await act(async () => document.body.querySelector<HTMLButtonElement>('[data-credential-detail-tab="requests"]')!.click())
+    await act(async () => resolveRecovery(response('late')))
+    expect(document.body.textContent).not.toContain('model-late')
+    expect(document.body.textContent).toContain('model-other')
+    expect(fetchUsageEvents.mock.lastCall![2].source).toBe('auth-provider-2')
+    expect(document.body.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+  })
+
+  it('invalidates an in-flight cursor page on a pricing revision without resetting the credential tab or query', async () => {
+    let resolveOld!: (value: ReturnType<typeof response>) => void
+    fetchUsageEvents.mockReset()
+      .mockResolvedValueOnce({ ...response('1', 'cursor-a'), pricing_snapshot_id: 'a' })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+      .mockResolvedValueOnce({ ...response('fresh'), pricing_snapshot_id: 'b' })
+    await openRequests()
+    await scrollRequests()
+    const oldSignal = fetchUsageEvents.mock.lastCall![1] as AbortSignal
+    await renderDrawer({ pricingRefreshRevision: 1 })
+    expect(oldSignal.aborted).toBe(true)
+    expect(document.body.querySelector('[data-credential-detail-tab="requests"]')?.getAttribute('aria-selected')).toBe('true')
+    expect(fetchUsageEvents.mock.lastCall![2]).toEqual({ authType: 2, cursorMode: true, pageSize: 50, source: 'auth-provider-1' })
+    await act(async () => resolveOld(response('late')))
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(3)
+    expect(document.body.textContent).toContain('model-fresh')
+    expect(document.body.textContent).not.toContain('model-late')
+    expect(document.body.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+  })
+
+  it('pins related drawer costs without inheriting the parent query and refreshes through the parent revision', async () => {
+    const onRefreshPricing = vi.fn()
+    fetchUsageEvents.mockReset().mockResolvedValue({ ...response('1'), pricing_snapshot_id: 'b' })
+    await openRequests()
+    await renderDrawer({ pricingSnapshotId: 'a', onRefreshPricing })
+    expect(document.body.querySelector('[data-pricing-snapshot-notice]')).not.toBeNull()
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(1)
+    await act(async () => document.body.querySelector<HTMLButtonElement>('[data-pricing-snapshot-notice] button')!.click())
+    expect(onRefreshPricing).toHaveBeenCalledTimes(1)
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(1)
+    await renderDrawer({ pricingSnapshotId: 'b', pricingRefreshRevision: 1, onRefreshPricing })
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(2)
+    expect(fetchUsageEvents.mock.lastCall![0]).toBeUndefined()
+    expect(fetchUsageEvents.mock.lastCall![2]).toEqual({ authType: 2, cursorMode: true, pageSize: 50, source: 'auth-provider-1' })
+    expect(document.body.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+  })
+
+  it('uses a safe error notice if the snapshot recovery first-page fetch fails', async () => {
+    fetchUsageEvents.mockReset()
+      .mockResolvedValueOnce({ ...response('1', 'cursor-a'), pricing_snapshot_id: 'a' })
+      .mockResolvedValueOnce({ ...response('unsafe'), pricing_snapshot_id: 'b' })
+      .mockRejectedValueOnce(new Error('upstream-secret-body'))
+    await openRequests()
+    await scrollRequests()
+    expect(document.body.textContent).toContain('cost_estimates.load_failed')
+    expect(document.body.textContent).not.toContain('upstream-secret-body')
+    expect(document.body.textContent).not.toContain('model-unsafe')
+    expect(fetchUsageEvents).toHaveBeenCalledTimes(3)
+  })
+
   it('clears the previous credential request state before the drawer reopens', async () => {
     fetchUsageEvents.mockReset()
     fetchUsageEvents.mockResolvedValue(response('1'))
@@ -520,7 +650,8 @@ describe('CredentialDetailDrawer', () => {
     })
 
     expect(fetchUsageEvents).toHaveBeenCalledTimes(2)
-    expect(document.body.textContent).toContain('load more failed')
+    expect(document.body.textContent).toContain('cost_estimates.load_failed')
+    expect(document.body.textContent).not.toContain('load more failed')
   })
 
   it('offers an initial-load retry at the right side of the tab row', async () => {
@@ -537,7 +668,8 @@ describe('CredentialDetailDrawer', () => {
     expect(tabBar?.contains(retryButton)).toBe(true)
     expect(tabList?.contains(retryButton)).toBe(false)
     expect(retryButton.getAttribute('aria-label')).toBe('common.retry')
-    expect(document.body.textContent).toContain('initial load failed')
+    expect(document.body.textContent).toContain('cost_estimates.load_failed')
+    expect(document.body.textContent).not.toContain('initial load failed')
     expect(document.body.textContent).not.toContain('usage_stats.request_events_empty_title')
 
     await act(async () => {

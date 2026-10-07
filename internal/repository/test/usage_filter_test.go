@@ -29,9 +29,6 @@ func withRepositoryTestLocation(t *testing.T, name string) {
 }
 
 func buildUsageOverviewFromEventsForTest(events []entities.UsageEvent, filter dto.UsageQueryFilter, pricingByModel map[string]entities.ModelPriceSetting) *dto.UsageOverviewRecord {
-	windowMinutes := computeWindowMinutes(filter)
-	bucketByDay := shouldBucketUsageOverviewByDay(filter, windowMinutes)
-	overview := newUsageOverviewRecord(windowMinutes)
 	configs := make([]pricing.ModelConfig, 0, len(pricingByModel))
 	for model, setting := range pricingByModel {
 		setting.Model = model
@@ -41,7 +38,15 @@ func buildUsageOverviewFromEventsForTest(events []entities.UsageEvent, filter dt
 	if err != nil {
 		panic(err)
 	}
-	costResolver := pricing.NewCatalog(snapshot).NewResolver()
+	return buildUsageOverviewFromEventsWithResolverForTest(events, filter, pricing.NewCatalog(snapshot).NewResolver())
+}
+
+func buildUsageOverviewFromEventsWithResolverForTest(events []entities.UsageEvent, filter dto.UsageQueryFilter, costResolver pricing.Resolver) *dto.UsageOverviewRecord {
+	windowMinutes := computeWindowMinutes(filter)
+	bucketByDay := shouldBucketUsageOverviewByDay(filter, windowMinutes)
+	overview := newUsageOverviewRecord(windowMinutes)
+	overview.PricingSnapshotID = costResolver.SnapshotID()
+	overview.Summary.PricingSnapshotID = costResolver.SnapshotID()
 	for _, event := range events {
 		applyUsageEventToOverviewSnapshot(overview.Usage, event)
 		applyUsageEventToOverview(overview, event, bucketByDay, costResolver)
@@ -50,22 +55,91 @@ func buildUsageOverviewFromEventsForTest(events []entities.UsageEvent, filter dt
 	return overview
 }
 
-func loadUsageOverviewOracleForTest(t *testing.T, db *gorm.DB, filter dto.UsageQueryFilter) *dto.UsageOverviewRecord {
+func loadUsageOverviewOracleForTest(t *testing.T, db *gorm.DB, filter dto.UsageQueryFilter, costResolver pricing.Resolver) *dto.UsageOverviewRecord {
 	t.Helper()
-	settings, err := ListModelPriceSettings(db)
-	if err != nil {
-		t.Fatalf("list model prices: %v", err)
-	}
-	pricingByModel := make(map[string]entities.ModelPriceSetting, len(settings))
-	for _, setting := range settings {
-		pricingByModel[strings.TrimSpace(setting.Model)] = setting
-	}
 	query := applyUsageOverviewQuery(db.Model(&entities.UsageEvent{}), filter).Order("timestamp asc")
 	var events []entities.UsageEvent
 	if err := query.Find(&events).Error; err != nil {
 		t.Fatalf("load oracle events: %v", err)
 	}
-	return buildUsageOverviewFromEventsForTest(events, filter, pricingByModel)
+	return buildUsageOverviewFromEventsWithResolverForTest(events, filter, costResolver)
+}
+
+// Compare all preexisting summary fields separately from additive pricing projections.
+func assertUsageOverviewLegacySummaryParity(t *testing.T, got, want dto.UsageOverviewSummaryRecord) {
+	t.Helper()
+	got.DualCosts, want.DualCosts = pricing.DualCosts{}, pricing.DualCosts{}
+	got.DailyAverageDualCosts, want.DailyAverageDualCosts = nil, nil
+	got.PricingSnapshotID, want.PricingSnapshotID = "", ""
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy summary mismatch\ngot:  %+v\nwant: %+v", got, want)
+	}
+}
+
+func assertUsageOverviewLegacySeriesParity(t *testing.T, got, want dto.UsageOverviewSeriesRecord) {
+	t.Helper()
+	got.DualCosts, want.DualCosts = nil, nil
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy series mismatch\ngot:  %+v\nwant: %+v", got, want)
+	}
+}
+
+func assertUsageOverviewEstimateParity(t *testing.T, got, want pricing.PriceEstimate) {
+	t.Helper()
+	if got.Complete != want.Complete || got.HasKnown != want.HasKnown || got.Status != want.Status || got.UnavailableReason != want.UnavailableReason || (got.TotalCostUSD == nil) != (want.TotalCostUSD == nil) {
+		t.Fatalf("pricing estimate state mismatch\ngot:  %+v\nwant: %+v", got, want)
+	}
+	if want.TotalCostUSD != nil {
+		assertFloatClose(t, *got.TotalCostUSD, *want.TotalCostUSD)
+	}
+	assertFloatClose(t, got.UncachedInputCostUSD, want.UncachedInputCostUSD)
+	assertFloatClose(t, got.OutputCostUSD, want.OutputCostUSD)
+	assertFloatClose(t, got.CacheReadCostUSD, want.CacheReadCostUSD)
+	assertFloatClose(t, got.CacheWriteCostUSD, want.CacheWriteCostUSD)
+}
+
+func expectedPrunedOverviewReference(retained pricing.PriceEstimate, hasRetained bool, pruned bool) pricing.PriceEstimate {
+	if !pruned {
+		return retained
+	}
+	unknown := pricing.PriceEstimate{Status: "unavailable", UnavailableReason: "retained_evidence_incomplete"}
+	if hasRetained {
+		unknown.Merge(retained)
+	}
+	return unknown
+}
+
+// The raw oracle before pruning proves configured parity. The retained oracle
+// proves the reference subtotal without inventing prices for deleted facts.
+func assertUsageOverviewProjectionParity(t *testing.T, got, oracle, retained *dto.UsageOverviewRecord) {
+	t.Helper()
+	if oracle.PricingSnapshotID == "" || got.PricingSnapshotID != oracle.PricingSnapshotID || got.Summary.PricingSnapshotID != oracle.Summary.PricingSnapshotID {
+		t.Fatalf("overview pricing snapshot is not pinned: got=%q summary=%q want=%q", got.PricingSnapshotID, got.Summary.PricingSnapshotID, oracle.PricingSnapshotID)
+	}
+	assertUsageOverviewEstimateParity(t, got.Summary.DualCosts.Configured, oracle.Summary.DualCosts.Configured)
+	expectedReference := expectedPrunedOverviewReference(retained.Summary.DualCosts.Reference, retained.Summary.RequestCount > 0, retained.Summary.RequestCount < oracle.Summary.RequestCount)
+	assertUsageOverviewEstimateParity(t, got.Summary.DualCosts.Reference, expectedReference)
+	if (got.Summary.DailyAverageDualCosts == nil) != (oracle.Summary.DailyAverageDualCosts == nil) {
+		t.Fatal("daily average pricing projection presence changed")
+	}
+	if oracle.Summary.DailyAverageDualCosts != nil {
+		assertUsageOverviewEstimateParity(t, got.Summary.DailyAverageDualCosts.Configured, oracle.Summary.DailyAverageDualCosts.Configured)
+		expectedAverage := (pricing.DualCosts{Reference: expectedReference}).Scale(1 / *oracle.Summary.DailyAverageRangeDays)
+		assertUsageOverviewEstimateParity(t, got.Summary.DailyAverageDualCosts.Reference, expectedAverage.Reference)
+	}
+	if len(got.Series.DualCosts) != len(oracle.Series.DualCosts) {
+		t.Fatalf("pricing bucket count changed: got=%d want=%d", len(got.Series.DualCosts), len(oracle.Series.DualCosts))
+	}
+	for bucket, want := range oracle.Series.DualCosts {
+		actual, exists := got.Series.DualCosts[bucket]
+		if !exists {
+			t.Fatalf("missing pricing bucket %q", bucket)
+		}
+		assertUsageOverviewEstimateParity(t, actual.Configured, want.Configured)
+		retainedRequests := retained.Series.Requests[bucket]
+		expected := expectedPrunedOverviewReference(retained.Series.DualCosts[bucket].Reference, retainedRequests > 0, retainedRequests < oracle.Series.Requests[bucket])
+		assertUsageOverviewEstimateParity(t, actual.Reference, expected)
+	}
 }
 
 func TestBuildUsageOverviewWithFilterRequiresResolvedTimeRange(t *testing.T) {
@@ -274,27 +348,25 @@ func TestBuildUsageOverviewWithFilterUsesStatsForFullHoursAndRawEventsForBoundar
 	start := time.Date(2026, 4, 16, 9, 20, 0, 0, time.UTC)
 	end := time.Date(2026, 4, 16, 12, 40, 0, 0, time.UTC)
 	filter := dto.UsageQueryFilter{Range: "custom", StartTime: &start, EndTime: &end}
-	oracle := loadUsageOverviewOracleForTest(t, db, filter)
+	costResolver := newUsageCostResolverForTest(t, db)
+	oracle := loadUsageOverviewOracleForTest(t, db, filter, costResolver)
 	fullHourStart := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
 	fullHourEnd := time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)
 	if err := db.Where("timestamp >= ? AND timestamp < ?", timeutil.FormatStorageTime(fullHourStart), timeutil.FormatStorageTime(fullHourEnd)).Delete(&entities.UsageEvent{}).Error; err != nil {
 		t.Fatalf("delete full-hour usage_events returned error: %v", err)
 	}
 
-	overview, err := BuildUsageOverviewWithFilter(db, filter, newUsageCostResolverForTest(t, db))
+	overview, err := BuildUsageOverviewWithFilter(db, filter, costResolver)
 	if err != nil {
 		t.Fatalf("BuildUsageOverviewWithFilter returned error: %v", err)
 	}
 
-	if !reflect.DeepEqual(overview.Summary, oracle.Summary) {
-		t.Fatalf("summary mismatch after full-hour raw events were removed\ngot:  %+v\nwant: %+v", overview.Summary, oracle.Summary)
-	}
+	assertUsageOverviewLegacySummaryParity(t, overview.Summary, oracle.Summary)
 	if !reflect.DeepEqual(overview.Usage, oracle.Usage) {
 		t.Fatalf("usage snapshot mismatch after full-hour raw events were removed\ngot:  %+v\nwant: %+v", overview.Usage, oracle.Usage)
 	}
-	if !reflect.DeepEqual(overview.Series, oracle.Series) {
-		t.Fatalf("series mismatch after full-hour raw events were removed\ngot:  %+v\nwant: %+v", overview.Series, oracle.Series)
-	}
+	assertUsageOverviewLegacySeriesParity(t, overview.Series, oracle.Series)
+	assertUsageOverviewProjectionParity(t, overview, oracle, loadUsageOverviewOracleForTest(t, db, filter, costResolver))
 }
 
 func TestBuildUsageOverviewWithFilterKeepsHourlyBucketsWhenShortWindowContainsCompleteDay(t *testing.T) {
@@ -316,16 +388,17 @@ func TestBuildUsageOverviewWithFilterKeepsHourlyBucketsWhenShortWindowContainsCo
 	start := time.Date(2026, 4, 15, 15, 30, 0, 0, time.UTC)
 	end := time.Date(2026, 4, 16, 16, 30, 0, 0, time.UTC)
 	filter := dto.UsageQueryFilter{Range: "custom", StartTime: &start, EndTime: &end}
-	oracle := loadUsageOverviewOracleForTest(t, db, filter)
+	costResolver := newUsageCostResolverForTest(t, db)
+	oracle := loadUsageOverviewOracleForTest(t, db, filter, costResolver)
 
-	overview, err := BuildUsageOverviewWithFilter(db, filter, newUsageCostResolverForTest(t, db))
+	overview, err := BuildUsageOverviewWithFilter(db, filter, costResolver)
 	if err != nil {
 		t.Fatalf("BuildUsageOverviewWithFilter returned error: %v", err)
 	}
 
-	if !reflect.DeepEqual(overview.Series, oracle.Series) {
-		t.Fatalf("series mismatch for short window with complete day\ngot:  %+v\nwant: %+v", overview.Series, oracle.Series)
-	}
+	assertUsageOverviewLegacySeriesParity(t, overview.Series, oracle.Series)
+	// No facts were pruned: both projections must equal the complete raw oracle.
+	assertUsageOverviewProjectionParity(t, overview, oracle, oracle)
 	if !reflect.DeepEqual(overview.Usage, oracle.Usage) {
 		t.Fatalf("usage totals mismatch for short window with complete day\ngot:  %+v\nwant: %+v", overview.Usage, oracle.Usage)
 	}
@@ -361,20 +434,20 @@ func TestBuildUsageOverviewWithFilterUsesDailyStatsForCompleteDays(t *testing.T)
 	start := time.Date(2026, 4, 15, 15, 30, 0, 0, time.UTC)
 	end := time.Date(2026, 4, 24, 17, 30, 0, 0, time.UTC)
 	filter := dto.UsageQueryFilter{Range: "custom", StartTime: &start, EndTime: &end}
-	oracle := loadUsageOverviewOracleForTest(t, db, filter)
+	costResolver := newUsageCostResolverForTest(t, db)
+	oracle := loadUsageOverviewOracleForTest(t, db, filter, costResolver)
 	fullDayStart := time.Date(2026, 4, 16, 0, 0, 0, 0, time.Local)
 	fullDayEnd := fullDayStart.Add(24 * time.Hour)
 	if err := db.Where("timestamp >= ? AND timestamp < ?", timeutil.FormatStorageTime(fullDayStart), timeutil.FormatStorageTime(fullDayEnd)).Delete(&entities.UsageEvent{}).Error; err != nil {
 		t.Fatalf("delete full-day usage_events returned error: %v", err)
 	}
-	overview, err := BuildUsageOverviewWithFilter(db, filter, newUsageCostResolverForTest(t, db))
+	overview, err := BuildUsageOverviewWithFilter(db, filter, costResolver)
 	if err != nil {
 		t.Fatalf("BuildUsageOverviewWithFilter returned error: %v", err)
 	}
 
-	if !reflect.DeepEqual(overview.Summary, oracle.Summary) {
-		t.Fatalf("summary mismatch after full-day hourly/raw data were removed\ngot:  %+v\nwant: %+v", overview.Summary, oracle.Summary)
-	}
+	assertUsageOverviewLegacySummaryParity(t, overview.Summary, oracle.Summary)
+	assertUsageOverviewProjectionParity(t, overview, oracle, loadUsageOverviewOracleForTest(t, db, filter, costResolver))
 	if overview.Usage.TotalRequests != oracle.Usage.TotalRequests || overview.Usage.TotalTokens != oracle.Usage.TotalTokens ||
 		overview.Usage.SuccessCount != oracle.Usage.SuccessCount || overview.Usage.FailureCount != oracle.Usage.FailureCount {
 		t.Fatalf("daily rollup usage mismatch:\ngot:  %+v\nwant: %+v", overview.Usage, oracle.Usage)

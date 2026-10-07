@@ -61,6 +61,15 @@ const tableValues = (html: string) => {
 };
 
 describe('RequestEventsDetailsCard', () => {
+  it('renders authoritative configured/reference costs and a safe expandable explanation independently of legacy availability', () => {
+    const estimate = (value: number) => ({ total_cost_usd: value, uncached_input_cost_usd: value, output_cost_usd: 0, cache_read_cost_usd: 0, cache_write_cost_usd: 0, complete: true, has_known: true, status: 'complete' as const });
+    const costs = { configured: estimate(3), reference: estimate(10) };
+    const html = renderCard({ events: [{ ...events[0], cost_usd: 999, cost_available: false, dual_costs: costs, pricing_selection: { scope: 'credential_model', mode: 'fixed', snapshot_id: 'synthetic', selected_model: 'chosen-model', selected_by: 'model', baseline_model: 'reference-alias', baseline_by: 'model_alias', legacy_adjustments_replaced: true, dual_costs: costs } }] });
+    expect(html).toContain('Configured-price estimated cost'); expect(html).toContain('Baseline reference cost');
+    expect(html).toContain('$3.00'); expect(html).toContain('$10.00'); expect(html).not.toContain('$999');
+    expect(html).toContain('<details'); expect(html).toContain('chosen-model'); expect(html).toContain('reference-alias');
+    expect(html).toContain('ALL legacy model multipliers'); expect(html).not.toContain('title="Set pricing to calculate cost"');
+  });
   it('renders the event title, total and incremental loading status', () => {
     const html = renderCard();
     expect(html).toContain('Request Event Log');
@@ -228,7 +237,7 @@ describe('RequestEventsDetailsCard', () => {
 
   it('shows a dash and pricing hint when backend cost is unavailable', () => {
     const html = renderCard({ events: [{ ...events[0], cost_usd: 0, cost_available: false }] });
-    expect(tableValues(html).Cost).toBe('-Claude Style');
+    expect(tableValues(html).Cost).toBe('Configured-price estimated cost—Not provided by this serverBaseline reference cost—Not provided by this serverClaude Style');
     expect(html).toContain('title="Set pricing to calculate cost"');
   });
 
@@ -239,7 +248,7 @@ describe('RequestEventsDetailsCard', () => {
     const html = renderCard(props);
     expect(tableValues(html)).toEqual({
       Timestamp: '02:00:002026/04/23', Model: 'claude-sonnet',
-      ...(props.initialVisibleColumnIds ? { Cost: '$0.1234Claude Style' } : {}),
+      ...(props.initialVisibleColumnIds ? { Cost: 'Configured-price estimated cost$0.1234Not provided by this serverBaseline reference cost—Not provided by this serverClaude Style' } : {}),
     });
   });
 

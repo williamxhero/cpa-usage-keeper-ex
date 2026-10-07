@@ -153,6 +153,38 @@ describe('KeyAnalysisPage requests', () => {
     expect(container.querySelector('[data-testid="analysis"]')?.textContent).toBe('Asia/Shanghai');
   });
 
+  it('warns on mixed Analysis root/breakdown IDs and explicitly refreshes without resetting range/timezone', async () => {
+    const stored = serializeUsageRangeState({ range: 'custom', customRange: { unit: 'day', start: '2026-08-20', end: '2026-08-21' }, timeZone: 'America/New_York' });
+    localStorage.setItem(KEY_VIEWER_TIME_RANGE_STORAGE_KEY, stored);
+    const mixed = analysisResponse('UTC');
+    mixed.pricing_snapshot_id = 'a';
+    mixed.cost_breakdown.pricing_snapshot_id = 'b';
+    apiMocks.fetchKeyAnalysis.mockResolvedValue(mixed);
+    apiMocks.fetchKeyAnalysisLatency.mockResolvedValue(latencyResponse);
+    await act(async () => root.render(<KeyAnalysisPage onNavigate={() => {}} />));
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).not.toBeNull();
+    expect(apiMocks.fetchKeyAnalysis).toHaveBeenCalledTimes(1);
+    const request = apiMocks.fetchKeyAnalysis.mock.calls[0][0];
+    apiMocks.fetchKeyAnalysis.mockResolvedValue({ ...mixed, pricing_snapshot_id: 'b' });
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-pricing-snapshot-notice] button')!.click());
+    expect(apiMocks.fetchKeyAnalysis).toHaveBeenCalledTimes(2);
+    expect(apiMocks.fetchKeyAnalysis.mock.lastCall![0]).toEqual(request);
+    expect(apiMocks.fetchKeyAnalysisLatency).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem(KEY_VIEWER_TIME_RANGE_STORAGE_KEY)).toBe(stored);
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull();
+  });
+
+  it.each([['a', 'a'], [undefined, 'a'], ['a', undefined], [undefined, undefined]])('accepts compatible or legacy Analysis root/breakdown IDs %s/%s without a notice', async (rootID, breakdownID) => {
+    const data = analysisResponse('UTC');
+    data.pricing_snapshot_id = rootID;
+    data.cost_breakdown.pricing_snapshot_id = breakdownID;
+    apiMocks.fetchKeyAnalysis.mockResolvedValue(data);
+    apiMocks.fetchKeyAnalysisLatency.mockResolvedValue(latencyResponse);
+    await act(async () => root.render(<KeyAnalysisPage onNavigate={() => {}} />));
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull();
+    expect(apiMocks.fetchKeyAnalysis).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['fetchKeyAnalysis', 'fetchKeyAnalysisLatency'] as const)('returns to authentication when %s rejects the session', async (endpoint) => {
     apiMocks.fetchKeyAnalysis.mockResolvedValue(analysisResponse('UTC'));
     apiMocks.fetchKeyAnalysisLatency.mockResolvedValue(latencyResponse);

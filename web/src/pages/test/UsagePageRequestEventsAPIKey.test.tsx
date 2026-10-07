@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   fetchUsageEvents: vi.fn(),
   exportUsageEvents: vi.fn(),
   fetchUsageOverview: vi.fn(),
+  fetchUsageOverviewComparisons: vi.fn(),
   fetchUsageOverviewRealtime: vi.fn(),
   fetchUsageActivity: vi.fn(),
   fetchAnalysis: vi.fn(),
@@ -63,7 +64,7 @@ describe('UsagePage top API Key request event filter', () => {
       version: 9, filters: { model: 'gpt-5', apiKeyId: '22', source: 'source-1', result: 'failed' },
     }));
     localStorage.setItem('cli-proxy-usage-time-range-v1', '24h');
-    for (const mock of [api.fetchUsageOverview, api.fetchUsageOverviewRealtime, api.fetchUsageActivity, api.fetchAnalysis, api.fetchAnalysisLatency]) {
+    for (const mock of [api.fetchUsageOverview, api.fetchUsageOverviewComparisons, api.fetchUsageOverviewRealtime, api.fetchUsageActivity, api.fetchAnalysis, api.fetchAnalysisLatency]) {
       mock.mockReset().mockReturnValue(new Promise(() => undefined));
     }
     api.fetchCpaApiKeyOptions.mockReset().mockResolvedValue(keyOptions);
@@ -124,6 +125,94 @@ describe('UsagePage top API Key request event filter', () => {
     await act(async () => button('Export').click());
     await act(async () => button(`Export ${format.toUpperCase()}`).click());
     expect(api.exportUsageEvents).toHaveBeenLastCalledWith(range, format, { ...filters, apiKeyId: '33' });
+  });
+
+  it.each(['root', 'selection', 'mixed'] as const)('reloads once instead of appending a %s snapshot mismatch and preserves the custom range, key and filters', async (metadata) => {
+    const storedRange = JSON.stringify({ range: 'custom', customRange: { unit: 'day', start: '2026-09-01', end: '2026-09-02' }, timeZone: 'UTC' });
+    localStorage.setItem('cli-proxy-usage-time-range-v1', storedRange);
+    api.fetchUsageEvents.mockReset()
+      .mockResolvedValueOnce({ ...firstPage, pricing_snapshot_id: 'snapshot-a' })
+      .mockResolvedValueOnce({
+        ...firstPage,
+        pricing_snapshot_id: metadata === 'root' ? 'snapshot-b' : undefined,
+        events: [{ ...firstPage.events[0], id: 'mismatched-event', model: 'must-not-append',
+          pricing_snapshot_id: metadata === 'mixed' ? 'snapshot-a' : undefined,
+          pricing_selection: metadata !== 'root' ? { snapshot_id: 'snapshot-b' } : undefined }],
+      })
+      .mockResolvedValueOnce({ ...firstPage, pricing_snapshot_id: 'snapshot-b', events: [{ ...firstPage.events[0], id: 'fresh', model: 'fresh-model' }] })
+      .mockResolvedValue({ ...firstPage, pricing_snapshot_id: 'snapshot-b' });
+    await render();
+    const firstQuery = api.fetchUsageEvents.mock.calls[0];
+    await act(async () => button('Load more').click());
+    expect(api.fetchUsageEvents).toHaveBeenCalledTimes(3);
+    expect(container.textContent).not.toContain('must-not-append');
+    expect(container.textContent).toContain('fresh-model');
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).not.toBeNull();
+    const reload = api.fetchUsageEvents.mock.lastCall!;
+    expect(reload[0]).toEqual(firstQuery[0]);
+    expect(reload[2]).toEqual(firstQuery[2]);
+    expect(reload[2].cursor).toBeUndefined();
+    expect(localStorage.getItem(TOP_KEY_STORAGE)).toBe('11');
+    expect(localStorage.getItem('cli-proxy-usage-time-range-v1')).toBe(storedRange);
+    api.fetchUsageOverview.mockResolvedValue({ usage: {}, timezone: 'UTC' });
+    api.fetchUsageOverviewComparisons.mockResolvedValue({ models: [] });
+    api.fetchUsageOverviewRealtime.mockResolvedValue({ window: '15m' });
+    api.fetchAnalysis.mockResolvedValue({});
+    api.fetchAnalysisLatency.mockResolvedValue({});
+    const refresh = container.querySelector<HTMLButtonElement>('[data-pricing-snapshot-notice] button')!;
+    await act(async () => refresh.click());
+    expect(api.fetchUsageEvents).toHaveBeenCalledTimes(4);
+    expect(api.fetchUsageEvents.mock.lastCall![0]).toEqual(firstQuery[0]);
+    expect(api.fetchUsageEvents.mock.lastCall![2]).toEqual(firstQuery[2]);
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull();
+  });
+
+  it('appends unchanged snapshot IDs without refreshing the first page', async () => {
+    api.fetchUsageEvents.mockReset()
+      .mockResolvedValueOnce({ ...firstPage, pricing_snapshot_id: 'snapshot-a' })
+      .mockResolvedValueOnce({ ...firstPage, pricing_snapshot_id: 'snapshot-a', events: [{ ...firstPage.events[0], id: 'next', model: 'same-snapshot' }], has_more: false });
+    await render();
+    await act(async () => button('Load more').click());
+    expect(api.fetchUsageEvents).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('same-snapshot');
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull();
+  });
+
+  it('rejects an internally mixed first page without an automatic reload loop', async () => {
+    api.fetchUsageEvents.mockResolvedValue({ ...firstPage, pricing_snapshot_id: 'snapshot-a', events: [{ ...firstPage.events[0], model: 'unsafe-row', pricing_snapshot_id: 'snapshot-b' }] });
+    await render();
+    expect(container.textContent).not.toContain('unsafe-row');
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).not.toBeNull();
+    expect(button('Load more')).toBeUndefined();
+    expect(api.fetchUsageEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a late pagination response after a manual first-page refresh, even if it has another snapshot', async () => {
+    api.fetchUsageEvents.mockResolvedValue({ ...firstPage, pricing_snapshot_id: 'snapshot-a' });
+    await render();
+    let resolveOld!: (response: UsageEventsResponse) => void;
+    api.fetchUsageEvents.mockReturnValueOnce(new Promise<UsageEventsResponse>((resolve) => { resolveOld = resolve; }));
+    await act(async () => button('Load more').click());
+    const oldSignal = api.fetchUsageEvents.mock.lastCall![1] as AbortSignal;
+    await act(async () => triggerHeaderRefresh());
+    expect(oldSignal.aborted).toBe(true);
+    await act(async () => resolveOld({ ...firstPage, events: [{ ...firstPage.events[0], id: 'late', model: 'late-pagination', pricing_snapshot_id: 'snapshot-b' }] }));
+    expect(api.fetchUsageEvents).toHaveBeenCalledTimes(3);
+    expect(container.textContent).not.toContain('late-pagination');
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull();
+  });
+
+  it.each(['first page', 'pagination', 'snapshot recovery'] as const)('does not render upstream errors from %s', async (phase) => {
+    if (phase === 'first page') api.fetchUsageEvents.mockRejectedValueOnce(new Error('upstream-secret-body'));
+    else {
+      api.fetchUsageEvents.mockReset().mockResolvedValueOnce({ ...firstPage, pricing_snapshot_id: 'snapshot-a' });
+      if (phase === 'snapshot recovery') api.fetchUsageEvents.mockResolvedValueOnce({ ...firstPage, pricing_snapshot_id: 'snapshot-b' });
+      api.fetchUsageEvents.mockRejectedValueOnce(new Error('upstream-secret-body'));
+    }
+    await render();
+    if (phase !== 'first page') await act(async () => button('Load more').click());
+    expect(container.textContent).not.toContain('upstream-secret-body');
+    expect(container.textContent).toContain(i18n.t('cost_estimates.load_failed'));
   });
 
   it('restores the top selection and clears only Model, Source and Status', async () => {

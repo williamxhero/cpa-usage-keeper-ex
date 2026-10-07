@@ -2,7 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ChartData, ChartOptions, Plugin } from 'chart.js';
-import type { OverviewRealtimeBlock } from '@/lib/types';
+import type { OverviewRealtimeBlock, PriceEstimate } from '@/lib/types';
 import i18n from '@/i18n';
 
 const chartCapture = vi.hoisted(() => ({
@@ -85,6 +85,27 @@ describe('OverviewRealtimePanel', () => {
     chartCapture.chartCalls = [];
     chartCapture.scatterCalls = [];
     await i18n.changeLanguage('en');
+  });
+
+  it('keeps backend costs aligned with throughput buckets and does not fabricate request-only estimates', () => {
+    const estimate = (amount: number | null, status: PriceEstimate['status']): PriceEstimate => ({ total_cost_usd: amount, uncached_input_cost_usd: amount ?? 0, output_cost_usd: 0, cache_read_cost_usd: 0, cache_write_cost_usd: 0, has_known: amount !== null, complete: status === 'complete', status });
+    const withCosts: OverviewRealtimeBlock = {
+      ...realtime,
+      token_velocity: [{ ...realtime.token_velocity[1], cost: 99, dual_costs: { configured: estimate(0, 'complete'), reference: estimate(4, 'partial') } }],
+    };
+    renderToStaticMarkup(<OverviewRealtimePanel realtime={withCosts} loading={false} window="15m" onWindowChange={() => {}} isDark={false} isMobile={false} timezone="UTC" />);
+    const { data, options } = chartCapture.lineCalls[0];
+    expect(data.datasets.map(dataset => dataset.data)).toEqual([[null, 240], [2, 4]]);
+    const costLines = options.plugins?.tooltip?.callbacks?.afterBody;
+    expect(costLines!([{ dataIndex: 1 }] as never)).toEqual([
+      'cost_estimates.configured: $0.0000 · cost_estimates.complete · cost_estimates.known_zero',
+      'cost_estimates.reference: $4.00 · cost_estimates.partial',
+    ]);
+    expect(costLines!([{ dataIndex: 0 }] as never)).toEqual([
+      'cost_estimates.configured: — · cost_estimates.not_provided',
+      'cost_estimates.reference: — · cost_estimates.not_provided',
+    ]);
+    expect(costLines!([] as never)).toEqual([]);
   });
 
   it('renders a dual-axis throughput chart without duplicating the request chart', () => {
@@ -257,7 +278,9 @@ describe('OverviewRealtimePanel', () => {
 
     expect(html).toContain('usage_stats.overview_realtime_tokens_label');
     expect(html).toContain('usage_stats.overview_realtime_requests_label');
-    expect(html).toContain('usage_stats.overview_realtime_cost_label');
+    expect(html).toContain('cost_estimates.configured');
+    expect(html).toContain('cost_estimates.reference');
+    expect(html).toContain('cost_estimates.not_provided');
     expect(html).toContain('overviewRealtimeUsageMetaPill');
   });
 

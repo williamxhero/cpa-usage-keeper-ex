@@ -13,7 +13,7 @@ const emptyRates = () => ({ prompt_price_per_1m: '', completion_price_per_1m: ''
 const savedMode = (saved: PricingCredentialModel) => saved.mode ?? (saved.multiplier === null ? 'inherit' : 'multiplier');
 const decimalText = (value: number) => value.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 });
 
-export function PricingCredentialModelsCard({ canManage = true }: { canManage?: boolean }) {
+export function PricingCredentialModelsCard({ canManage = true, onChanged }: { canManage?: boolean; onChanged?: () => void }) {
   const { t } = useTranslation();
   const [subjects, setSubjects] = useState<PricingCredential[]>([]);
   const [models, setModels] = useState<string[]>([]);
@@ -32,6 +32,13 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
   const [fieldError, setFieldError] = useState('');
   const [notice, setNotice] = useState('');
   const requestRef = useRef<AbortController | null>(null);
+  const onChangedRef = useRef(onChanged);
+  useEffect(() => { onChangedRef.current = onChanged; }, [onChanged]);
+  const notifyChanged = () => {
+    // A parent refresh is fire-and-forget, not part of the committed mutation.
+    try { void Promise.resolve(onChangedRef.current?.()).catch(() => {}); }
+    catch { /* Refresh errors must not become mutation errors. */ }
+  };
 
   const beginRequest = () => {
     requestRef.current?.abort();
@@ -173,6 +180,7 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
       // Retain the committed canonical result even if readback fails.
       applyConfig(saved);
       setNotice(clear ? 'pricing_credential_models.cleared' : 'pricing_credential_models.saved');
+      notifyChanged();
       try {
         const readback = await fetchPricingCredentialModel(selected, model, controller.signal);
         if (!controller.signal.aborted) applyConfig(readback);
