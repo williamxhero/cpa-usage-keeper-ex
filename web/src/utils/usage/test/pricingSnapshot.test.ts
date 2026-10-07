@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { eventSnapshotsCompatible, getEventsPricingSnapshot, getOverviewPricingSnapshot, getPricingSnapshotId, pricingSnapshotsCompatible } from '../pricingSnapshot'
+import { eventSnapshotsCompatible, getAnalysisPricingSnapshot, getEventsPricingSnapshot, getOverviewPricingSnapshot, getPricingSnapshotId, pricingSnapshotsCompatible } from '../pricingSnapshot'
 
 describe('pricing snapshot compatibility', () => {
   it('treats absent metadata as legacy-compatible without inventing a baseline', () => {
@@ -18,6 +18,13 @@ describe('pricing snapshot compatibility', () => {
   it('treats the Overview summary ID as authoritative even when the root is absent', () => {
     expect(getOverviewPricingSnapshot({ summary: { pricing_snapshot_id: 'a' } })).toEqual({ id: 'a', mixed: false })
     expect(getOverviewPricingSnapshot({ pricing_snapshot_id: 'a', summary: { pricing_snapshot_id: 'b' } })).toEqual({ id: 'a', mixed: true })
+  })
+
+  it('treats Analysis root and cost-breakdown IDs as independent authoritative evidence', () => {
+    expect(getAnalysisPricingSnapshot(null)).toEqual({ id: undefined, mixed: false })
+    expect(getAnalysisPricingSnapshot({ cost_breakdown: { pricing_snapshot_id: ' a ' } })).toEqual({ id: 'a', mixed: false })
+    expect(getAnalysisPricingSnapshot({ pricing_snapshot_id: 'a', cost_breakdown: { pricing_snapshot_id: 'a' } })).toEqual({ id: 'a', mixed: false })
+    expect(getAnalysisPricingSnapshot({ pricing_snapshot_id: 'a', cost_breakdown: { pricing_snapshot_id: 'b' } })).toEqual({ id: 'a', mixed: true })
   })
 
   it('allows unchanged IDs and rejects cross-snapshot or internally mixed pages', () => {

@@ -15,7 +15,7 @@ vi.mock('@/lib/api', async (original) => ({
   ...await original<typeof import('@/lib/api')>(), ...api,
   fetchStatus: async () => ({ timezone: 'UTC' }),
   fetchVersion: async () => ({ version: 'test' }),
-  fetchCpaApiKeyOptions: async () => ({ options: [{ id: '11', label: 'Team Key' }] }),
+  fetchCpaApiKeyOptions: async () => ({ options: [{ id: '11', label: 'Team Key' }, { id: '33', label: 'Other Key' }] }),
   fetchUsageEventModelFilterOptions: async () => ({ models: [] }),
   fetchUsageEventSourceFilterOptions: async () => ({ sources: [] }),
 }))
@@ -115,6 +115,70 @@ for (const viewer of ['admin', 'key'] as const) describe(`${viewer} overview pri
     expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
     expect(localStorage.getItem(storageKey)).toBe(customRange)
     expect(localStorage.getItem('cli-proxy-usage-api-key-filter-v1')).toBe('11')
+  })
+
+  if (viewer === 'admin') it.each(['b', undefined])('pins Analysis root/breakdown %s/b to query-current Overview/comparisons and refreshes every related cost query', async (rootID) => {
+    await render()
+    api.fetchAnalysis.mockResolvedValue({ pricing_snapshot_id: rootID, cost_breakdown: { pricing_snapshot_id: 'b' } })
+    await act(async () => container.querySelector<HTMLAnchorElement>('[data-dashboard-toolbar] a[href="/analysis"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })))
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).not.toBeNull()
+    expect(api.fetchAnalysis).toHaveBeenCalledTimes(1)
+    const request = api.fetchAnalysis.mock.calls[0]
+    overviewAPI.mockResolvedValue(overview('b'))
+    api.fetchUsageOverviewComparisons.mockResolvedValue(comparisons('b'))
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-pricing-snapshot-notice] button')!.click())
+    expect(api.fetchAnalysis).toHaveBeenCalledTimes(2)
+    expect(api.fetchAnalysis.mock.lastCall![0]).toEqual(request[0])
+    expect(api.fetchAnalysis.mock.lastCall![2]).toBe('11')
+    expect(overviewAPI).toHaveBeenCalledTimes(2)
+    expect(api.fetchUsageOverviewComparisons).toHaveBeenCalledTimes(2)
+    expect(api.fetchUsageEvents).toHaveBeenCalledTimes(1)
+    expect(api.fetchUsageOverviewRealtime).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+    expect(localStorage.getItem(storageKey)).toBe(customRange)
+    expect(localStorage.getItem('cli-proxy-usage-api-key-filter-v1')).toBe('11')
+  })
+
+  if (viewer === 'admin') it('warns on internally mixed Analysis IDs without an automatic reload', async () => {
+    await render()
+    api.fetchAnalysis.mockResolvedValue({ pricing_snapshot_id: 'a', cost_breakdown: { pricing_snapshot_id: 'b' } })
+    await act(async () => container.querySelector<HTMLAnchorElement>('[data-dashboard-toolbar] a[href="/analysis"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })))
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).not.toBeNull()
+    expect(api.fetchAnalysis).toHaveBeenCalledTimes(1)
+  })
+
+  if (viewer === 'admin') it('does not pin Analysis to previous-query Overview/comparisons or display an old Analysis notice during a range change', async () => {
+    await render()
+    api.fetchAnalysis.mockResolvedValueOnce({ pricing_snapshot_id: 'a', cost_breakdown: { pricing_snapshot_id: 'b' } })
+    await act(async () => container.querySelector<HTMLAnchorElement>('[data-dashboard-toolbar] a[href="/analysis"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })))
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).not.toBeNull()
+    const pending = Promise.withResolvers<unknown>()
+    api.fetchAnalysis.mockReturnValueOnce(pending.promise)
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-time-range-trigger="desktop"]')!.click())
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-time-range-mode="yesterday"]')!.click())
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+    await act(async () => pending.resolve({ pricing_snapshot_id: 'b', cost_breakdown: { pricing_snapshot_id: 'b' } }))
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+    expect(overviewAPI).toHaveBeenCalledTimes(1)
+    expect(api.fetchUsageOverviewComparisons).toHaveBeenCalledTimes(1)
+  })
+
+  if (viewer === 'admin') it('ignores a canceled late mixed Analysis snapshot after changing API Key and does not compare the previous Key pin', async () => {
+    await render()
+    const previous = Promise.withResolvers<unknown>()
+    api.fetchAnalysis.mockReturnValueOnce(previous.promise).mockResolvedValue({ pricing_snapshot_id: 'c', cost_breakdown: { pricing_snapshot_id: 'c' } })
+    await act(async () => container.querySelector<HTMLAnchorElement>('[data-dashboard-toolbar] a[href="/analysis"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })))
+    const signal = api.fetchAnalysis.mock.calls[0][1] as AbortSignal
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-dashboard-toolbar] button[aria-label^="API Key: "]')!.click())
+    await act(async () => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]')).find(node => node.textContent === 'Other Key')!.click())
+    expect(signal.aborted).toBe(true)
+    expect(api.fetchAnalysis.mock.lastCall![2]).toBe('33')
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+    await act(async () => previous.resolve({ pricing_snapshot_id: 'a', cost_breakdown: { pricing_snapshot_id: 'b' } }))
+    expect(container.querySelector('[data-pricing-snapshot-notice]')).toBeNull()
+    expect(overviewAPI).toHaveBeenCalledTimes(1)
+    expect(api.fetchUsageOverviewComparisons).toHaveBeenCalledTimes(1)
   })
 
   it('does not compare the previous query snapshots while a new range is settling', async () => {

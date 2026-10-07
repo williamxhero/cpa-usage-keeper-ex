@@ -23,7 +23,7 @@ import { CREDENTIAL_PAGES_REFRESH_INTERVAL_MS } from '@/components/usage/credent
 import { buildCredentialProviderSearch } from '@/components/usage/credentials/credentialProviderFilters';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useThemeStore, useUsageStatsStore } from '@/stores';
+import { buildUsageStatsQueryKey, useThemeStore, useUsageStatsStore } from '@/stores';
 import {
   StatCards,
   RecentActivityPanel,
@@ -57,7 +57,7 @@ import {
 import { clampCustomRangeToCurrentBounds, clampStoredUsageRangeStateToCurrentBounds, parseLegacyCustomRange, parseStoredUsageRangeState, resolveUsageRangeRecoveryTimeZone, serializeUsageRangeState, type StoredUsageRangeState } from '@/utils/usage/customRange';
 import { buildUsageRangeQuery } from '@/utils/usage/rangeQuery';
 import { getDailyAverageCardUsage, isDailyAverageRange } from '@/utils/usage/overview';
-import { eventSnapshotsCompatible, getEventsPricingSnapshot, getOverviewPricingSnapshot, getPricingSnapshotId, pricingSnapshotsCompatible, type PricingSnapshotState } from '@/utils/usage/pricingSnapshot';
+import { eventSnapshotsCompatible, getAnalysisPricingSnapshot, getEventsPricingSnapshot, getOverviewPricingSnapshot, getPricingSnapshotId, pricingSnapshotsCompatible, type PricingSnapshotState } from '@/utils/usage/pricingSnapshot';
 import type { Theme } from '@/types';
 import { BrandLink } from '@/components/BrandLink';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
@@ -1057,6 +1057,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState('');
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
+  const [loadedAnalysisQueryKey, setLoadedAnalysisQueryKey] = useState<string | null>(null);
+  const analysisQueryKey = usageRangeQuery.valid && apiKeyFilterReady ? buildUsageStatsQueryKey(usageRangeQuery, requestApiKeyId) : null;
+  const currentAnalysisData = analysisQueryKey !== null && loadedAnalysisQueryKey === analysisQueryKey ? analysisData : null;
   const [analysisLatencyLoading, setAnalysisLatencyLoading] = useState(false);
   const [analysisLatencyError, setAnalysisLatencyError] = useState('');
   const [analysisLatencyData, setAnalysisLatencyData] = useState<AnalysisLatencyDiagnostics | null>(null);
@@ -1278,8 +1281,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
       loadCore: () => fetchAnalysis(usageRangeQuery, controller.signal, requestApiKeyId),
       loadLatency: () => fetchAnalysisLatency(usageRangeQuery, controller.signal, requestApiKeyId),
       onCoreLoaded: (response) => {
-        if (analysisRequestControllerRef.current !== controller) return;
+        if (controller.signal.aborted || analysisRequestControllerRef.current !== controller) return;
         setAnalysisData(response);
+        setLoadedAnalysisQueryKey(analysisQueryKey);
         setAnalysisLoading(false);
       },
       onCoreError: (error) => {
@@ -1314,7 +1318,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     if (analysisRequestControllerRef.current === controller) {
       analysisRequestControllerRef.current = null;
     }
-  }, [apiKeyFilterReady, onAuthRequired, recoverRangeBoundsConflict, requestApiKeyId, t, usageRangeQuery]);
+  }, [analysisQueryKey, apiKeyFilterReady, onAuthRequired, recoverRangeBoundsConflict, requestApiKeyId, t, usageRangeQuery]);
 
   useEffect(() => {
     try {
@@ -2085,14 +2089,21 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const overviewSnapshotMismatch = activeTab === 'overview' && !loading && !comparisonsLoading
     && (overviewSnapshot.mixed || (Boolean(currentOverviewUsage && currentOverviewComparisons)
       && !pricingSnapshotsCompatible(overviewSnapshot.id, getPricingSnapshotId(currentOverviewComparisons))));
-  // The Events tab may clamp a saved custom range; do not pin it to an old, wider Overview query.
-  const overviewMatchesEventsQuery = timeRange !== 'custom' || (customRange?.unit === activeCustomRange?.unit
+  // Some tabs clamp a saved custom range; do not pin them to an old, wider Overview query.
+  const overviewMatchesActiveQuery = timeRange !== 'custom' || (customRange?.unit === activeCustomRange?.unit
     && customRange?.start === activeCustomRange?.start && customRange?.end === activeCustomRange?.end);
   const eventsRelatedSnapshotMismatch = activeTab === 'events' && !eventsLoading && !loading && !comparisonsLoading
-    && ((overviewMatchesEventsQuery && Boolean(currentOverviewUsage)
+    && ((overviewMatchesActiveQuery && Boolean(currentOverviewUsage)
       && !eventSnapshotsCompatible(eventsSnapshotRef.current, overviewSnapshot))
       || (Boolean(currentOverviewComparisons)
         && !pricingSnapshotsCompatible(eventsSnapshotRef.current.id, getPricingSnapshotId(currentOverviewComparisons))));
+  const analysisSnapshot = getAnalysisPricingSnapshot(currentAnalysisData);
+  const analysisSnapshotMismatch = activeTab === 'analysis' && !analysisLoading && Boolean(currentAnalysisData)
+    && (analysisSnapshot.mixed || (!loading && !comparisonsLoading
+      && ((overviewMatchesActiveQuery && Boolean(currentOverviewUsage)
+        && !eventSnapshotsCompatible(analysisSnapshot, overviewSnapshot))
+        || (Boolean(currentOverviewComparisons)
+          && !pricingSnapshotsCompatible(analysisSnapshot.id, getPricingSnapshotId(currentOverviewComparisons))))));
   const relatedPricingSnapshotId = !loading && !comparisonsLoading && !overviewSnapshot.mixed
     && pricingSnapshotsCompatible(overviewSnapshot.id, getPricingSnapshotId(currentOverviewComparisons))
     ? overviewSnapshot.id ?? getPricingSnapshotId(currentOverviewComparisons)
@@ -2329,10 +2340,10 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
             {activeTab === 'settings' && apiKeySettingsError && <div className={styles.errorBox}>{apiKeySettingsError}</div>}
             {!(activeTab === 'overview' ? error : activeTab === 'settings' ? (pricingError || authSessionsError || apiKeySettingsError) : '') && displayStatusError && <div className={styles.errorBox}>{displayStatusError}</div>}
 
-            {(overviewSnapshotMismatch || eventsRelatedSnapshotMismatch || (activeTab === 'events' && eventsSnapshotMismatch)) && (
+            {(overviewSnapshotMismatch || analysisSnapshotMismatch || eventsRelatedSnapshotMismatch || (activeTab === 'events' && eventsSnapshotMismatch)) && (
               <div className={styles.errorBox} role="status" data-pricing-snapshot-notice>
                 {t('cost_estimates.snapshot_mismatch')}
-                <Button type="button" variant="secondary" size="sm" disabled={manualRefreshLoading || (activeTab === 'overview' ? loading || comparisonsLoading : eventsLoading)} onClick={() => void refreshAllPricingCosts()}>
+                <Button type="button" variant="secondary" size="sm" disabled={manualRefreshLoading || (activeTab === 'overview' ? loading || comparisonsLoading : activeTab === 'analysis' ? analysisLoading : eventsLoading)} onClick={() => void refreshAllPricingCosts()}>
                   {t('cost_estimates.refresh')}
                 </Button>
               </div>

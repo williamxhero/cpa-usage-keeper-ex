@@ -22,6 +22,14 @@ export function getOverviewPricingSnapshot(overview: unknown): PricingSnapshotSt
   return { id: rootId ?? summaryId, mixed: !pricingSnapshotsCompatible(rootId, summaryId) }
 }
 
+export function getAnalysisPricingSnapshot(analysis: unknown): PricingSnapshotState {
+  const rootId = getPricingSnapshotId(analysis)
+  const breakdownId = analysis && typeof analysis === 'object'
+    ? getPricingSnapshotId((analysis as { cost_breakdown?: unknown }).cost_breakdown)
+    : undefined
+  return { id: rootId ?? breakdownId, mixed: !pricingSnapshotsCompatible(rootId, breakdownId) }
+}
+
 export function getEventsPricingSnapshot(page: { events: readonly unknown[]; pricing_snapshot_id?: string }): PricingSnapshotState {
   const ids = [getPricingSnapshotId(page)]
   for (const event of page.events) {
