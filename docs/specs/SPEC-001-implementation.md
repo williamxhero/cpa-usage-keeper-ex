@@ -18,8 +18,8 @@ This change is source-only. It does not modify CPA, installed services or databa
 | [#3](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/3) | Credential-wide default multiplier | #2 | Complete with historical-evidence limitation | `85351fd6`, `68354c5e`, `b586f11f` |
 | [#4](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/4) | Named channels and channel default multiplier | #3 | Complete | `46836784`, `8809bb6e`, `e6bbbca8`, `7bd8074d`; integrated `869e4e00` |
 | [#5](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/5) | Credential model-specific multiplier | #3 | Complete | `f50d1f53`, `c3ad0880`; integrated `f5a2f383` |
-| [#6](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/6) | Credential model-specific fixed four-part tariff | #5 | In progress | — |
-| [#7](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/7) | Channel model exceptions and full precedence | #4, #6 | Pending | — |
+| [#6](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/6) | Credential model-specific fixed four-part tariff | #5 | Complete | `220a534b`, `f0c10bd9`, `86c99805`; integrated `e2c2d80f` |
+| [#7](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/7) | Channel model exceptions and full precedence | #4, #6 | In progress | — |
 | [#8](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/8) | Dual costs and request pricing explanation | #7 | Pending | — |
 | [#9](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/9) | Stale binding and explicit identity migration | #4 | In progress | — |
 
@@ -85,7 +85,16 @@ Accepted backend `f50d1f53c114b98b06a6d814c6afc530822d0fd8` and UI `c3ad08803d9b
 - Six new real service tests and two HTTP tests cover all cost families, future baseline validation, exact typed identity, missing baseline/zero, failure and COMMIT atomicity, concurrency, inheritance and restart. A deliberate default-only guard mutation failed (33.24 instead of expected 33.44), then passed when the model-aware guard was restored. Bounded independent backend review found no verified actionable blocker.
 - Focused backend checks passed across five packages. Focused frontend tests passed 75 tests in three files, including 32 new card cases, translations and responsive layout. Full Go suite passed (31 successful package results); npm ci, full frontend tests (180 files / 1,464 tests, 98.90 seconds, process-only Node compatibility flag/two workers), lint, typecheck and build passed. Actual `make verify` exited 127 because make remains unavailable. No retries, skipped assertions or configuration changes were needed. Nonfatal frontend socket-fixture stderr and build-size warnings remain. Final diff checks passed; the ticket tree was clean and generated assets were removed.
 
-Current frontier: #6 and #9 in parallel. #7 waits for #6; #8 waits for #7. Draft delivery PR: https://github.com/williamxhero/cpa-usage-keeper-ex/pull/10 (not ready to merge).
+### #6 — complete credential model fixed tariffs
+
+Accepted backend `220a534b7789d5815d3df1e0f7b852d15d17f7bc`, UI `f0c10bd9c5f03a2a5da157f0400ead73be5541ea`, and normal channel composition `86c99805822c3166abc384ea562f6953868320b9`; integrated/pushed through `e2c2d80f`.
+
+- One subject/model row has mutually exclusive multiplier or fixed mode. Four explicit finite nonnegative rates are required; omitted/null/blank/invalid portions reject the complete candidate, while all-zero tariffs remain active. Complete mode switches discard hidden inactive fields and clearing restores inheritance.
+- Fixed pricing uses the existing independently matched request baseline style when available; otherwise it requires a saved explicit existing style. Fixed estimates can be available without a baseline, whose separate request reference remains null/unavailable. Higher selected multipliers (including zero) with no usable baseline do not downgrade to alias fixed tariffs/channel defaults.
+- Real persisted service/admin HTTP and composed-channel regressions cover $10/$20/$30 across cost families and channel comparisons, exact identity, per-event four-bucket clamping, mode replacement, future baseline/style validation, partial/missing evidence, restart, failed COMMIT and concurrent pinned readers. Initial backend and final narrow #4+#6 compiler/loader/resolver/guard reviews found no verified blockers.
+- Final composed Go suite passed (31 successful package results); npm ci passed (239 packages); focused frontend passed 151 tests in four files; full frontend passed 181 files / 1,540 tests (85.80 seconds, process-only compatibility flag/two workers). Lint passed with zero warnings, typecheck and build passed (250 modules). Both pre/post-composition make verify attempts failed because make remains unavailable; individual recipes all passed. No full-suite retries. Nonfatal ECONNRESET fixture stderr and existing bundle/plugin warnings remain. Own new-test control-helper corrections and a hook warning were fixed rather than suppressing warnings/changing valid tests or configuration. Final tree/diff checks clean; generated assets removed and tracked placeholder restored.
+
+Current frontier: #7 and #9 in parallel. #8 waits for #7. Draft delivery PR: https://github.com/williamxhero/cpa-usage-keeper-ex/pull/10 (not ready to merge).
 
 ## Remaining limitations
 
