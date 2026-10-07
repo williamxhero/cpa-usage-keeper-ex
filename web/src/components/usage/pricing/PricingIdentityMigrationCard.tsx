@@ -157,7 +157,7 @@ export function PricingIdentityMigrationCard({ canManage = true, onChanged }: { 
         <Modal open={!!pending} title={t(pending?.action === 'migrate' ? 'pricing_identity_migration.migrate_confirm' : 'pricing_identity_migration.correction_confirm')} onClose={() => { if (!busy) setPending(null); }} closeDisabled={busy}
           footer={<><Button variant="secondary" disabled={busy} onClick={() => setPending(null)}>{t('common.cancel')}</Button><Button disabled={busy || !pending} onClick={() => void submit()}>{t('pricing_identity_migration.confirm')}</Button></>}>
           {pending && <div className={styles.body}><p>{pending.label}</p><p>{t('pricing_identity_migration.owner')} {pending.subjectId}</p>
-            {pending.targetId && <p>{t('pricing_identity_migration.target')} {pending.targetId}</p>}
+            {pending.action === 'rebind' && pending.targetId && <p>{t('pricing_identity_migration.target')} {pending.targetId}</p>}
             <p>{t(pending.action === 'migrate' ? 'pricing_identity_migration.migrate_warning' : 'pricing_identity_migration.correction_warning')}</p>
             <p>{t(`pricing_identity_migration.${pending.action}_detail`)}</p>
           </div>}
