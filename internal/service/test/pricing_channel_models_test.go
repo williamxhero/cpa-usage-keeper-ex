@@ -435,6 +435,26 @@ func TestChannelModelInvalidCandidateCommitPinnedReadersAndDeletion(t *testing.T
 	if _, err := repository.LoadPricingSnapshot(ctx, f.db); err != nil {
 		t.Fatalf("orphaned deleted price %v", err)
 	}
+	credentialModels := f.prices.(service.PricingCredentialModelsProvider)
+	if _, err := credentialModels.SetCredentialModel(ctx, f.subjectID, "observed-model", ".9"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.channels.DeletePricingChannel(ctx, f.ids[0], true); err != nil {
+		t.Fatal(err)
+	}
+	if config, err := credentialModels.GetCredentialModel(ctx, f.subjectID, "observed-model"); err != nil || config.Mode != "multiplier" || config.Multiplier == nil || *config.Multiplier != .9 {
+		t.Fatalf("deleted credential price %+v %v", config, err)
+	}
+	var eventCount, subjectCount int64
+	if err := f.db.Model(&entities.UsageEvent{}).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Model(&entities.CredentialPricingSubject{}).Where("id = ?", f.subjectID).Count(&subjectCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 2 || subjectCount != 1 {
+		t.Fatalf("deleted preserved evidence: events %d subject %d", eventCount, subjectCount)
+	}
 }
 
 func TestChannelModelExactIdentityAmbiguityStyleLossAndLegacyCompatibility(t *testing.T) {
@@ -495,4 +515,122 @@ func TestChannelModelExactIdentityAmbiguityStyleLossAndLegacyCompatibility(t *te
 	if !reflect.DeepEqual(legacy.Cost, restored.Cost) || f.catalog.NewResolver().Selection(restored) != nil {
 		t.Fatalf("legacy changed %+v %+v", legacy, restored)
 	}
+}
+
+func TestChannelModelOnlyHotArchiveDuplicateCoverageAndMissingEvidence(t *testing.T) {
+	f, models := channelModelFixedFixture(t, true)
+	ctx := context.Background()
+	for i, id := range f.ids {
+		if _, err := models.SetChannelFixed(ctx, id, "observed-model", syntheticFixed(float64(i+1), "claude")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var event entities.UsageEvent
+	if err := f.db.First(&event, "event_key = ?", f.events[0].EventKey).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Exec("INSERT INTO usage_events_archive ("+entities.UsageEventStorageColumns+") SELECT "+entities.UsageEventStorageColumns+" FROM usage_events WHERE id = ?", event.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.assertCostFamilies(t, 30, false)
+	if err := f.db.Delete(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.assertCostFamilies(t, 30, false)
+	f.assertChannels(t, map[string]float64{f.ids[0]: 10, f.ids[1]: 20})
+	if err := f.db.Table("usage_events_archive").Where("id = ?", event.ID).Delete(&entities.UsageEventArchive{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	overview, err := service.NewUsageService(f.db, f.catalog).GetUsageOverview(ctx, servicedto.UsageFilter{Range: "custom", CustomUnit: "hour", StartTime: &f.start, EndTime: &f.end, EndExclusive: true})
+	if err != nil || overview.Summary.CostAvailable || overview.Summary.UnavailableReason != "retained_pricing_evidence_incomplete" {
+		t.Fatalf("missing archive evidence %+v %v", overview, err)
+	}
+	closeCost(t, overview.Summary.TotalCost, 20)
+}
+
+func TestChannelModelOnlySameIndexTypedEventsAndOriginalPadding(t *testing.T) {
+	f := newChannelFixture(t)
+	ctx := context.Background()
+	models := f.prices.(service.PricingChannelModelsProvider)
+	if _, err := models.SetChannelModel(ctx, f.ids[0], "base", ".2"); err != nil {
+		t.Fatal(err)
+	}
+	other := entities.UsageIdentity{Name: "Synthetic model OAuth", AuthType: entities.UsageIdentityAuthTypeAuthFile, AuthTypeName: "oauth", Identity: "synthetic-a", Type: "codex", BindingIdentityStatus: "unique"}
+	if err := f.db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	subject, err := f.prices.(service.PricingCredentialProvider).BindPricingCredential(ctx, other.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel, err := f.channels.CreatePricingChannel(ctx, service.PricingChannelInput{Name: "OAuth model channel", MemberSubjectIDs: []string{subject.SubjectID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := models.SetChannelModel(ctx, channel.ID, "base", ".8"); err != nil {
+		t.Fatal(err)
+	}
+	start := f.start.Add(10 * time.Hour)
+	end := start.Add(time.Hour)
+	events := []entities.UsageEvent{}
+	for i, evidence := range []struct{ index, kind string }{{"synthetic-a", "apikey"}, {"synthetic-a", "oauth"}, {"synthetic-a", ""}, {"synthetic-a", " apikey "}, {" synthetic-a ", "apikey"}} {
+		events = append(events, entities.UsageEvent{EventKey: "channel-model-typed-" + string(rune('a'+i)), APIGroupKey: "synthetic-downstream", Model: "base", AuthType: evidence.kind, AuthIndex: evidence.index, Timestamp: start.Add(time.Duration(i) * time.Minute), InputTokens: 1_000_000, TotalTokens: 1_000_000})
+	}
+	if _, _, err := repository.InsertUsageEvents(f.db, events); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.AggregateUsageOverviewStats(ctx, f.db, f.end); err != nil {
+		t.Fatal(err)
+	}
+	usage := service.NewUsageService(f.db, f.catalog)
+	filter := servicedto.UsageFilter{Range: "custom", CustomUnit: "hour", StartTime: &start, EndTime: &end, EndExclusive: true}
+	page, err := usage.ListUsageEvents(ctx, filter)
+	if err != nil || len(page.Events) != 5 {
+		t.Fatalf("typed details %+v %v", page, err)
+	}
+	sum := 0.0
+	unknown := 0
+	for _, event := range page.Events {
+		sum += event.CostUSD
+		if event.ChannelID == "" {
+			unknown++
+			if event.AttributionWarning == "" || event.PricingSelection == nil || event.PricingSelection.Scope != "legacy" {
+				t.Fatalf("guessed identity %+v", event)
+			}
+		} else if event.PricingSelection == nil || event.PricingSelection.Scope != "channel_model" {
+			t.Fatalf("lost model scope %+v", event)
+		}
+	}
+	closeCost(t, sum, 25)
+	if unknown != 3 {
+		t.Fatal(unknown)
+	}
+	overview, err := usage.GetUsageOverview(ctx, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCost(t, overview.Summary.TotalCost, 25)
+	comparisons, err := usage.(service.UsageComparisonProvider).GetUsageOverviewComparisons(ctx, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, cost := range map[string]float64{f.ids[0]: 2, channel.ID: 8, repository.UnknownPricingChannel: 15} {
+		row := comparisons.Comparisons.Channels[id]
+		if row == nil {
+			t.Fatal(id)
+		}
+		closeCost(t, row.CostUSD, cost)
+	}
+	closeCost(t, comparisons.Comparisons.AIProviders["synthetic-a"].CostUSD, 2)
+	closeCost(t, comparisons.Comparisons.AuthFiles["synthetic-a"].CostUSD, 8)
+	analysis, err := usage.GetAnalysis(ctx, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCost(t, analysis.CostBreakdown.TotalCostUSD, 25)
+	window, err := repository.SumUsageWindowStatsByAuthIndex(ctx, f.db, "synthetic-a", start, &end, f.catalog.NewResolver())
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCost(t, window.Cost, 20)
 }
