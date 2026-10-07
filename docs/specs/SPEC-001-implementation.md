@@ -19,9 +19,9 @@ This change is source-only. It does not modify CPA, installed services or databa
 | [#4](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/4) | Named channels and channel default multiplier | #3 | Complete | `46836784`, `8809bb6e`, `e6bbbca8`, `7bd8074d`; integrated `869e4e00` |
 | [#5](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/5) | Credential model-specific multiplier | #3 | Complete | `f50d1f53`, `c3ad0880`; integrated `f5a2f383` |
 | [#6](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/6) | Credential model-specific fixed four-part tariff | #5 | Complete | `220a534b`, `f0c10bd9`, `86c99805`; integrated `e2c2d80f` |
-| [#7](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/7) | Channel model exceptions and full precedence | #4, #6 | In progress | — |
-| [#8](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/8) | Dual costs and request pricing explanation | #7 | Pending | — |
-| [#9](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/9) | Stale binding and explicit identity migration | #4 | In progress | — |
+| [#7](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/7) | Channel model exceptions and full precedence | #4, #6 | Complete | `aa4ef321`, `e712b4e4`, `965ffa9b`; integrated `ecea1ddd` |
+| [#8](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/8) | Dual costs and request pricing explanation | #7 | In progress | — |
+| [#9](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/9) | Stale binding and explicit identity migration | #4 | Complete | `d2059aff` through `de4dc552`; integrated `69b25f15` |
 
 ## Required verification
 
@@ -94,7 +94,26 @@ Accepted backend `220a534b7789d5815d3df1e0f7b852d15d17f7bc`, UI `f0c10bd9c5f03a2
 - Real persisted service/admin HTTP and composed-channel regressions cover $10/$20/$30 across cost families and channel comparisons, exact identity, per-event four-bucket clamping, mode replacement, future baseline/style validation, partial/missing evidence, restart, failed COMMIT and concurrent pinned readers. Initial backend and final narrow #4+#6 compiler/loader/resolver/guard reviews found no verified blockers.
 - Final composed Go suite passed (31 successful package results); npm ci passed (239 packages); focused frontend passed 151 tests in four files; full frontend passed 181 files / 1,540 tests (85.80 seconds, process-only compatibility flag/two workers). Lint passed with zero warnings, typecheck and build passed (250 modules). Both pre/post-composition make verify attempts failed because make remains unavailable; individual recipes all passed. No full-suite retries. Nonfatal ECONNRESET fixture stderr and existing bundle/plugin warnings remain. Own new-test control-helper corrections and a hook warning were fixed rather than suppressing warnings/changing valid tests or configuration. Final tree/diff checks clean; generated assets removed and tracked placeholder restored.
 
-Current frontier: #7 and #9 in parallel. #8 waits for #7. Draft delivery PR: https://github.com/williamxhero/cpa-usage-keeper-ex/pull/10 (not ready to merge).
+### #7 — channel model exceptions and full precedence
+
+Accepted backend `aa4ef321c8deb7226cd7b6ded2a574e077a3ba46`, supplemental acceptance `e712b4e4`, and UI/final tip `965ffa9be5a479cbc332395b504aadca1ec7fa1e`; integrated/pushed through `ecea1ddd`.
+
+- Channel/model multiplier or complete fixed tariffs persist in one mutually exclusive scope. Exact scoped Model-before-Alias and scope-before-candidate selection compose the full order: credential model > credential default > channel model > channel default > complete legacy. Baseline/style/reference lookup stays independently unchanged.
+- Real persisted matrix covers legacy $30, channel default $2, channel model $11, credential default $3 and credential model $12, clear-through-every-layer, credential Alias over channel Model, both modes, four-bucket clamping, all cost families, model-only guards, hot/archive duplicate membership, padded/unknown/opposite raw identity types, missing-baseline multiplier-zero no downgrade, candidate/COMMIT rollback, concurrency, restart and dependency-confirmed deletion preserving credential prices/history.
+- API/UI copy in all languages reflects next-layer inheritance rather than incorrectly promising legacy after an individual clear. Bounded independent backend review found no verified actionable blockers.
+- Final full Go passed 31 packages, 1,716 top-level / 3,042 including subtests; npm ci (239 packages), full frontend (182 files / 1,643 tests), lint, typecheck and build (251 modules) passed. Actual make verify remained unavailable; equivalent gates were executed. Final ticket tree/diff checks clean; tracked placeholder restored and own build outputs removed.
+
+### #9 — explicit identity migration and correction
+
+Accepted backend `d2059affc180c3648eeadd4fdc8e4b6d4747b61c`, UI `91da01a7`, accepted-#6 composition `266c3b55`, fixed-mode migration acceptance `402421795ea8aea554e0e04429af1b9d1bc6b6bc`, and rollback/provider evidence/final tip `de4dc552b3e6535026d3053a76082b410ce7061d`; integrated/pushed through `69b25f15`.
+
+- Additive exact enabled/disabled association overlays retain original subject relations. Confirmed migration appends a new exact identity to the same stable subject without rewriting history/configuration/channel membership. Separately confirmed correction unbinds/rebinds one opaque association; disabled origins cannot resurrect via ordinary registration or snapshot reload.
+- Safe administrator state/selection references and localized responsive UI distinguish unbound/current/stale/history, require explicit confirmation, retain committed receipts after failed readback, and invalidate stale selections. Names/endpoints/types never trigger automatic migration; controlled metadata timeout/partial scopes do not delete or erase historical ownership.
+- Real service/admin HTTP tests cover old/new identity fees and channel sums across cost families, exact type/whitespace, occupied/shared/duplicate selection conflicts, missing/stale state, candidate/deferred-COMMIT rollback, concurrent pinned readers, actual close/reopen restart, correction, fixed/default/model/channel row preservation, retained clamping/archive/completeness and scoped provider restore/failure. Independent backend/final #9+#6 seam review and coordinator UI inspection found no blockers. Unknown raw types and type-less shared-index ambiguity remain conservative, not inferred.
+- All six gates passed on the final ticket tip: full Go, npm ci, frontend 182 files / 1,551 tests, lint, typecheck and build. Actual make verify exited 127 because make remains unavailable; final tree/diff checks clean.
+- The coordinator resolved four mechanical #7+#9 conflicts by retaining both migration registrations and both API import/test sets, without inventing behavior. On composed integration source: focused backend passed four packages, focused frontend passed 364 tests in 12 files; full Go, npm ci, full frontend (183 files / 1,654 tests, 72.92 seconds), lint, typecheck and build (253 modules) passed. No tests were skipped or weakened. Existing fixture socket stderr and bundle-size warning remained nonfatal.
+
+Current frontier: #8, backend and display-only frontend in parallel, based on the fully verified #2–#7+#9 integration. Draft delivery PR: https://github.com/williamxhero/cpa-usage-keeper-ex/pull/10 (not ready to merge).
 
 ## Remaining limitations
 
