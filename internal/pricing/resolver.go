@@ -36,6 +36,10 @@ type CostResult struct {
 	UnavailableReason   string
 	SelectedModel       string
 	SelectedBy          string
+	Mode                string
+	Fixed               *FixedTariff
+	ReferenceCost       helper.UsageTokenCostBreakdown
+	ReferenceAvailable  bool
 }
 
 // Resolver 在创建时固定绑定一个 Snapshot，确保单个响应不会混用新旧价格。
@@ -52,20 +56,42 @@ func (r Resolver) ActiveFields() ActiveFields {
 
 func (r Resolver) Calculate(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
-	if id, multiplier, selectedModel, selectedBy, selected := r.credentialModel(subject); selected {
-		result := calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
-		result.Scope = "credential_model"
-		result.SelectedModel, result.SelectedBy = selectedModel, selectedBy
-		return result
+	if config, selectedBy, selected := r.credentialModel(subject); selected {
+		var result CostResult
+		if config.Mode == ModeFixed {
+			style := config.Fixed.PricingStyle
+			if found {
+				style = model.pricing.PricingStyle
+			}
+			result = CostResult{Available: true, PricingStyle: style, CredentialSubjectID: config.SubjectID, RuleMultiplier: 1, Fixed: cloneFixed(config.Fixed), MatchedModel: matchedModel, MatchedBy: matchedBy}
+			result.Cost = helper.CalculateUsageTokenCostBreakdown(subject.Tokens, config.Fixed.pricing(style))
+		} else {
+			result = calculateCredentialDefault(subject, config.SubjectID, config.Multiplier, model, matchedModel, matchedBy, found)
+		}
+		result.Scope, result.Mode = "credential_model", config.Mode
+		result.SelectedModel, result.SelectedBy = config.Model, selectedBy
+		return withBaselineReference(result, subject, model, found)
 	}
 	if id, multiplier, selected := r.credentialDefault(subject); selected {
-		return calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+		return withBaselineReference(calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found), subject, model, found)
 	}
-	return r.CalculateLegacy(subject)
+	result := r.CalculateLegacy(subject)
+	if r.HasPricingOverrides() {
+		result = withBaselineReference(result, subject, model, found)
+	}
+	return result
+}
+
+func withBaselineReference(result CostResult, subject CostSubject, model compiledModel, found bool) CostResult {
+	result.ReferenceAvailable = found || !helper.UsageTokenInputRequiresPricing(subject.Tokens)
+	if found {
+		result.ReferenceCost = helper.CalculateUsageTokenCostBreakdown(subject.Tokens, unadjustedPricing(model))
+	}
+	return result
 }
 
 func calculateCredentialDefault(subject CostSubject, id string, multiplier float64, model compiledModel, matchedModel, matchedBy string, found bool) CostResult {
-	result := CostResult{Available: !helper.UsageTokenInputRequiresPricing(subject.Tokens), RuleMultiplier: 1, CredentialSubjectID: id, Scope: "credential_default", Multiplier: &multiplier, MatchedModel: matchedModel, MatchedBy: matchedBy}
+	result := CostResult{Available: !helper.UsageTokenInputRequiresPricing(subject.Tokens), RuleMultiplier: 1, CredentialSubjectID: id, Scope: "credential_default", Mode: ModeMultiplier, Multiplier: &multiplier, MatchedModel: matchedModel, MatchedBy: matchedBy}
 	if !found {
 		if !result.Available {
 			result.UnavailableReason = "missing_baseline"
