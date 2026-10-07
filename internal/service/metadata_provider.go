@@ -20,6 +20,23 @@ func persistProviderMetadata(ctx context.Context, db *gorm.DB, snapshot provider
 	}
 	// identities 按 snapshot 的 registry/source 顺序预分配，SQLite 新行自然沿用该顺序写入。
 	identities := make([]entities.UsageIdentity, 0, len(snapshot.Credentials))
+	// A transient failed source is not new negative identity evidence for an
+	// already saved exact binding. Preserve its last proved status; genuinely
+	// new/ambiguous claims remain unknown/ambiguous until a complete refresh.
+	previous := make(map[string]string)
+	if fetchErr != nil {
+		oldIdentities, subjects, err := repository.LoadCredentialPricingDirectory(db.WithContext(ctx))
+		if err != nil {
+			return fmt.Errorf("load previous provider binding evidence"), nil
+		}
+		for _, old := range oldIdentities {
+			for _, subject := range subjects {
+				if old.AuthType == entities.UsageIdentityAuthTypeAIProvider && subject.AuthType == old.AuthType && subject.Identity == old.Identity && subject.AuthTypeName == old.AuthTypeName {
+					previous[old.Identity] = old.BindingIdentityStatus
+				}
+			}
+		}
+	}
 	// 每条 Credential 已在纯包完成必填校验和精确 auth-index 去重。
 	for _, credential := range snapshot.Credentials {
 		// 单条数据库 identity 严格按字段来源单向映射。
@@ -53,6 +70,9 @@ func persistProviderMetadata(ctx context.Context, db *gorm.DB, snapshot provider
 		if fetchErr != nil {
 			// A failed source may contain another claim; partial success cannot prove uniqueness.
 			identity.BindingIdentityStatus = "unknown"
+			if status := previous[identity.Identity]; status == "unique" || status == "ambiguous" {
+				identity.BindingIdentityStatus = status
+			}
 		}
 		if credential.Ambiguous {
 			identity.BindingIdentityStatus = "ambiguous"

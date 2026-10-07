@@ -502,7 +502,9 @@ func TestPricingCredentialBindingDoesNotChangeLegacyCostsOrRequestAttributes(t *
 			t.Fatalf("binding changed legacy response %s: %d %s", path, res.Code, res.Body.String())
 		}
 	}
-	if catalog.Snapshot() != baselineSnapshot || !reflect.DeepEqual(catalog.NewResolver().Calculate(costSubject), baselineCost) {
+	// Ticket 3 publishes bindings in the same immutable candidate. The snapshot
+	// pointer must change, but legacy model prices, fees and match metadata must not.
+	if !reflect.DeepEqual(catalog.Snapshot().ModelConfigs(), baselineSnapshot.ModelConfigs()) || !reflect.DeepEqual(catalog.NewResolver().Calculate(costSubject), baselineCost) {
 		t.Fatal("binding changed published prices, cost or matching metadata")
 	}
 	var persisted []entities.UsageEvent

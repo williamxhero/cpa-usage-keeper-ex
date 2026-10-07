@@ -1,6 +1,9 @@
 package pricing
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 var sharedEmptySnapshot = &Snapshot{
 	modelsByName: map[string]compiledModel{},
@@ -14,8 +17,13 @@ func EmptySnapshot() *Snapshot {
 
 // Catalog 原子保存当前价格快照，本身不执行数据库或网络 I/O。
 type Catalog struct {
-	current atomic.Pointer[Snapshot]
+	current    atomic.Pointer[Snapshot]
+	mutationMu sync.Mutex
 }
+
+// MutationMutex serializes all services which publish prices or binding evidence.
+// Readers remain lock-free and pin one immutable snapshot per response.
+func (c *Catalog) MutationMutex() *sync.Mutex { return &c.mutationMu }
 
 func NewCatalog(snapshot *Snapshot) *Catalog {
 	catalog := &Catalog{}

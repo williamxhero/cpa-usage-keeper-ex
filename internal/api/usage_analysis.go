@@ -91,6 +91,8 @@ type analysisHeatmapCell struct {
 }
 
 type analysisCostBreakdown struct {
+	UnavailableReason    string  `json:"unavailable_reason,omitempty"`
+	PricingSnapshotID    string  `json:"pricing_snapshot_id,omitempty"`
 	UncachedInputCostUSD float64 `json:"uncached_input_cost_usd"`
 	CacheReadCostUSD     float64 `json:"cache_read_cost_usd"`
 	CacheWriteCostUSD    float64 `json:"cache_write_cost_usd"`
@@ -341,6 +343,8 @@ func buildAnalysisPayload(snapshot *servicedto.AnalysisSnapshot, apiKeyInfos map
 			OutputCostUSD:        snapshot.CostBreakdown.OutputCostUSD,
 			TotalCostUSD:         snapshot.CostBreakdown.TotalCostUSD,
 			CostAvailable:        snapshot.CostBreakdown.CostAvailable,
+			UnavailableReason:    snapshot.CostBreakdown.UnavailableReason,
+			PricingSnapshotID:    snapshot.CostBreakdown.PricingSnapshotID,
 		},
 		ModelEfficiency: buildAnalysisModelEfficiencyPayload(snapshot.ModelEfficiency),
 	}

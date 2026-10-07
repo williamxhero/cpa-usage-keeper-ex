@@ -253,6 +253,7 @@ func orderedMigrations() []databaseMigration {
 		{version: migrationNormalizeUsageEventParentSessionNull, run: normalizeUsageEventParentSessionNullMigration},
 		{version: migrationLimitLatencySamplePoints, run: limitLatencySamplePointsMigration, destructive: true},
 		{version: "20261007_credential_pricing_subjects", run: credentialPricingSubjectsMigration},
+		{version: "20261007_credential_price_defaults", run: credentialPriceDefaultsMigration},
 	}
 }
 

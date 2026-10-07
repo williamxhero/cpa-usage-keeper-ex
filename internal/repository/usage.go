@@ -20,7 +20,7 @@ import (
 const usageEventProjectionColumns = "id, api_group_key, provider, auth_type, request_id, client_ip, x_forwarded_for, user_agent, model, model_alias, response_model, reasoning_effort, service_tier, response_service_tier, executor_type, endpoint, timestamp, source, auth_index, failed, status_code, stream, latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
 
 // usageOverviewBoundaryEventProjectionColumns 只包含非 Custom Overview 边界卡片计算需要的字段。
-const usageOverviewBoundaryEventProjectionColumns = "api_group_key, model, model_alias, timestamp, failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, auth_index"
+const usageOverviewBoundaryEventProjectionColumns = "api_group_key, model, model_alias, timestamp, failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, auth_index, auth_type"
 
 // usageOverviewRealtimeEventProjectionColumns 保持 Realtime 散点与身份字段完整。
 const usageOverviewRealtimeEventProjectionColumns = "api_group_key, provider, auth_type, model, model_alias, timestamp, source, auth_index, failed, generate, latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
@@ -257,31 +257,34 @@ func usageEventProjectionToRecord(event usageEventProjection) dto.UsageEventReco
 			}
 			return strings.TrimSpace(*event.ModelAlias)
 		}(),
-		ResponseModel:       strings.TrimSpace(event.ResponseModel),
-		ReasoningEffort:     strings.TrimSpace(event.ReasoningEffort),
-		ServiceTier:         strings.TrimSpace(event.ServiceTier),
-		ResponseServiceTier: strings.TrimSpace(event.ResponseServiceTier),
-		ClientIP:            event.ClientIP,
-		XForwardedFor:       event.XForwardedFor,
-		UserAgent:           event.UserAgent,
-		ExecutorType:        strings.TrimSpace(event.ExecutorType),
-		Endpoint:            strings.TrimSpace(event.Endpoint),
-		AuthType:            strings.TrimSpace(event.AuthType),
-		RequestID:           strings.TrimSpace(event.RequestID),
-		Provider:            strings.TrimSpace(event.Provider),
-		Source:              strings.TrimSpace(event.Source),
-		AuthIndex:           strings.TrimSpace(event.AuthIndex),
-		Failed:              event.Failed,
-		StatusCode:          event.StatusCode,
-		Stream:              event.Stream,
-		LatencyMS:           event.LatencyMS,
-		TTFTMS:              event.TTFTMS,
-		InputTokens:         event.InputTokens,
-		OutputTokens:        event.OutputTokens,
-		ReasoningTokens:     event.ReasoningTokens,
-		CacheReadTokens:     event.CacheReadTokens,
-		CacheCreationTokens: event.CacheCreationTokens,
-		TotalTokens:         event.TotalTokens,
+		ResponseModel:           strings.TrimSpace(event.ResponseModel),
+		ReasoningEffort:         strings.TrimSpace(event.ReasoningEffort),
+		ServiceTier:             strings.TrimSpace(event.ServiceTier),
+		ResponseServiceTier:     strings.TrimSpace(event.ResponseServiceTier),
+		ClientIP:                event.ClientIP,
+		XForwardedFor:           event.XForwardedFor,
+		UserAgent:               event.UserAgent,
+		ExecutorType:            strings.TrimSpace(event.ExecutorType),
+		Endpoint:                strings.TrimSpace(event.Endpoint),
+		AuthType:                strings.TrimSpace(event.AuthType),
+		PricingAuthType:         event.AuthType,
+		PricingAuthIndex:        event.AuthIndex,
+		PricingIdentityObserved: true,
+		RequestID:               strings.TrimSpace(event.RequestID),
+		Provider:                strings.TrimSpace(event.Provider),
+		Source:                  strings.TrimSpace(event.Source),
+		AuthIndex:               strings.TrimSpace(event.AuthIndex),
+		Failed:                  event.Failed,
+		StatusCode:              event.StatusCode,
+		Stream:                  event.Stream,
+		LatencyMS:               event.LatencyMS,
+		TTFTMS:                  event.TTFTMS,
+		InputTokens:             event.InputTokens,
+		OutputTokens:            event.OutputTokens,
+		ReasoningTokens:         event.ReasoningTokens,
+		CacheReadTokens:         event.CacheReadTokens,
+		CacheCreationTokens:     event.CacheCreationTokens,
+		TotalTokens:             event.TotalTokens,
 	}
 }
 
@@ -388,6 +391,22 @@ func applyUsageEventListQuery(query *gorm.DB, filter dto.UsageQueryFilter) *gorm
 }
 
 func BuildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResolver pricing.Resolver) (*dto.AnalysisRecord, error) {
+	if db != nil && costResolver.HasCredentialDefaults() {
+		var result *dto.AnalysisRecord
+		err := db.Transaction(func(tx *gorm.DB) error {
+			var err error
+			result, err = buildAnalysisWithFilter(tx, filter, costResolver)
+			if result != nil {
+				result.CostBreakdown.PricingSnapshotID = costResolver.SnapshotID()
+			}
+			return err
+		})
+		return result, err
+	}
+	return buildAnalysisWithFilter(db, filter, costResolver)
+}
+
+func buildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResolver pricing.Resolver) (*dto.AnalysisRecord, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database is nil")
 	}
@@ -439,7 +458,11 @@ func BuildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResol
 		if err != nil {
 			return nil, err
 		}
-		applyAnalysisDailyRows(record, dailyRows, dailyIdentityLookup, costResolver)
+		evidence, err := loadUsagePricingEvidence(db, filter, dailyStart, dailyEnd, "daily", costResolver)
+		if err != nil {
+			return nil, err
+		}
+		applyAnalysisDailyRows(record, dailyRows, dailyIdentityLookup, costResolver, evidence)
 		return record, nil
 	}
 
@@ -456,7 +479,11 @@ func BuildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResol
 	if err != nil {
 		return nil, err
 	}
-	applyAnalysisHourlyRows(record, rows, identityLookup, costResolver)
+	evidence, err := loadUsagePricingEvidence(db, filter, fullStart, fullEnd, "hourly", costResolver)
+	if err != nil {
+		return nil, err
+	}
+	applyAnalysisHourlyRows(record, rows, identityLookup, costResolver, evidence)
 	fillAnalysisFullDayHourlyBuckets(record, filter)
 	return record, nil
 }
@@ -559,7 +586,7 @@ func loadAnalysisIdentityLookup(db *gorm.DB, authIndexes []string) (analysisIden
 	return lookup, nil
 }
 
-func applyAnalysisHourlyRows(record *dto.AnalysisRecord, rows []analysisOverviewStatProjection, identityLookup analysisIdentityLookup, costResolver pricing.Resolver) {
+func applyAnalysisHourlyRows(record *dto.AnalysisRecord, rows []analysisOverviewStatProjection, identityLookup analysisIdentityLookup, costResolver pricing.Resolver, evidence usagePricingEvidenceMap) {
 	bucketTotals := map[time.Time]*dto.AnalysisTokenUsageBucketRecord{}
 	modelUsageTotals := map[analysisModelUsageKey]*dto.AnalysisModelUsageRecord{}
 	apiTotals := map[string]*dto.AnalysisCompositionRecord{}
@@ -569,15 +596,18 @@ func applyAnalysisHourlyRows(record *dto.AnalysisRecord, rows []analysisOverview
 	heatmapTotals := map[analysisHeatmapKey]*dto.AnalysisHeatmapRecord{}
 	for _, row := range rows {
 		bucket := timeutil.NormalizeStorageTime(row.BucketStart).Truncate(time.Hour)
-		costResult := calculateAnalysisOverviewProjectionCost(costResolver, row)
+		costResult := calculateAnalysisOverviewProjectionCost(costResolver, row, string(record.Granularity), evidence)
 		cost, costAvailable := costResult.Cost, costResult.Available
+		if costResult.UnavailableReason != "" {
+			record.CostBreakdown.UnavailableReason = costResult.UnavailableReason
+		}
 		applyAnalysisRow(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, heatmapTotals, bucket, row.APIGroupKey, row.Model, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable)
-		applyAnalysisIdentityComposition(identityLookup, authFileTotals, aiProviderTotals, row.AuthIndex, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable)
+		applyAnalysisPricingIdentityComposition(identityLookup, authFileTotals, aiProviderTotals, row, string(record.Granularity), costResult, evidence)
 	}
 	finalizeAnalysisRecord(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, authFileTotals, aiProviderTotals, heatmapTotals)
 }
 
-func applyAnalysisDailyRows(record *dto.AnalysisRecord, dailyRows []analysisOverviewStatProjection, dailyIdentityLookup analysisIdentityLookup, costResolver pricing.Resolver) {
+func applyAnalysisDailyRows(record *dto.AnalysisRecord, dailyRows []analysisOverviewStatProjection, dailyIdentityLookup analysisIdentityLookup, costResolver pricing.Resolver, evidence usagePricingEvidenceMap) {
 	bucketTotals := map[time.Time]*dto.AnalysisTokenUsageBucketRecord{}
 	modelUsageTotals := map[analysisModelUsageKey]*dto.AnalysisModelUsageRecord{}
 	apiTotals := map[string]*dto.AnalysisCompositionRecord{}
@@ -587,10 +617,13 @@ func applyAnalysisDailyRows(record *dto.AnalysisRecord, dailyRows []analysisOver
 	heatmapTotals := map[analysisHeatmapKey]*dto.AnalysisHeatmapRecord{}
 	for _, row := range dailyRows {
 		bucket := timeutil.NormalizeStorageTime(row.BucketStart)
-		costResult := calculateAnalysisOverviewProjectionCost(costResolver, row)
+		costResult := calculateAnalysisOverviewProjectionCost(costResolver, row, string(record.Granularity), evidence)
 		cost, costAvailable := costResult.Cost, costResult.Available
+		if costResult.UnavailableReason != "" {
+			record.CostBreakdown.UnavailableReason = costResult.UnavailableReason
+		}
 		applyAnalysisRow(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, heatmapTotals, bucket, row.APIGroupKey, row.Model, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable)
-		applyAnalysisIdentityComposition(dailyIdentityLookup, authFileTotals, aiProviderTotals, row.AuthIndex, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable)
+		applyAnalysisPricingIdentityComposition(dailyIdentityLookup, authFileTotals, aiProviderTotals, row, string(record.Granularity), costResult, evidence)
 	}
 	finalizeAnalysisRecord(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, authFileTotals, aiProviderTotals, heatmapTotals)
 }
@@ -824,6 +857,22 @@ func BuildUsageOverviewWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, cost
 }
 
 func BuildUsageOverviewWithFilterAndRecentCache(db *gorm.DB, filter dto.UsageQueryFilter, recentCache *UsageRecentEventCache, costResolver pricing.Resolver) (*dto.UsageOverviewRecord, error) {
+	if db != nil && costResolver.HasCredentialDefaults() {
+		var result *dto.UsageOverviewRecord
+		err := db.Transaction(func(tx *gorm.DB) error {
+			var err error
+			result, err = buildUsageOverviewWithFilterAndRecentCache(tx, filter, recentCache, costResolver)
+			if result != nil {
+				result.Summary.PricingSnapshotID = costResolver.SnapshotID()
+			}
+			return err
+		})
+		return result, err
+	}
+	return buildUsageOverviewWithFilterAndRecentCache(db, filter, recentCache, costResolver)
+}
+
+func buildUsageOverviewWithFilterAndRecentCache(db *gorm.DB, filter dto.UsageQueryFilter, recentCache *UsageRecentEventCache, costResolver pricing.Resolver) (*dto.UsageOverviewRecord, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database is nil")
 	}
@@ -1999,6 +2048,9 @@ func applyUsageEventToOverview(overview *dto.UsageOverviewRecord, event entities
 	result := costResolver.Calculate(UsageEventCostSubject(event))
 	if !result.Available {
 		overview.Summary.CostAvailable = false
+		if result.UnavailableReason != "" {
+			overview.Summary.UnavailableReason = result.UnavailableReason
+		}
 	}
 	cost := result.Cost.TotalCostUSD
 	overview.Summary.TotalCost += cost

@@ -8,22 +8,32 @@ import (
 type CostSubject struct {
 	Dimensions UsageDimensions
 	Tokens     helper.UsageTokenCostInput
+	// Exact identity evidence is independent of normalized legacy rule fields.
+	// ObservedIdentity distinguishes unknown raw type from a type-less rollup.
+	AuthType          string
+	IdentityAuthIndex string
+	ObservedIdentity  bool
 }
 
 func NewCostSubject(dimensions UsageDimensions, tokens helper.UsageTokenCostInput) CostSubject {
 	return CostSubject{
-		Dimensions: canonicalizeUsageDimensions(dimensions),
-		Tokens:     tokens,
+		Dimensions:        canonicalizeUsageDimensions(dimensions),
+		Tokens:            tokens,
+		IdentityAuthIndex: dimensions.AuthIndex,
 	}
 }
 
 type CostResult struct {
-	Cost           helper.UsageTokenCostBreakdown
-	Available      bool
-	PricingStyle   string
-	MatchedModel   string
-	MatchedBy      string
-	RuleMultiplier float64
+	Cost                helper.UsageTokenCostBreakdown
+	Available           bool
+	PricingStyle        string
+	MatchedModel        string
+	MatchedBy           string
+	RuleMultiplier      float64
+	CredentialSubjectID string
+	Scope               string
+	Multiplier          *float64
+	UnavailableReason   string
 }
 
 // Resolver 在创建时固定绑定一个 Snapshot，确保单个响应不会混用新旧价格。
@@ -39,6 +49,30 @@ func (r Resolver) ActiveFields() ActiveFields {
 }
 
 func (r Resolver) Calculate(subject CostSubject) CostResult {
+	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
+	if id, multiplier, selected := r.credentialDefault(subject); selected {
+		return calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+	}
+	return r.CalculateLegacy(subject)
+}
+
+func calculateCredentialDefault(subject CostSubject, id string, multiplier float64, model compiledModel, matchedModel, matchedBy string, found bool) CostResult {
+	result := CostResult{Available: !helper.UsageTokenInputRequiresPricing(subject.Tokens), RuleMultiplier: 1, CredentialSubjectID: id, Scope: "credential_default", Multiplier: &multiplier, MatchedModel: matchedModel, MatchedBy: matchedBy}
+	if !found {
+		if !result.Available {
+			result.UnavailableReason = "missing_baseline"
+		}
+		return result
+	}
+	result.Available = true
+	result.PricingStyle = model.pricing.PricingStyle
+	result.Cost = helper.ScaleUsageTokenCostBreakdown(helper.CalculateUsageTokenCostBreakdown(subject.Tokens, unadjustedPricing(model)), multiplier)
+	return result
+}
+
+// CalculateLegacy preserves legacy grouping for subjects already rejected by
+// exact typed attribution. It never retries a type-less credential lookup.
+func (r Resolver) CalculateLegacy(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
 	if !found {
 		return CostResult{

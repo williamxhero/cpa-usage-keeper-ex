@@ -4,6 +4,8 @@ import "time"
 
 // UsageOverviewSummaryRecord 是 overview 的 summary 聚合结果。
 type UsageOverviewSummaryRecord struct {
+	UnavailableReason     string
+	PricingSnapshotID     string
 	RequestCount          int64
 	TokenCount            int64
 	WindowMinutes         int64

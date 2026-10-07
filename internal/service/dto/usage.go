@@ -95,6 +95,8 @@ type UsageEventRecord struct {
 
 // UsageOverviewSummary 是 overview summary 的服务层结果。
 type UsageOverviewSummary struct {
+	UnavailableReason     string
+	PricingSnapshotID     string
 	RPM                   float64
 	TPM                   float64
 	TotalCost             float64

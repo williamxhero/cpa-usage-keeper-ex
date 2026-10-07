@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"cpa-usage-keeper/internal/entities"
+	"cpa-usage-keeper/internal/helper"
 	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository/dto"
 	"cpa-usage-keeper/internal/timeutil"
@@ -94,8 +95,8 @@ func loadAnalysisOverviewStatProjection(query *gorm.DB, filter dto.UsageQueryFil
 	return rows, nil
 }
 
-func calculateAnalysisOverviewProjectionCost(costResolver pricing.Resolver, row analysisOverviewStatProjection) pricing.CostResult {
-	return costResolver.Calculate(newUsagePricingCostSubject(
+func calculateAnalysisOverviewProjectionCost(costResolver pricing.Resolver, row analysisOverviewStatProjection, grain string, evidence usagePricingEvidenceMap) pricing.CostResult {
+	subject := newUsagePricingCostSubject(
 		row.APIGroupKey,
 		row.Model,
 		row.AuthIndex,
@@ -109,5 +110,6 @@ func calculateAnalysisOverviewProjectionCost(costResolver pricing.Resolver, row 
 		row.OutputTokens,
 		row.CacheReadTokens,
 		row.CacheCreationTokens,
-	))
+	)
+	return calculateUsageRollupCost(costResolver, subject, row.BucketStart, grain, row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens}, evidence)
 }

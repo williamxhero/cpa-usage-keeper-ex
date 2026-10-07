@@ -94,6 +94,8 @@ func (s *usageService) GetUsageOverview(ctx context.Context, filter servicedto.U
 			TPM:                   overview.Summary.TPM,
 			TotalCost:             overview.Summary.TotalCost,
 			CostAvailable:         overview.Summary.CostAvailable,
+			UnavailableReason:     overview.Summary.UnavailableReason,
+			PricingSnapshotID:     overview.Summary.PricingSnapshotID,
 			InputTokens:           overview.Summary.InputTokens,
 			CacheReadTokens:       overview.Summary.CacheReadTokens,
 			CacheCreationTokens:   overview.Summary.CacheCreationTokens,
@@ -593,6 +595,8 @@ func mapAnalysisRecord(record *repodto.AnalysisRecord) *servicedto.AnalysisSnaps
 			OutputCostUSD:        record.CostBreakdown.OutputCostUSD,
 			TotalCostUSD:         record.CostBreakdown.TotalCostUSD,
 			CostAvailable:        record.CostBreakdown.CostAvailable,
+			UnavailableReason:    record.CostBreakdown.UnavailableReason,
+			PricingSnapshotID:    record.CostBreakdown.PricingSnapshotID,
 		},
 		ModelEfficiency: modelEfficiency,
 	}

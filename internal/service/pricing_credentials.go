@@ -6,13 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
-	"path"
 	"strings"
-	"unicode"
 
 	"cpa-usage-keeper/internal/entities"
+	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository"
 	servicedto "cpa-usage-keeper/internal/service/dto"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var (
@@ -88,31 +89,34 @@ func (s *pricingService) ListCredentialPricingSubjects(ctx context.Context) ([]s
 }
 
 func (s *pricingService) BindPricingCredential(ctx context.Context, directoryID int64) (servicedto.PricingCredential, error) {
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
 	var result servicedto.PricingCredential
-	err := repository.SaveCredentialPricingSubject(ctx, s.db, func(identities []entities.UsageIdentity, subjects []entities.CredentialPricingSubject) (*entities.CredentialPricingSubject, error) {
+	_, err := s.mutatePricing(ctx, func(tx *gorm.DB) error {
+		tx = tx.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
+		identities, subjects, err := repository.LoadCredentialPricingDirectory(tx)
+		if err != nil {
+			return err
+		}
 		for _, identity := range identities {
 			if identity.ID != directoryID {
 				continue
 			}
 			result = pricingCredential(identity, subjects)
 			if result.BindingStatus == "bound" {
-				return nil, ErrCredentialBindingConflict
+				return ErrCredentialBindingConflict
 			}
 			if result.BindingStatus != "unbound" {
-				return nil, ErrCredentialNotSelectable
+				return ErrCredentialNotSelectable
 			}
 			idBytes := make([]byte, 16)
 			if _, err := rand.Read(idBytes); err != nil {
-				return nil, err
+				return err
 			}
 			subject := &entities.CredentialPricingSubject{ID: "cred_" + hex.EncodeToString(idBytes), UsageIdentityID: identity.ID, AuthType: identity.AuthType, AuthTypeName: identity.AuthTypeName, Identity: identity.Identity}
 			result.SubjectID = subject.ID
 			result.BindingStatus = "bound"
-			return subject, nil
+			return tx.Create(subject).Error
 		}
-		return nil, ErrCredentialNotSelectable
+		return ErrCredentialNotSelectable
 	})
 	if err != nil {
 		return servicedto.PricingCredential{}, err
@@ -130,51 +134,7 @@ func safeCredentialProviderType(value string) string {
 }
 
 func safeCredentialText(value string, identity entities.UsageIdentity) string {
-	value = strings.TrimSpace(value)
-	// Human labels are untrusted metadata. Fail closed for paths, credential syntax
-	// and opaque token-shaped segments; no secret suffix is exposed as a fallback.
-	if strings.IndexFunc(value, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune(" -_.@():[]+", r)
-	}) >= 0 || strings.Contains(strings.ToLower(value), "bearer ") {
-		return ""
-	}
-	for _, segment := range strings.Fields(value) {
-		lower := strings.ToLower(segment)
-		if len(segment) >= 32 || strings.HasPrefix(segment, "eyJ") {
-			return ""
-		}
-		for _, prefix := range []string{"sk-", "ghp_", "gho_", "github_pat_", "glpat-", "xoxb-", "xoxp-"} {
-			if strings.Contains(lower, prefix) {
-				return ""
-			}
-		}
-	}
-	secrets := []string{identity.LookupKey, identity.Identity}
-	// OAuth names may fall back to the auth filename. Neither the filename nor
-	// its stem is safe evidence of an account name, even without a full path.
-	for _, file := range []*string{identity.FileName, identity.FilePath} {
-		if file != nil && *file != "" {
-			basename := path.Base(strings.ReplaceAll(*file, `\`, "/"))
-			secrets = append(secrets, *file, basename, strings.TrimSuffix(basename, path.Ext(basename)))
-		}
-	}
-	if endpoint, err := url.Parse(identity.BaseURL); err == nil {
-		if endpoint.User != nil {
-			secrets = append(secrets, endpoint.User.Username())
-			if password, ok := endpoint.User.Password(); ok {
-				secrets = append(secrets, password)
-			}
-		}
-		for _, values := range endpoint.Query() {
-			secrets = append(secrets, values...)
-		}
-	}
-	for _, secret := range secrets {
-		if secret != "" && strings.Contains(value, secret) {
-			return ""
-		}
-	}
-	return value
+	return pricing.SafeCredentialText(value, identity)
 }
 
 func pricingCredential(identity entities.UsageIdentity, subjects []entities.CredentialPricingSubject) servicedto.PricingCredential {

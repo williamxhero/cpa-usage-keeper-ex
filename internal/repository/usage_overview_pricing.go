@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"cpa-usage-keeper/internal/helper"
 	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository/dto"
 	"cpa-usage-keeper/internal/timeutil"
@@ -157,15 +158,13 @@ func containsUsageOverviewDimension(columns []string, target string) bool {
 	return false
 }
 
-func applyUsageOverviewStatToOverview(overview *dto.UsageOverviewRecord, row usageOverviewStatProjection, bucketByDay bool, costResolver pricing.Resolver) {
-	result := calculateUsageOverviewProjectionCost(costResolver, row)
-	applyUsageOverviewStatToOverviewWithCost(overview, row, bucketByDay, result)
-}
-
 func applyUsageOverviewStatToOverviewWithCost(overview *dto.UsageOverviewRecord, row usageOverviewStatProjection, bucketByDay bool, result pricing.CostResult) {
 	applyUsageOverviewStatToSnapshotTotals(overview.Usage, row.RequestCount, row.SuccessCount, row.FailureCount, row.TotalTokens)
 	if !result.Available {
 		overview.Summary.CostAvailable = false
+		if result.UnavailableReason != "" {
+			overview.Summary.UnavailableReason = result.UnavailableReason
+		}
 	}
 	rowCost := result.Cost.TotalCostUSD
 	applyUsageOverviewStatToSummary(overview, row.InputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, rowCost)
@@ -174,8 +173,8 @@ func applyUsageOverviewStatToOverviewWithCost(overview *dto.UsageOverviewRecord,
 	applyUsageOverviewStatToSeries(&overview.Series, row.RequestCount, row.InputTokens, row.CacheReadTokens, row.TotalTokens, rowCost, bucketKey, bucketMinutes)
 }
 
-func calculateUsageOverviewProjectionCost(costResolver pricing.Resolver, row usageOverviewStatProjection) pricing.CostResult {
-	return costResolver.Calculate(newUsagePricingCostSubject(
+func calculateUsageOverviewProjectionCost(costResolver pricing.Resolver, row usageOverviewStatProjection, grain string, evidence usagePricingEvidenceMap) pricing.CostResult {
+	subject := newUsagePricingCostSubject(
 		row.APIGroupKey,
 		row.Model,
 		row.AuthIndex,
@@ -189,5 +188,6 @@ func calculateUsageOverviewProjectionCost(costResolver pricing.Resolver, row usa
 		row.CostOutputTokens,
 		row.CostCacheReadTokens,
 		row.CostCacheCreationTokens,
-	))
+	)
+	return calculateUsageRollupCost(costResolver, subject, row.BucketStart, grain, row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens}, evidence)
 }

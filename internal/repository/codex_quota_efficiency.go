@@ -437,7 +437,7 @@ func streamCodexQuotaEfficiencyUsage(ctx context.Context, db *gorm.DB, provider 
 	// 同一 auth_index 热更新后可能换 provider，事件统计与额度周期必须同源。
 	// SQLite 只做索引范围扫描和时间排序；Rows 迭代器避免把整个月的事件装入 Go 切片。
 	rows, err := db.WithContext(ctx).Clauses(dbresolver.Read).Raw(`SELECT
-		`+codexQuotaEfficiencyPricingProjection(costResolver.ActiveFields(), keepAllPricingFields)+`,
+		`+codexQuotaEfficiencyPricingProjection(costResolver.LegacyActiveFields(), keepAllPricingFields)+`,
 		timestamp, COALESCE(failed, 0), COALESCE(input_tokens, 0), COALESCE(output_tokens, 0), COALESCE(reasoning_tokens, 0),
 		cache_read_tokens, cache_creation_tokens, COALESCE(total_tokens, 0)
 	FROM usage_events INDEXED BY idx_usage_events_auth_index_timestamp_id
@@ -485,7 +485,7 @@ func streamCodexQuotaEfficiencyUsage(ctx context.Context, db *gorm.DB, provider 
 		if event.Timestamp.Before(work.queryStart) {
 			continue
 		}
-		cycleAccumulators[workIndex].add(event)
+		cycleAccumulators[workIndex].add(event, authIndex, costResolver)
 		if !keepAllPricingFields && (!codexQuotaEfficiencyTokensAreAdditive(event.InputTokens, event.OutputTokens, event.CacheReadTokens, event.CacheCreationTokens, event.TotalTokens) ||
 			!codexQuotaEfficiencyTokensAreAdditive(work.record.Usage.InputTokens, work.record.Usage.OutputTokens, work.record.Usage.CacheReadTokens, work.record.Usage.CacheCreationTokens, work.record.Usage.TotalTokens)) {
 			// 负 Token、缓存超出输入或累计溢出时，原分组的归零处理不再满足可加性。
@@ -512,7 +512,7 @@ func streamCodexQuotaEfficiencyUsage(ctx context.Context, db *gorm.DB, provider 
 		}
 		transition := &transitions[transitionIndex]
 		if event.Timestamp.After(transition.IntervalStartedAt) && !event.Timestamp.After(transition.IntervalEndedAt) {
-			transitionAccumulators[workIndex][transitionIndex].add(event)
+			transitionAccumulators[workIndex][transitionIndex].add(event, authIndex, costResolver)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -552,7 +552,7 @@ func newCodexQuotaEfficiencyUsageAccumulator(target *repositorydto.CodexQuotaEff
 	return codexQuotaEfficiencyUsageAccumulator{target: target}
 }
 
-func (a *codexQuotaEfficiencyUsageAccumulator) add(event codexQuotaEfficiencyUsageEventRow) {
+func (a *codexQuotaEfficiencyUsageAccumulator) add(event codexQuotaEfficiencyUsageEventRow, authIndex string, resolver pricing.Resolver) {
 	if a == nil || a.target == nil {
 		return
 	}
@@ -569,6 +569,16 @@ func (a *codexQuotaEfficiencyUsageAccumulator) add(event codexQuotaEfficiencyUsa
 	a.target.CacheCreationTokens += event.CacheCreationTokens
 	a.target.TotalTokens += event.TotalTokens
 
+	subject := newUsagePricingCostSubject(event.APIGroupKey, event.Model, authIndex, event.ModelAlias, event.ServiceTier, event.ResponseServiceTier, event.ReasoningEffort, event.Endpoint, event.ExecutorType, event.InputTokens, event.OutputTokens, event.CacheReadTokens, event.CacheCreationTokens)
+	subject.AuthType = "oauth" // The stream WHERE clause proves this exact type.
+	if resolver.UsesCredentialDefault(subject) {
+		cost := resolver.Calculate(subject)
+		a.target.TotalCostUSD += cost.Cost.TotalCostUSD
+		if !cost.Available {
+			a.target.CostAvailable = false
+		}
+		return
+	}
 	// 没有事件的百分比区间不分配 map，短周期历史多时仍保持小内存占用。
 	if a.pricingTokens == nil {
 		a.pricingTokens = make(map[codexQuotaEfficiencyPricingKey]codexQuotaEfficiencyPricingTokens)
@@ -597,7 +607,7 @@ func (a *codexQuotaEfficiencyUsageAccumulator) finalize(authIndex string, costRe
 		return
 	}
 	for key, tokens := range a.pricingTokens {
-		cost := costResolver.Calculate(newUsagePricingCostSubject(
+		cost := costResolver.CalculateLegacy(newUsagePricingCostSubject(
 			key.APIGroupKey, key.Model, authIndex, key.ModelAlias, key.ServiceTier, key.ResponseServiceTier,
 			key.ReasoningEffort, key.Endpoint, key.ExecutorType,
 			tokens.InputTokens, tokens.OutputTokens, tokens.CacheReadTokens, tokens.CacheCreationTokens,

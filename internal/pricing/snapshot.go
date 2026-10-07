@@ -35,9 +35,15 @@ type compiledModel struct {
 
 // Snapshot 是编译后只读的完整价格目录。内部集合在发布后不再修改。
 type Snapshot struct {
-	modelsByName map[string]compiledModel
-	modelConfigs []ModelConfig
-	activeFields ActiveFields
+	modelsByName       map[string]compiledModel
+	modelConfigs       []ModelConfig
+	activeFields       ActiveFields
+	legacyActiveFields ActiveFields
+	id                 string
+	credentials        map[credentialIdentity]string
+	credentialIndexes  map[string]string
+	credentialSubjects map[string]string
+	credentialDefaults map[string]float64
 }
 
 // CompileSnapshot 规范化并校验完整价格集合，只有整个候选集合安全时才返回快照。

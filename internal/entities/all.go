@@ -10,6 +10,7 @@ func All() []any {
 		&ModelPriceSetting{},
 		&ModelPriceRule{},
 		&CredentialPricingSubject{},
+		&CredentialPriceDefault{},
 		&UsageIdentity{},
 		&CPAAPIKey{},
 		&UsageOverviewHourlyStat{},

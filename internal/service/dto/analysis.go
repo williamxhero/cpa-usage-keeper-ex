@@ -58,6 +58,8 @@ type AnalysisHeatmapCell struct {
 }
 
 type AnalysisCostBreakdown struct {
+	UnavailableReason    string
+	PricingSnapshotID    string
 	UncachedInputCostUSD float64
 	CacheReadCostUSD     float64
 	CacheWriteCostUSD    float64

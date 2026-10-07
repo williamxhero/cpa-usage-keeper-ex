@@ -95,6 +95,7 @@ func TestOrderedMigrationsPreservesExecutionOrder(t *testing.T) {
 		"20260922_normalize_usage_event_parent_session_null",
 		"20260925_limit_latency_sample_points",
 		"20261007_credential_pricing_subjects",
+		"20261007_credential_price_defaults",
 	}
 	assertStringSlicesEqual(t, want, got)
 }

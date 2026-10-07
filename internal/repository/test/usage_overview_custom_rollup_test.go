@@ -129,12 +129,12 @@ func TestPresetOverviewRawBoundaryUsesCardOnlyProjection(t *testing.T) {
 	}
 
 	query := findOverviewRollupQuery(t, *queries, "usage_events")
-	for _, unwanted := range []string{"provider", "auth_type", "source", "auth_index", "generate", "latency_ms", "ttft_ms"} {
+	for _, unwanted := range []string{"provider", "source", "generate", "latency_ms", "ttft_ms"} {
 		if strings.Contains(query, unwanted) {
 			t.Fatalf("Overview boundary projection should exclude %q:\n%s", unwanted, query)
 		}
 	}
-	for _, required := range []string{"api_group_key", "model", "model_alias", "timestamp", "failed", "input_tokens", "total_tokens"} {
+	for _, required := range []string{"api_group_key", "model", "model_alias", "timestamp", "failed", "input_tokens", "total_tokens", "auth_index", "auth_type"} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("Overview boundary projection should include %q:\n%s", required, query)
 		}
@@ -176,7 +176,9 @@ func captureOverviewDataQueries(t *testing.T, db *gorm.DB, suffix ...string) *[]
 	t.Helper()
 	queries := make([]string, 0, 3)
 	callbackName := "test:capture_overview_data_queries"
-	if len(suffix) > 0 && suffix[0] != "" { callbackName += "_" + suffix[0] }
+	if len(suffix) > 0 && suffix[0] != "" {
+		callbackName += "_" + suffix[0]
+	}
 	capture := func(tx *gorm.DB) {
 		queries = append(queries, strings.ToLower(tx.Statement.SQL.String()))
 	}

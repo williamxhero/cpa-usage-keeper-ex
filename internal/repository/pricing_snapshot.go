@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/pricing"
 
 	"gorm.io/gorm"
@@ -47,9 +48,68 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 			Multiplier: rules[index].Multiplier,
 		})
 	}
-	snapshot, err := pricing.CompileSnapshot(configs)
+	identities, subjects, err := LoadCredentialPricingDirectory(query)
+	if err != nil {
+		return nil, err
+	}
+	var defaults []entities.CredentialPriceDefault
+	if err := query.Find(&defaults).Error; err != nil {
+		return nil, err
+	}
+	credentialConfigs := make([]pricing.CredentialConfig, 0, len(defaults))
+	for _, value := range defaults {
+		credentialConfigs = append(credentialConfigs, pricing.CredentialConfig{SubjectID: value.SubjectID, Multiplier: value.Multiplier})
+	}
+	snapshot, err := pricing.CompileSnapshotWithCredentials(configs, compileCredentialBindings(identities, subjects), credentialConfigs)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
 	}
 	return snapshot, nil
+}
+
+func compileCredentialBindings(identities []entities.UsageIdentity, subjects []entities.CredentialPricingSubject) []pricing.CredentialBinding {
+	bindings := make([]pricing.CredentialBinding, 0, len(identities)+len(subjects))
+	seen := make(map[string]bool)
+	for _, identity := range identities {
+		typeName := credentialAuthType(identity.AuthType)
+		status := identity.BindingIdentityStatus
+		if typeName == "" || identity.AuthTypeName != typeName {
+			status = "unknown"
+		}
+		binding := pricing.CredentialBinding{AuthType: typeName, AuthIndex: identity.Identity, Status: status, SafeName: pricing.SafeCredentialText(identity.Name, identity)}
+		for _, subject := range subjects {
+			if subject.AuthType == identity.AuthType && subject.Identity == identity.Identity {
+				binding.SubjectID = subject.ID
+				if subject.AuthTypeName != typeName {
+					binding.Status = "ambiguous"
+				}
+				seen[subject.ID] = true
+			}
+		}
+		bindings = append(bindings, binding)
+	}
+	// A directory entry can disappear after a successful scoped refresh. Saved
+	// exact historical links remain evidence; display names are never used.
+	for _, subject := range subjects {
+		if seen[subject.ID] {
+			continue
+		}
+		typeName := credentialAuthType(subject.AuthType)
+		status := "unique"
+		if typeName == "" || subject.AuthTypeName != typeName {
+			status = "unknown"
+		}
+		bindings = append(bindings, pricing.CredentialBinding{SubjectID: subject.ID, AuthType: typeName, AuthIndex: subject.Identity, Status: status})
+	}
+	return bindings
+}
+
+func credentialAuthType(value entities.UsageIdentityAuthType) string {
+	switch value {
+	case entities.UsageIdentityAuthTypeAIProvider:
+		return "apikey"
+	case entities.UsageIdentityAuthTypeAuthFile:
+		return "oauth"
+	}
+	return ""
 }

@@ -42,6 +42,9 @@ type RecentUsageEvent struct {
 	ModelAlias string
 	// AuthIndex 用于关联 usage_identities，找不到身份时才使用 fallback。
 	AuthIndex string
+	// PricingAuthIndex preserves exact upstream evidence independently of display.
+	PricingAuthIndex string
+	AuthType         string
 	// 以下五个字段补齐 hourly/daily 已有的规则维度，并继续通过字符串池复用。
 	ServiceTier         string
 	ResponseServiceTier string
@@ -483,6 +486,8 @@ func (c *UsageRecentEventCache) recentEventFromRowLocked(row recentUsageEventLoa
 		Model:                 c.pool.intern(strings.TrimSpace(row.Model)),
 		ModelAlias:            c.pool.intern(strings.TrimSpace(row.ModelAlias)),
 		AuthIndex:             c.pool.intern(strings.TrimSpace(row.AuthIndex)),
+		PricingAuthIndex:      c.pool.intern(row.AuthIndex),
+		AuthType:              c.pool.intern(row.AuthType),
 		ServiceTier:           c.pool.intern(strings.TrimSpace(row.ServiceTier)),
 		ResponseServiceTier:   c.pool.intern(strings.TrimSpace(row.ResponseServiceTier)),
 		ReasoningEffort:       c.pool.intern(strings.TrimSpace(row.ReasoningEffort)),
@@ -532,6 +537,8 @@ func (c *UsageRecentEventCache) releaseEventStringsLocked(event RecentUsageEvent
 	c.pool.release(event.Model)
 	c.pool.release(event.ModelAlias)
 	c.pool.release(event.AuthIndex)
+	c.pool.release(event.AuthType)
+	c.pool.release(event.PricingAuthIndex)
 	c.pool.release(event.ServiceTier)
 	c.pool.release(event.ResponseServiceTier)
 	c.pool.release(event.ReasoningEffort)
@@ -633,11 +640,16 @@ func cloneBoolPtr(value *bool) *bool {
 func recentUsageEventToEntity(event RecentUsageEvent) entities.UsageEvent {
 	// Overview 聚合已有实体处理函数，这里把缓存投影还原成最小 UsageEvent。
 	generate := event.Generate
+	authIndex := event.PricingAuthIndex
+	if authIndex == "" {
+		authIndex = event.AuthIndex
+	}
 	result := entities.UsageEvent{
 		APIGroupKey:         event.APIGroupKey,
 		Model:               event.Model,
 		Timestamp:           event.Timestamp,
-		AuthIndex:           event.AuthIndex,
+		AuthIndex:           authIndex,
+		AuthType:            event.AuthType,
 		ServiceTier:         event.ServiceTier,
 		ResponseServiceTier: event.ResponseServiceTier,
 		ReasoningEffort:     event.ReasoningEffort,

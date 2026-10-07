@@ -33,6 +33,8 @@ type usageOverviewPayload struct {
 }
 
 type usageOverviewSummary struct {
+	UnavailableReason     string   `json:"unavailable_reason,omitempty"`
+	PricingSnapshotID     string   `json:"pricing_snapshot_id,omitempty"`
 	RPM                   float64  `json:"rpm"`
 	TPM                   float64  `json:"tpm"`
 	TotalCost             float64  `json:"total_cost"`
@@ -349,6 +351,8 @@ func buildUsageOverviewSummary(overview *servicedto.UsageOverviewSnapshot) usage
 		TPM:                   overview.Summary.TPM,
 		TotalCost:             overview.Summary.TotalCost,
 		CostAvailable:         overview.Summary.CostAvailable,
+		UnavailableReason:     overview.Summary.UnavailableReason,
+		PricingSnapshotID:     overview.Summary.PricingSnapshotID,
 		InputTokens:           overview.Summary.InputTokens,
 		CacheReadTokens:       overview.Summary.CacheReadTokens,
 		CacheCreationTokens:   overview.Summary.CacheCreationTokens,
