@@ -22,8 +22,8 @@ func TestLoadAppHostPrecedence(t *testing.T) {
 		if cfg.AppHost != "" {
 			t.Fatalf("expected empty default app host, got %q", cfg.AppHost)
 		}
-		if got := cfg.ListenAddress(); got != ":8080" {
-			t.Fatalf("expected existing listen address :8080, got %q", got)
+		if got := cfg.ListenAddress(); got != ":8318" {
+			t.Fatalf("expected existing listen address :8318, got %q", got)
 		}
 	})
 
@@ -37,7 +37,7 @@ func TestLoadAppHostPrecedence(t *testing.T) {
 		if cfg.AppHost != "127.0.0.1" {
 			t.Fatalf("expected trimmed environment host, got %q", cfg.AppHost)
 		}
-		if got := cfg.ListenAddress(); got != "127.0.0.1:8080" {
+		if got := cfg.ListenAddress(); got != "127.0.0.1:8318" {
 			t.Fatalf("expected loopback listen address, got %q", got)
 		}
 	})
@@ -55,7 +55,7 @@ func TestLoadAppHostPrecedence(t *testing.T) {
 		if cfg.AppHost != "::1" {
 			t.Fatalf("expected startup host override, got %q", cfg.AppHost)
 		}
-		if got := cfg.ListenAddress(); got != "[::1]:8080" {
+		if got := cfg.ListenAddress(); got != "[::1]:8318" {
 			t.Fatalf("expected IPv6 listen address, got %q", got)
 		}
 	})

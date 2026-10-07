@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 function getApiProxyTarget() {
-  return process.env.VITE_API_PROXY_TARGET?.trim() || 'http://127.0.0.1:8080'
+  return process.env.VITE_API_PROXY_TARGET?.trim() || 'http://127.0.0.1:8318'
 }
 
 export default defineConfig(({ command }) => ({

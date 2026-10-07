@@ -503,7 +503,7 @@ func readAppLogFile(t *testing.T, logDir string) string {
 func testAppConfig(t *testing.T) config.Config {
 	t.Helper()
 	return config.Config{
-		AppPort:                "8080",
+		AppPort:                "8318",
 		CPABaseURL:             "https://cpa.example.com",
 		CPAManagementKey:       "secret",
 		RedisQueueIdleInterval: time.Second,

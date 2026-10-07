@@ -176,7 +176,7 @@ npm --prefix ./web ci
 npm --prefix ./web run dev -- --host 127.0.0.1
 ```
 
-打开 `http://127.0.0.1:5173`。前端默认将 `/api` 代理到 `http://127.0.0.1:8080`；后端使用其它端口时可通过 `VITE_API_PROXY_TARGET` 覆盖。
+打开 `http://127.0.0.1:5173`。前端默认将 `/api` 代理到 `http://127.0.0.1:8318`；后端使用其它端口时可通过 `VITE_API_PROXY_TARGET` 覆盖。
 
 ### 测试
 
@@ -200,7 +200,7 @@ npm --prefix ./web run build
 
 ## 部署方式
 
-启动后访问 `http://服务器地址:8080`（本机部署可用 `http://127.0.0.1:8080`），使用配置的 Keeper 登录密码登录。修改端口或配置 HTTPS、子路径时，请使用对应地址。
+启动后访问 `http://服务器地址:8318`（本机部署可用 `http://127.0.0.1:8318`），使用配置的 Keeper 登录密码登录。修改端口或配置 HTTPS、子路径时，请使用对应地址。
 
 ### Docker Compose（推荐）
 
@@ -253,7 +253,7 @@ curl -fL https://raw.githubusercontent.com/Willxup/cpa-usage-keeper/main/deploy/
 docker compose up -d
 ```
 
-访问 `http://服务器地址:8080`，使用刚设置的 Keeper 登录密码登录。停止服务时执行 `docker compose down`。
+访问 `http://服务器地址:8318`，使用刚设置的 Keeper 登录密码登录。停止服务时执行 `docker compose down`。
 
 首次部署还需在 CPA 中添加模型凭证，调用模型后才会产生使用记录。
 
@@ -297,7 +297,7 @@ LOGIN_PASSWORD=
 docker compose up -d
 ```
 
-访问 `http://服务器地址:8080`，使用刚设置的 Keeper 登录密码登录。停止服务时执行 `docker compose down`。
+访问 `http://服务器地址:8318`，使用刚设置的 Keeper 登录密码登录。停止服务时执行 `docker compose down`。
 
 模板默认将 Keeper 数据保存在 `./data`。
 
@@ -330,7 +330,7 @@ docker compose up -d cpa-usage-keeper
 docker run -d \
   --name cpa-usage-keeper \
   --add-host=host.docker.internal:host-gateway \
-  -p 8080:8080 \
+  -p 8318:8318 \
   -v "$(pwd)/keeper:/data" \
   --env-file .env \
   ghcr.io/willxup/cpa-usage-keeper:latest
@@ -437,13 +437,13 @@ cp .env.example .env
 | 变量 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `APP_HOST` | 否 | 所有接口 | Keeper HTTP 监听主机；原生部署仅允许本机访问时可设为 `127.0.0.1` |
-| `APP_PORT` | 否 | `8080` | Keeper HTTP 监听端口 |
+| `APP_PORT` | 否 | `8318` | Keeper HTTP 监听端口 |
 | `APP_BASE_PATH` | 否 | 根路径 | Keeper 子路径部署前缀，例如 `/keeper`；留空表示部署在 `/` |
 | `CPA_PUBLIC_URL` | 否 | 当前浏览器同源根路径 | 浏览器访问 CPA 的公开地址，用于“返回 CPA”跳转和 CPAMC frame 信任来源 |
 | `TRUSTED_PROXY_CIDRS` | 否 | 仅本机 loopback | 允许提供 `X-Forwarded-For` 的额外反向代理 CIDR，多个值用逗号分隔 |
 
 - 启动参数 `--host` 的优先级高于 `APP_HOST`。两者都未设置时，Keeper 保持现有行为，监听所有可用网络接口。
-- Docker/Compose 请保持 `APP_HOST` 为空；如需仅允许 Docker 宿主机访问，请将端口发布为 `127.0.0.1:8080:8080`。
+- Docker/Compose 请保持 `APP_HOST` 为空；如需仅允许 Docker 宿主机访问，请将端口发布为 `127.0.0.1:8318:8318`。
 - `APP_BASE_PATH` 必须为空或以 `/` 开头；`/cpa/` 会规范为 `/cpa`。
 - `CPA_BASE_URL` 是服务端访问 CPA 的地址，可以使用内网地址或 Docker 服务名。
 - `CPA_PUBLIC_URL` 控制浏览器跳转和跨域 CPAMC frame 信任。同源且 CPA 位于 `/management.html` 时可留空；域名、端口或路径不同时应设置公开 CPA 地址。
@@ -529,7 +529,7 @@ Keeper 每天按配置时区在 04:30 自动归档超过 90 个本地自然日�
 
 ```nginx
 location /cpa/ {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://127.0.0.1:8318;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
