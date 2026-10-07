@@ -19,7 +19,7 @@ import (
 var (
 	ErrPricingChannelNotFound     = errors.New("pricing channel not found")
 	ErrPricingChannelConflict     = errors.New("channel members conflict or are not uniquely selectable")
-	ErrPricingChannelDependencies = errors.New("channel has dependencies; confirm removal of members and default")
+	ErrPricingChannelDependencies = errors.New("channel has dependencies; confirm removal of members, default and model prices")
 )
 
 type PricingChannel struct {
@@ -185,15 +185,21 @@ func (s *pricingService) DeletePricingChannel(ctx context.Context, id string, co
 		if err := requireChannel(tx, id); err != nil {
 			return err
 		}
-		var members, defaults int64
+		var members, defaults, models int64
 		if err := tx.Model(&entities.PricingChannelMember{}).Where("channel_id = ?", id).Count(&members).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&entities.ChannelPriceDefault{}).Where("channel_id = ?", id).Count(&defaults).Error; err != nil {
 			return err
 		}
-		if !confirm && (members > 0 || defaults > 0) {
+		if err := tx.Model(&entities.ChannelModelPrice{}).Where("channel_id = ?", id).Count(&models).Error; err != nil {
+			return err
+		}
+		if !confirm && (members > 0 || defaults > 0 || models > 0) {
 			return ErrPricingChannelDependencies
+		}
+		if err := tx.Where("channel_id = ?", id).Delete(&entities.ChannelModelPrice{}).Error; err != nil {
+			return err
 		}
 		if err := tx.Where("channel_id = ?", id).Delete(&entities.ChannelPriceDefault{}).Error; err != nil {
 			return err

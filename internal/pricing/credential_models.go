@@ -97,45 +97,56 @@ func (s *Snapshot) compileCredentialModels(configs []CredentialModelConfig) erro
 		if _, exists := s.credentialModels[key]; exists {
 			return fmt.Errorf("duplicate credential model")
 		}
-		switch config.Mode {
-		case ModeFixed:
-			if config.Fixed == nil {
-				return fmt.Errorf("fixed tariff required")
-			}
-			if err := config.Fixed.Validate(); err != nil {
-				return err
-			}
-			if config.Fixed.PricingStyle == "" {
-				baseline, ok := s.modelsByName[config.Model]
-				if !ok || (baseline.pricing.PricingStyle != entities.ModelPricingStyleOpenAI && baseline.pricing.PricingStyle != entities.ModelPricingStyleClaude) {
-					return fmt.Errorf("explicit pricing style required without baseline")
-				}
-			}
+		if err := s.validateModelOverride(config.Model, config.Mode, config.Multiplier, config.Fixed); err != nil {
+			return err
+		}
+		if config.Mode == ModeFixed {
 			config.Multiplier = 0 // inactive mode never contributes
 			config.Fixed = cloneFixed(config.Fixed)
-		case ModeMultiplier:
-			if !isNonNegativeFinite(config.Multiplier) {
-				return fmt.Errorf("finite non-negative multiplier required")
-			}
+		} else {
 			config.Fixed = nil
-		default:
-			return fmt.Errorf("invalid credential model mode")
-		}
-		// Reference lookup is independent of scoped Model/Alias selection. Validate
-		// every unadjusted baseline, even legacy0, and future baseline candidates.
-		for _, baselineModel := range s.modelsByName {
-			baseline := unadjustedPricing(baselineModel)
-			if err := validateWorstCaseCost(baseline, nil); err != nil {
-				return fmt.Errorf("unsafe unadjusted baseline: %w", err)
-			}
-			if config.Mode == ModeMultiplier {
-				baseline.PriceMultiplier = &config.Multiplier
-				if err := validateWorstCaseCost(baseline, nil); err != nil {
-					return fmt.Errorf("unsafe credential model multiplier: %w", err)
-				}
-			}
 		}
 		s.credentialModels[key] = config
+	}
+	return nil
+}
+
+// Both credential and channel scopes validate complete modes against the same
+// independent baseline and fixed-tariff safety rules.
+func (s *Snapshot) validateModelOverride(model, mode string, multiplier float64, fixed *FixedTariff) error {
+	switch mode {
+	case ModeFixed:
+		if fixed == nil {
+			return fmt.Errorf("fixed tariff required")
+		}
+		if err := fixed.Validate(); err != nil {
+			return err
+		}
+		if fixed.PricingStyle == "" {
+			baseline, ok := s.modelsByName[model]
+			if !ok || (baseline.pricing.PricingStyle != entities.ModelPricingStyleOpenAI && baseline.pricing.PricingStyle != entities.ModelPricingStyleClaude) {
+				return fmt.Errorf("explicit pricing style required without baseline")
+			}
+		}
+	case ModeMultiplier:
+		if !isNonNegativeFinite(multiplier) {
+			return fmt.Errorf("finite non-negative multiplier required")
+		}
+	default:
+		return fmt.Errorf("invalid model pricing mode")
+	}
+	// Selection and baseline lookup are independent, including Model/Alias.
+	for _, baselineModel := range s.modelsByName {
+		baseline := unadjustedPricing(baselineModel)
+		if err := validateWorstCaseCost(baseline, nil); err != nil {
+			return fmt.Errorf("unsafe unadjusted baseline: %w", err)
+		}
+		if mode == ModeMultiplier {
+			baseline.PriceMultiplier = &multiplier
+			if err := validateWorstCaseCost(baseline, nil); err != nil {
+				return fmt.Errorf("unsafe model multiplier: %w", err)
+			}
+		}
 	}
 	return nil
 }

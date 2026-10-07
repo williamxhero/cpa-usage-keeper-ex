@@ -136,6 +136,9 @@ func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialB
 	if err := snapshot.compileCredentialModels(options.CredentialModels); err != nil {
 		return nil, err
 	}
+	if err := snapshot.compileChannelModels(options.ChannelModels); err != nil {
+		return nil, err
+	}
 	snapshot.legacyActiveFields = snapshot.activeFields
 	if (Resolver{snapshot: snapshot}).HasPricingOverrides() {
 		// Retained-event reconciliation must identify the original rollup cohorts,
