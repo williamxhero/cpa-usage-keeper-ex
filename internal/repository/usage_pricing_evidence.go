@@ -17,13 +17,19 @@ type usagePricingEvidenceKey struct {
 	Dimensions pricing.UsageDimensions
 }
 
+type usagePricingIdentity struct{ AuthType, AuthIndex string }
+
 type usagePricingEvidence struct {
 	Requests    int64
 	Tokens      helper.UsageTokenCostInput
 	TotalTokens int64
 	Selected    bool
 	Result      pricing.CostResult
-	Typed       map[string]dto.UsageComparisonItemRecord
+	Typed       map[usagePricingIdentity]dto.UsageComparisonItemRecord
+}
+
+func (e usagePricingEvidence) covers(requests, totalTokens int64, tokens helper.UsageTokenCostInput) bool {
+	return e.Requests == requests && e.Tokens == tokens && e.TotalTokens == totalTokens
 }
 
 type usagePricingEvidenceMap map[usagePricingEvidenceKey]usagePricingEvidence
@@ -47,7 +53,7 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 	if !resolver.HasCredentialDefaults() {
 		return nil, nil
 	}
-	columns := "id, api_group_key, model, model_alias, auth_index, auth_type, service_tier, response_service_tier, reasoning_effort, endpoint, executor_type, timestamp, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
+	columns := "id, api_group_key, model, model_alias, auth_index, auth_type, service_tier, response_service_tier, reasoning_effort, endpoint, executor_type, timestamp, failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
 	// Only committed Overview members can explain its rollups. A newly
 	// ingested historical request must never replace a pruned old request with
 	// equal token totals. Callers pin rows, watermark, and evidence in one read
@@ -80,7 +86,7 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 		evidence, exists := result[key]
 		if !exists {
 			evidence.Result.Available = true
-			evidence.Typed = make(map[string]dto.UsageComparisonItemRecord)
+			evidence.Typed = make(map[usagePricingIdentity]dto.UsageComparisonItemRecord)
 		}
 		evidence.Requests++
 		evidence.Tokens.InputTokens += event.InputTokens
@@ -101,7 +107,8 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 		}
 		evidence.Result.Available = evidence.Result.Available && cost.Available
 		evidence.Result.Cost = addUsagePricingCost(evidence.Result.Cost, cost.Cost)
-		typed, present := evidence.Typed[event.AuthType]
+		identity := usagePricingIdentity{event.AuthType, event.AuthIndex}
+		typed, present := evidence.Typed[identity]
 		if !present {
 			typed.CostAvailable = true
 		}
@@ -117,7 +124,7 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 		typed.TotalTokens += event.TotalTokens
 		typed.CostUSD += cost.Cost.TotalCostUSD
 		typed.CostAvailable = typed.CostAvailable && cost.Available
-		evidence.Typed[event.AuthType] = typed
+		evidence.Typed[identity] = typed
 		if !cost.Available {
 			evidence.Result.UnavailableReason = "missing_baseline"
 		}
@@ -149,13 +156,15 @@ func calculateUsageRollupCost(resolver pricing.Resolver, legacySubject pricing.C
 	key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(bucket, grain), Dimensions: legacySubject.Dimensions}
 	retained, exists := evidence[key]
 	selected := resolver.UsesCredentialDefault(legacySubject)
-	if exists && retained.Requests == requests && retained.Tokens == rawTokens && retained.TotalTokens == totalTokens {
+	if exists && retained.covers(requests, totalTokens, rawTokens) {
 		if retained.Selected {
 			return retained.Result
 		}
 		// Exact retained evidence may disprove a type-less index attribution.
+		// No new selection means the original rollup normalization/grouping
+		// must remain unchanged, not be replaced by per-request legacy costs.
 		if selected {
-			return retained.Result
+			return resolver.CalculateLegacy(legacySubject)
 		}
 		return legacy
 	}
@@ -185,12 +194,61 @@ func pricingTypedIdentityLookup(lookup analysisIdentityLookup, authType string) 
 	return analysisIdentityLookup{kind: lookup[kind]}
 }
 
+// Include original indexes hidden by existing rollup normalization, without
+// changing legacy identity lookup when no credential evidence is present.
+func extendPricingIdentityLookup(db *gorm.DB, lookup analysisIdentityLookup, evidence usagePricingEvidenceMap) (analysisIdentityLookup, error) {
+	indexes := []string{}
+	seen := map[string]bool{}
+	for _, cohort := range evidence {
+		for identity := range cohort.Typed {
+			if identity.AuthIndex != "" && !seen[identity.AuthIndex] {
+				indexes = append(indexes, identity.AuthIndex)
+				seen[identity.AuthIndex] = true
+			}
+		}
+	}
+	if len(indexes) == 0 {
+		return lookup, nil
+	}
+	exact, err := loadAnalysisIdentityLookup(db, indexes)
+	if err != nil {
+		return nil, err
+	}
+	for kind, values := range exact {
+		if lookup[kind] == nil {
+			lookup[kind] = map[string]analysisIdentityInfo{}
+		}
+		for index, value := range values {
+			lookup[kind][index] = value
+		}
+	}
+	return lookup, nil
+}
+
+func pricingExactIdentity(lookup analysisIdentityLookup, identity usagePricingIdentity) (analysisIdentityInfo, bool) {
+	typed := pricingTypedIdentityLookup(lookup, identity.AuthType)
+	for kind := range typed {
+		return typed.find(kind, identity.AuthIndex)
+	}
+	return analysisIdentityInfo{}, false
+}
+
 func applyAnalysisPricingIdentityComposition(lookup analysisIdentityLookup, authFiles, providers map[string]*dto.AnalysisCompositionRecord, row analysisOverviewStatProjection, grain string, result pricing.CostResult, evidence usagePricingEvidenceMap) {
-	if result.Scope == "credential_default" && result.UnavailableReason != "retained_pricing_evidence_incomplete" {
-		subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, 0, 0, 0, 0)
-		key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}
-		for authType, typed := range evidence[key].Typed {
-			applyAnalysisIdentityComposition(pricingTypedIdentityLookup(lookup, authType), authFiles, providers, row.AuthIndex, typed.Requests, typed.InputTokens, typed.OutputTokens, typed.CacheReadTokens, typed.CacheCreationTokens, typed.ReasoningTokens, typed.TotalTokens, helper.UsageTokenCostBreakdown{TotalCostUSD: typed.CostUSD}, typed.CostAvailable)
+	subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, 0, 0, 0, 0)
+	key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}
+	retained := evidence[key]
+	// Available-zero is not proof of retained request/token coverage.
+	if result.Scope == "credential_default" && retained.Selected && retained.covers(row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens}) {
+		for exact, typed := range retained.Typed {
+			identity, found := pricingExactIdentity(lookup, exact)
+			if !found {
+				continue
+			} // Never assign another original index's fee.
+			totals := authFiles
+			if identity.authType == entities.UsageIdentityAuthTypeAIProvider {
+				totals = providers
+			}
+			applyAnalysisIdentityCompositionTotal(totals, identity, typed.Requests, typed.InputTokens, typed.OutputTokens, typed.CacheReadTokens, typed.CacheCreationTokens, typed.ReasoningTokens, typed.TotalTokens, typed.CostUSD, typed.CostAvailable)
 		}
 		return
 	}

@@ -53,7 +53,8 @@ func applyUsageEventToComparisonOnly(comparisons *dto.UsageOverviewComparisonsRe
 	row.Bucket, _ = usageOverviewBucket(event.Timestamp, comparisons.Granularity == "daily")
 	applyUsageOverviewComparison(comparisons, event.Model, event.APIGroupKey, row)
 	if resolver.HasCredentialDefaults() {
-		identityLookup = pricingTypedIdentityLookup(identityLookup, event.AuthType)
+		applyPricingExactIdentityComparison(comparisons, identityLookup, usagePricingIdentity{event.AuthType, event.AuthIndex}, row)
+		return
 	}
 	applyUsageOverviewIdentityComparison(comparisons, identityLookup, event.AuthIndex, row)
 }
@@ -73,6 +74,19 @@ func applyUsageOverviewIdentityComparison(comparisons *dto.UsageOverviewComparis
 		row.Label = identity.label
 		addUsageOverviewComparison(comparisons.AIProviders, identity.identity, row)
 	}
+}
+
+func applyPricingExactIdentityComparison(comparisons *dto.UsageOverviewComparisonsRecord, lookup analysisIdentityLookup, exact usagePricingIdentity, row dto.UsageComparisonItemRecord) {
+	identity, found := pricingExactIdentity(lookup, exact)
+	if !found {
+		return
+	} // Missing evidence must not borrow a normalized identity.
+	row.Label = identity.label
+	items := comparisons.AuthFiles
+	if identity.authType == entities.UsageIdentityAuthTypeAIProvider {
+		items = comparisons.AIProviders
+	}
+	addUsageOverviewComparison(items, identity.identity, row)
 }
 
 func addUsageOverviewComparison(items map[string]*dto.UsageComparisonItemRecord, key string, row dto.UsageComparisonItemRecord) {
@@ -177,19 +191,28 @@ func loadAndApplyPricedUsageComparisons(overview *dto.UsageOverviewRecord, db *g
 	if err != nil {
 		return err
 	}
+	lookup, err = extendPricingIdentityLookup(db, lookup, evidence)
+	if err != nil {
+		return err
+	}
 	for _, row := range rows {
 		result := calculateUsageOverviewProjectionCost(resolver, row, grain, evidence)
 		comparison := dto.UsageComparisonItemRecord{Requests: row.RequestCount, Failures: row.FailureCount, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens, ReasoningTokens: row.ReasoningTokens, TotalTokens: row.TotalTokens, CostUSD: result.Cost.TotalCostUSD, CostAvailable: result.Available}
 		applyUsageOverviewComparison(overview.Comparisons, row.Model, row.APIGroupKey, comparison)
-		if result.Scope == "credential_default" && result.UnavailableReason != "retained_pricing_evidence_incomplete" {
-			subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, 0, 0, 0, 0)
-			key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}
-			for authType, typed := range evidence[key].Typed {
-				applyUsageOverviewIdentityComparison(overview.Comparisons, pricingTypedIdentityLookup(lookup, authType), row.AuthIndex, typed)
+		subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, 0, 0, 0, 0)
+		key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}
+		retained := evidence[key]
+		if result.Scope == "credential_default" && retained.Selected && retained.covers(row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens}) {
+			for exact, typed := range retained.Typed {
+				typed.Bucket, _ = usageOverviewBucket(row.BucketStart, bucketByDay)
+				applyPricingExactIdentityComparison(overview.Comparisons, lookup, exact, typed)
 			}
 		} else {
+			comparison.Bucket, _ = usageOverviewBucket(row.BucketStart, bucketByDay)
 			applyUsageOverviewIdentityComparison(overview.Comparisons, lookup, row.AuthIndex, comparison)
 		}
 	}
-	return loadUsageOverviewComparisonTokenSeries(db, filter, start, end, grain, bucketByDay, overview.Comparisons, lookup)
+	// Identity token series were accumulated alongside the same proven typed
+	// facts; a normalized auth_index series must not overwrite their attribution.
+	return loadUsageOverviewComparisonTokenSeries(db, filter, start, end, grain, bucketByDay, overview.Comparisons, nil)
 }

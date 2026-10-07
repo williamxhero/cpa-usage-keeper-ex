@@ -84,6 +84,20 @@ func closeCost(t *testing.T, actual, expected float64) {
 	}
 }
 
+func assertRealtimeCredentialCosts(t *testing.T, rows []servicedto.RealtimeUsageTopItem, expected map[string]float64) {
+	t.Helper()
+	if len(rows) != len(expected) {
+		t.Fatalf("realtime credential rows %+v, want %v", rows, expected)
+	}
+	for _, row := range rows {
+		value, found := expected[row.Key]
+		if !found || row.CostUSD == nil {
+			t.Fatalf("unexpected realtime credential %+v", row)
+		}
+		closeCost(t, *row.CostUSD, value)
+	}
+}
+
 func (f credentialDefaultFixture) assertCostFamilies(t *testing.T, expected float64, includeDetails bool) {
 	t.Helper()
 	ctx := context.Background()
@@ -537,6 +551,36 @@ func TestCredentialDefaultRollupCoverageKeepsExactUntrimmedIdentityCohorts(t *te
 		if !analysis.CostBreakdown.CostAvailable {
 			t.Fatal("exact separate analysis cohorts lost coverage")
 		}
+		expected := map[string]float64{"synthetic-a": 4.04, " synthetic-a ": 2.94, "synthetic-b": 29.4}
+		if len(analysis.AuthFilesComposition) != len(expected) {
+			t.Fatalf("lost exact composition: %+v", analysis.AuthFilesComposition)
+		}
+		for _, item := range analysis.AuthFilesComposition {
+			value, ok := expected[item.Key]
+			if !ok {
+				t.Fatalf("unexpected exact identity %q", item.Key)
+			}
+			closeCost(t, item.CostUSD, value)
+		}
+		comparisons, err := usage.(service.UsageComparisonProvider).GetUsageOverviewComparisons(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for index, value := range expected {
+			item := comparisons.Comparisons.AuthFiles[index]
+			if item == nil {
+				t.Fatalf("lost exact comparison %q", index)
+			}
+			closeCost(t, item.CostUSD, value)
+			wantTokens := map[string]int64{"synthetic-a": 2_200_000, " synthetic-a ": 1_100_000, "synthetic-b": 1_100_000}[index]
+			var bucketTokens int64
+			for _, tokens := range item.TokenBuckets {
+				bucketTokens += tokens
+			}
+			if item.TotalTokens != wantTokens || bucketTokens != wantTokens {
+				t.Fatalf("exact identity token attribution %q: %+v", index, item)
+			}
+		}
 	}
 	cache, err := repository.NewUsageRecentEventCache(f.db, repository.UsageRecentEventCacheOptions{Now: func() time.Time { return f.now }})
 	if err != nil {
@@ -556,6 +600,8 @@ func TestCredentialDefaultRollupCoverageKeepsExactUntrimmedIdentityCohorts(t *te
 			sum += *model.CostUSD
 		}
 		closeCost(t, sum, 36.38)
+		assertRealtimeCredentialCosts(t, realtime.CurrentUsage.AuthFiles, map[string]float64{"synthetic-a": 4.04, " synthetic-a ": 2.94, "synthetic-b": 29.4})
+		assertRealtimeCredentialCosts(t, realtime.CurrentUsage.AIProviders, nil)
 	}
 	if _, err := f.defaults.ClearCredentialDefault(ctx, f.subjectID); err != nil {
 		t.Fatal(err)
@@ -594,6 +640,35 @@ func TestCredentialDefaultSnapshotNamesAreSafeImmutableAndUnknownSubjectsRemainC
 	if candidate.CredentialName("cred_unknown") != "Credential" {
 		t.Fatal("missing safe fallback")
 	}
+}
+
+func TestCredentialDefaultRejectedTypedCohortKeepsOriginalAbnormalLegacyFees(t *testing.T) {
+	f := newCredentialDefaultFixture(t)
+	ctx := context.Background()
+	// The directory proves only an OAuth binding. Actual retained API-key
+	// requests at the same index reject that attribution, despite the rollup
+	// having no auth_type. Its original grouped legacy fee is not per-event.
+	if err := f.db.Model(&entities.UsageEvent{}).Where("auth_index = ?", "synthetic-a").Update("auth_type", "apikey").Error; err != nil {
+		t.Fatal(err)
+	}
+	f.assertCostFamilies(t, 87, false)
+	if _, err := f.defaults.SetCredentialDefault(ctx, f.subjectID, ".2"); err != nil {
+		t.Fatal(err)
+	}
+	f.assertCostFamilies(t, 87, false)
+	usage := service.NewUsageService(f.db, f.catalog)
+	page, err := usage.ListUsageEvents(ctx, servicedto.UsageFilter{Range: "custom", CustomUnit: "hour", StartTime: &f.start, EndTime: &f.end, EndExclusive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := 0.0
+	for _, event := range page.Events {
+		if !event.CostAvailable {
+			t.Fatal("legacy detail unavailable")
+		}
+		sum += event.CostUSD
+	}
+	closeCost(t, sum, 90) // Preserve the pre-existing detail-versus-rollup normalization.
 }
 
 func TestCredentialDefaultRetainedArchiveEvidenceAndUncoveredHistoricalCohort(t *testing.T) {
@@ -790,7 +865,14 @@ func TestCredentialDefaultMixedTypedCohortSplitsCredentialCompositions(t *testin
 	event.EventKey = "mixed-type-api"
 	event.ID = 0
 	event.AuthType = "apikey"
-	if _, _, err := repository.InsertUsageEvents(f.db, []entities.UsageEvent{event}); err != nil {
+	failed := event
+	failed.EventKey = "mixed-type-api-failed"
+	failed.Failed = true
+	failed.ReasoningTokens = 123
+	failed.InputTokens, failed.OutputTokens, failed.CacheReadTokens, failed.CacheCreationTokens, failed.TotalTokens = 0, 0, 0, 0, 0
+	// Realtime intentionally omits failed requests. Keep the original billable
+	// success assertions and independently preserve failed/reasoning facts.
+	if _, _, err := repository.InsertUsageEvents(f.db, []entities.UsageEvent{event, failed}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.AggregateUsageOverviewStats(ctx, f.db, f.end); err != nil {
@@ -807,6 +889,9 @@ func TestCredentialDefaultMixedTypedCohortSplitsCredentialCompositions(t *testin
 		t.Fatalf("provider rows %+v", analysis.AIProviderComposition)
 	}
 	closeCost(t, analysis.AIProviderComposition[0].CostUSD, 29.4)
+	if analysis.AIProviderComposition[0].ReasoningTokens != 123 {
+		t.Fatal("typed analysis lost reasoning tokens")
+	}
 	for _, row := range analysis.AuthFilesComposition {
 		if row.Key == "synthetic-a" {
 			closeCost(t, row.CostUSD, 4.04)
@@ -818,6 +903,23 @@ func TestCredentialDefaultMixedTypedCohortSplitsCredentialCompositions(t *testin
 	}
 	closeCost(t, comparisons.Comparisons.AuthFiles["synthetic-a"].CostUSD, 4.04)
 	closeCost(t, comparisons.Comparisons.AIProviders["synthetic-a"].CostUSD, 29.4)
+	typed := comparisons.Comparisons.AIProviders["synthetic-a"]
+	if typed.Failures != 1 || typed.ReasoningTokens != 123 {
+		t.Fatalf("typed comparison lost facts: %+v", typed)
+	}
+	cache, err := repository.NewUsageRecentEventCache(f.db, repository.UsageRecentEventCacheOptions{Now: func() time.Time { return f.now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Close()
+	for _, reader := range []service.UsageProvider{usage, service.NewUsageServiceWithRecentCache(f.db, cache, f.catalog)} {
+		realtime, err := reader.GetUsageOverviewRealtime(ctx, servicedto.UsageFilter{RealtimeWindow: "15m", RealtimeEndTime: &f.now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRealtimeCredentialCosts(t, realtime.CurrentUsage.AuthFiles, map[string]float64{"synthetic-a": 4.04, "synthetic-b": 29.4})
+		assertRealtimeCredentialCosts(t, realtime.CurrentUsage.AIProviders, map[string]float64{"synthetic-a": 29.4})
+	}
 	if err := f.db.Where("event_key = ?", event.EventKey).Delete(&entities.UsageEvent{}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -832,6 +934,49 @@ func TestCredentialDefaultMixedTypedCohortSplitsCredentialCompositions(t *testin
 			t.Fatalf("mixed historical false completeness %+v", overview.Summary)
 		}
 		closeCost(t, overview.Summary.TotalCost, 29.4)
+	}
+}
+
+func TestCredentialDefaultZeroBillableHistoricalCompositionKeepsRollupFacts(t *testing.T) {
+	f := newCredentialDefaultFixture(t)
+	ctx := context.Background()
+	event := entities.UsageEvent{EventKey: "zero-billable-history", APIGroupKey: "synthetic-downstream", Model: "base", AuthIndex: "synthetic-a", AuthType: "oauth", Failed: true, ReasoningTokens: 123, Timestamp: f.start.Add(10 * time.Hour)}
+	if _, _, err := repository.InsertUsageEvents(f.db, []entities.UsageEvent{event}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.AggregateUsageOverviewStats(ctx, f.db, f.end); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.defaults.SetCredentialDefault(ctx, f.subjectID, ".2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Where("event_key = ?", event.EventKey).Delete(&entities.UsageEvent{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	usage := service.NewUsageService(f.db, f.catalog)
+	for _, grain := range []string{"hour", "day"} {
+		filter := servicedto.UsageFilter{Range: "custom", CustomUnit: grain, StartTime: &f.start, EndTime: &f.end, EndExclusive: true}
+		analysis, err := usage.GetAnalysis(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !analysis.CostBreakdown.CostAvailable {
+			t.Fatal("zero billable history must remain available zero")
+		}
+		for _, item := range analysis.AuthFilesComposition {
+			if item.Key == "synthetic-a" && (item.Requests != 4 || item.ReasoningTokens != 123) {
+				t.Fatalf("%s zero billable analysis lost rollup facts: %+v", grain, item)
+			}
+		}
+		comparisons, err := usage.(service.UsageComparisonProvider).GetUsageOverviewComparisons(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		item := comparisons.Comparisons.AuthFiles["synthetic-a"]
+		if item == nil || item.Requests != 4 || item.Failures != 1 || item.ReasoningTokens != 123 || !item.CostAvailable {
+			t.Fatalf("%s zero billable comparison lost rollup facts: %+v", grain, item)
+		}
+		closeCost(t, item.CostUSD, 4.04)
 	}
 }
 

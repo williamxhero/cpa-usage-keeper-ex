@@ -462,6 +462,10 @@ func buildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResol
 		if err != nil {
 			return nil, err
 		}
+		dailyIdentityLookup, err = extendPricingIdentityLookup(db, dailyIdentityLookup, evidence)
+		if err != nil {
+			return nil, err
+		}
 		applyAnalysisDailyRows(record, dailyRows, dailyIdentityLookup, costResolver, evidence)
 		return record, nil
 	}
@@ -480,6 +484,10 @@ func buildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResol
 		return nil, err
 	}
 	evidence, err := loadUsagePricingEvidence(db, filter, fullStart, fullEnd, "hourly", costResolver)
+	if err != nil {
+		return nil, err
+	}
+	identityLookup, err = extendPricingIdentityLookup(db, identityLookup, evidence)
 	if err != nil {
 		return nil, err
 	}
@@ -979,7 +987,11 @@ func buildUsageOverviewFromStats(db *gorm.DB, filter dto.UsageQueryFilter, costR
 		authIndexes := make([]string, 0, len(boundaryEvents))
 		seen := make(map[string]struct{}, len(boundaryEvents))
 		for _, event := range boundaryEvents {
-			if authIndex := strings.TrimSpace(event.AuthIndex); authIndex != "" {
+			authIndex := strings.TrimSpace(event.AuthIndex)
+			if costResolver.HasCredentialDefaults() {
+				authIndex = event.AuthIndex
+			}
+			if authIndex != "" {
 				if _, ok := seen[authIndex]; !ok {
 					authIndexes = append(authIndexes, authIndex)
 					seen[authIndex] = struct{}{}
@@ -1423,6 +1435,7 @@ type usageOverviewRealtimeEvent struct {
 	event                 entities.UsageEvent
 	identityFallbackKind  RecentUsageIdentityKind
 	identityFallbackLabel string
+	exactPricingIdentity  bool
 }
 
 // buildUsageOverviewRealtime 从最近事件缓存聚合 Overview 下方实时图表；缓存对象不可用时回退到 usage_events 窄窗查询。
@@ -1451,6 +1464,14 @@ func buildUsageOverviewRealtime(db *gorm.DB, filter dto.UsageQueryFilter, costRe
 			return dto.UsageOverviewRealtimeRecord{}, err
 		}
 		events = dbEvents
+	}
+
+	if costResolver.HasCredentialDefaults() {
+		// Exact observed identity controls credential bins as well as their fees.
+		// Keep the legacy fallback policy unchanged when defaults are absent.
+		for index := range events {
+			events[index].exactPricingIdentity = true
+		}
 	}
 
 	// 无论数据来源是缓存还是 DB，都先创建完整 bucket 骨架，前端渲染结构保持一致。
@@ -1674,6 +1695,9 @@ func collectRealtimeAuthIndexes(events []usageOverviewRealtimeEvent, visibleStar
 		}
 		// 空 auth_index 无法关联身份表，后续走 fallback。
 		authIndex := strings.TrimSpace(realtimeEvent.event.AuthIndex)
+		if realtimeEvent.exactPricingIdentity {
+			authIndex = realtimeEvent.event.AuthIndex
+		}
 		if authIndex == "" {
 			continue
 		}
@@ -1759,6 +1783,16 @@ func applyUsageOverviewRealtimeIdentityTokenUsage(realtimeEvent usageOverviewRea
 
 func usageOverviewRealtimeIdentityTargets(realtimeEvent usageOverviewRealtimeEvent, identityLookup analysisIdentityLookup) (*analysisIdentityInfo, *analysisIdentityInfo) {
 	event := realtimeEvent.event
+	if realtimeEvent.exactPricingIdentity {
+		identity, found := pricingExactIdentity(identityLookup, usagePricingIdentity{event.AuthType, event.AuthIndex})
+		if !found {
+			return nil, nil // Unknown evidence must not select a normalized fallback.
+		}
+		if identity.authType == entities.UsageIdentityAuthTypeAIProvider {
+			return nil, &identity
+		}
+		return &identity, nil
+	}
 	// 优先用 auth_index 查 usage_identities，保证展示名和凭证页面一致。
 	authIndex := strings.TrimSpace(event.AuthIndex)
 	if authIndex != "" {
