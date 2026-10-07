@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -373,6 +374,74 @@ func TestIdentityMigrationExactWhitespaceTypedAndRetainedClampingCompleteness(t 
 	}
 	if overview.Summary.CostAvailable || overview.Summary.UnavailableReason != "retained_pricing_evidence_incomplete" {
 		t.Fatalf("missing historical evidence was hidden %+v", overview)
+	}
+}
+
+func TestIdentityMigrationCorrectionPreservesPersistedFixedModesDefaultsChannels(t *testing.T) {
+	f := newCredentialDefaultFixture(t)
+	ctx := context.Background()
+	third := entities.UsageIdentity{Name: "Separate owner", AuthType: entities.UsageIdentityAuthTypeAuthFile, AuthTypeName: "oauth", Identity: "synthetic-c", Type: "codex", BindingIdentityStatus: "unique"}
+	if err := f.db.Create(&third).Error; err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.prices.(service.PricingCredentialProvider).BindPricingCredential(ctx, third.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels := f.prices.(service.PricingChannelsProvider)
+	channelIDs := []string{}
+	for _, subject := range []string{f.subjectID, other.SubjectID} {
+		channel, err := channels.CreatePricingChannel(ctx, service.PricingChannelInput{Name: "Saved contract", MemberSubjectIDs: []string{subject}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		channelIDs = append(channelIDs, channel.ID)
+		if _, err := channels.SetChannelDefault(ctx, channel.ID, ".3"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.defaults.SetCredentialDefault(ctx, subject, ".2"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixed := f.prices.(service.PricingCredentialFixedProvider)
+	if _, err := fixed.SetCredentialFixed(ctx, f.subjectID, "observed-model", syntheticFixed(1, "openai")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixed.SetCredentialFixed(ctx, other.SubjectID, "observed-model", syntheticFixed(2, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	var before []entities.CredentialModelMultiplier
+	if err := f.db.Order("subject_id").Find(&before).Error; err != nil {
+		t.Fatal(err)
+	}
+	f.assertCostFamilies(t, 32.9, true)
+	migrated := migrateFixtureIdentity(t, f, fixtureDirectory(t, f, "synthetic-b").ID)
+	f.assertCostFamilies(t, 5.4, true)
+	channelFixture{credentialDefaultFixture: f}.assertChannels(t, map[string]float64{channelIDs[0]: 5.4})
+	state := identityState(t, f.prices)
+	if _, err := f.prices.(service.PricingIdentityMigrationProvider).CorrectPricingIdentity(ctx, service.PricingIdentityCorrectionInput{BindingRef: migrated.BindingRef, ExpectedSubjectID: f.subjectID, TargetSubjectID: other.SubjectID, Action: "rebind", SnapshotID: state.SnapshotID, Confirmed: true}); err != nil {
+		t.Fatal(err)
+	}
+	f.assertCostFamilies(t, 7.3, true)
+	channelFixture{credentialDefaultFixture: f}.assertChannels(t, map[string]float64{channelIDs[0]: 3.5, channelIDs[1]: 3.8})
+	var after []entities.CredentialModelMultiplier
+	if err := f.db.Order("subject_id").Find(&after).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("identity mutation changed persisted fixed configuration")
+	}
+	f.prices, f.catalog = newCatalogPricingService(t, f.db)
+	f.assertCostFamilies(t, 7.3, true)
+	for _, subject := range []string{f.subjectID, other.SubjectID} {
+		config, err := f.prices.(service.PricingCredentialModelsProvider).GetCredentialModel(ctx, subject, "observed-model")
+		if err != nil || config.Mode != "fixed" || config.Fixed == nil || config.Multiplier != nil {
+			t.Fatalf("lost fixed mode %+v %v", config, err)
+		}
+		defaultConfig, err := f.prices.(service.PricingCredentialDefaultsProvider).GetCredentialDefault(ctx, subject)
+		if err != nil || defaultConfig.Multiplier == nil || *defaultConfig.Multiplier != .2 {
+			t.Fatalf("lost default %+v %v", defaultConfig, err)
+		}
 	}
 }
 
