@@ -20,6 +20,22 @@ const getInitialLanguage = (): SupportedLanguage => {
 const resources = {
   en: {
     translation: {
+      pricing_credential_defaults: {
+        title: 'Credential default multiplier',
+        scope_help: 'Set one multiplier for all models used by a registered upstream credential, including future models with baseline prices.',
+        history_warning: 'Saving or clearing changes recalculates historical estimates using current prices. These estimates are not a frozen bill.',
+        replacement_warning: 'An active override replaces ALL legacy model multipliers and matching rule adjustments, including tier and reasoning adjustments. It does not multiply them. Clearing restores legacy pricing.',
+        select: 'Select a registered credential', empty: 'No registered credentials. Register a subject in the card above, then refresh.',
+        refresh: 'Refresh', current: 'Saved default', inherited: 'Unconfigured / inherited — legacy pricing',
+        active: 'Active override', canonical: 'Saved canonical multiplier', multiplier: 'All-model multiplier',
+        input_help: 'Use a nonnegative decimal, optionally followed by x, X or %: 0.2, 0.2x and 20% are equivalent. Explicit 0 and 1 are active overrides; blank is not saved. A missing baseline remains unavailable even at 0.',
+        save: 'Save multiplier', clear: 'Clear override / inherit',
+        saved: 'Multiplier saved. Historical estimates now use current prices.', cleared: 'Override cleared. Historical estimates now inherit legacy pricing.',
+        invalid_multiplier: 'Enter a finite nonnegative decimal with optional x, X or %. Blank, signs, exponents, mixed units and values outside the supported pricing range cannot be saved.',
+        load_failed: 'Unable to load the saved default. Refresh to retry.', save_failed: 'Unable to save the multiplier. The last confirmed value is shown; refresh before retrying.',
+        clear_failed: 'Unable to clear the override. The last confirmed value is shown; refresh before retrying.',
+        permission_denied: 'Administrator access is required.', conflict: 'This subject or its binding has changed or is ambiguous. Refresh before retrying.'
+      },
       pricing_credentials: {
         title: 'Credential pricing subjects',
         no_pricing_change: 'Register an upstream credential identity. This does not change prices or existing costs.',
@@ -966,6 +982,22 @@ const resources = {
   },
   zh: {
     translation: {
+      pricing_credential_defaults: {
+        title: '凭证全模型默认倍率',
+        scope_help: '为已登记的上游凭证设置一个适用于所有模型的倍率，后续有基准价的新模型也自动适用。',
+        history_warning: '保存或清除会使用当前价格回算历史估算费用，不是请求发生时冻结的账单。',
+        replacement_warning: '生效覆盖会替代全部旧模型倍率和命中的旧规则调整，包括 tier 与 reasoning 调整，不与它们连乘。清除后恢复完整旧定价行为。',
+        select: '选择已登记凭证', empty: '暂无已登记凭证。请先在上方卡片登记主体，再刷新。',
+        refresh: '刷新', current: '已保存默认值', inherited: '未配置／继承 — 使用旧定价',
+        active: '生效覆盖', canonical: '已保存规范倍率', multiplier: '全模型倍率',
+        input_help: '输入非负十进制数，可加 x、X 或 %：0.2、0.2x 与 20% 等价。显式 0 和 1 都是生效覆盖；空白不会保存。即使倍率为 0，缺少基准价仍表示费用不可用。',
+        save: '保存倍率', clear: '清除覆盖／继承',
+        saved: '倍率已保存，历史估算费用已按当前价格回算。', cleared: '覆盖已清除，历史估算费用已恢复继承旧定价。',
+        invalid_multiplier: '请输入有限非负十进制数，可加 x、X 或 %。空白、正负号、科学计数法、混合单位及超出支持计价范围的数值无法保存。',
+        load_failed: '无法读取已保存默认值，请刷新重试。', save_failed: '无法保存倍率。当前显示最后确认的值，请刷新后重试。',
+        clear_failed: '无法清除覆盖。当前显示最后确认的值，请刷新后重试。',
+        permission_denied: '此操作需要管理员权限。', conflict: '该主体或绑定已变化，或归属存在歧义，请刷新后重试。'
+      },
       pricing_credentials: {
         title: '凭证定价主体',
         no_pricing_change: '登记上游凭证身份，不改变价格或既有费用。',
@@ -1912,6 +1944,22 @@ const resources = {
   },
   'zh-TW': {
     translation: {
+      pricing_credential_defaults: {
+        title: '憑證全模型預設倍率',
+        scope_help: '為已登記的上游憑證設定一個適用於所有模型的倍率，後續有基準價的新模型也自動適用。',
+        history_warning: '儲存或清除會使用目前價格回算歷史估算費用，不是請求發生時凍結的帳單。',
+        replacement_warning: '生效覆蓋會取代全部舊模型倍率和命中的舊規則調整，包括 tier 與 reasoning 調整，不與它們連乘。清除後恢復完整舊定價行為。',
+        select: '選擇已登記憑證', empty: '暫無已登記憑證。請先在上方卡片登記主體，再重新整理。',
+        refresh: '重新整理', current: '已儲存預設值', inherited: '未設定／繼承 — 使用舊定價',
+        active: '生效覆蓋', canonical: '已儲存標準倍率', multiplier: '全模型倍率',
+        input_help: '輸入非負十進位數，可加 x、X 或 %：0.2、0.2x 與 20% 等價。明確設定的 0 和 1 都是生效覆蓋；空白不會儲存。即使倍率為 0，缺少基準價仍表示費用不可用。',
+        save: '儲存倍率', clear: '清除覆蓋／繼承',
+        saved: '倍率已儲存，歷史估算費用已按目前價格回算。', cleared: '覆蓋已清除，歷史估算費用已恢復繼承舊定價。',
+        invalid_multiplier: '請輸入有限非負十進位數，可加 x、X 或 %。空白、正負號、科學記號、混合單位及超出支援計價範圍的數值無法儲存。',
+        load_failed: '無法讀取已儲存預設值，請重新整理後重試。', save_failed: '無法儲存倍率。目前顯示最後確認的值，請重新整理後重試。',
+        clear_failed: '無法清除覆蓋。目前顯示最後確認的值，請重新整理後重試。',
+        permission_denied: '此操作需要管理員權限。', conflict: '該主體或綁定已變更，或歸屬存在歧義，請重新整理後重試。'
+      },
       pricing_credentials: {
         title: '憑證定價主體',
         no_pricing_change: '登記上游憑證身分，不改變價格或既有費用。',

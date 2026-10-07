@@ -893,6 +893,13 @@ export interface PricingCredentialsResponse {
   credentials: PricingCredential[]
 }
 
+export interface PricingCredentialDefault {
+  subject_id: string
+  // null inherits legacy pricing; explicit 0 and 1 are active overrides.
+  multiplier: number | null
+  snapshot_id: string
+}
+
 export interface PricingRule {
   key: string
   value: string

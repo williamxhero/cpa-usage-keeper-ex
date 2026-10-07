@@ -1,4 +1,4 @@
-import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingCredential, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
+import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingCredential, type PricingCredentialDefault, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed'
 import { resolveUsageRequestRange } from '@/utils/usage/rangeQuery'
 
@@ -986,6 +986,32 @@ export async function bindPricingCredential(directoryId: number, signal?: AbortS
     signal,
   })
   if (!response.ok) await parseApiError(response, 'Unable to register credential')
+  return response.json()
+}
+
+export async function fetchPricingCredentialDefault(subjectId: string, signal?: AbortSignal): Promise<PricingCredentialDefault> {
+  const response = await apiFetch(apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/default`), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load credential default')
+  return response.json()
+}
+
+export async function savePricingCredentialDefault(subjectId: string, multiplier: string, signal?: AbortSignal): Promise<PricingCredentialDefault> {
+  const response = await apiFetch(apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/default`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ multiplier }),
+    signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save credential default')
+  return response.json()
+}
+
+export async function clearPricingCredentialDefault(subjectId: string, signal?: AbortSignal): Promise<PricingCredentialDefault> {
+  const response = await apiFetch(apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/default`), {
+    method: 'DELETE',
+    signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to clear credential default')
   return response.json()
 }
 
