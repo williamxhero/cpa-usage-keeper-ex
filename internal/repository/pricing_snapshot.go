@@ -98,12 +98,12 @@ func compileCredentialBindings(identities []entities.UsageIdentity, subjects []e
 		}
 		binding := pricing.CredentialBinding{AuthType: typeName, AuthIndex: identity.Identity, Status: status, SafeName: pricing.SafeCredentialText(identity.Name, identity)}
 		for _, subject := range subjects {
-			if subject.AuthType == identity.AuthType && subject.Identity == identity.Identity {
+			if !subject.BindingDisabled && subject.AuthType == identity.AuthType && subject.Identity == identity.Identity {
 				binding.SubjectID = subject.ID
 				if subject.AuthTypeName != typeName {
 					binding.Status = "ambiguous"
 				}
-				seen[subject.ID] = true
+				seen[subject.BindingRef] = true
 			}
 		}
 		bindings = append(bindings, binding)
@@ -111,7 +111,11 @@ func compileCredentialBindings(identities []entities.UsageIdentity, subjects []e
 	// A directory entry can disappear after a successful scoped refresh. Saved
 	// exact historical links remain evidence; display names are never used.
 	for _, subject := range subjects {
-		if seen[subject.ID] {
+		if subject.BindingDisabled {
+			bindings = append(bindings, pricing.CredentialBinding{SubjectID: subject.ID})
+			continue
+		}
+		if seen[subject.BindingRef] {
 			continue
 		}
 		typeName := credentialAuthType(subject.AuthType)

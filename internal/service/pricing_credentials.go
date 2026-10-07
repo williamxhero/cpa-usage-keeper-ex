@@ -67,21 +67,32 @@ func (s *pricingService) ResolvePricingCredential(ctx context.Context, authTypeN
 func (s *pricingService) ListCredentialPricingSubjects(ctx context.Context) ([]servicedto.PricingCredential, error) {
 	result := []servicedto.PricingCredential{}
 	err := repository.ReadCredentialPricingDirectory(ctx, s.db, func(identities []entities.UsageIdentity, subjects []entities.CredentialPricingSubject) error {
+		positions := map[string]int{}
 		for _, subject := range subjects {
-			item := servicedto.PricingCredential{SubjectID: subject.ID, Name: "Credential", AuthType: "unknown", ProviderType: "unknown", Status: "stale", BindingStatus: "unknown"}
+			item := servicedto.PricingCredential{SubjectID: subject.ID, Name: "Credential", AuthType: "unknown", ProviderType: "unknown", Status: "stale", BindingStatus: "unbound"}
 			matches := 0
 			for _, identity := range identities {
 				if identity.AuthType == subject.AuthType && identity.Identity == subject.Identity {
 					matches++
-					item = pricingCredential(identity, subjects)
+					if subject.BindingDisabled {
+						item.Name = pricingCredential(identity, nil).Name
+					} else {
+						item = pricingCredential(identity, subjects)
+					}
 				}
 			}
-			if matches > 1 {
+			if !subject.BindingDisabled && matches > 1 {
 				item = servicedto.PricingCredential{Name: "Credential", AuthType: "unknown", ProviderType: "unknown", Status: "unknown", BindingStatus: "ambiguous"}
 			}
-			// This is the saved subject, not a claim that an ambiguous request resolves to it.
 			item.SubjectID = subject.ID
-			result = append(result, item)
+			if position, found := positions[subject.ID]; found {
+				if !subject.BindingDisabled && (result[position].BindingStatus == "unbound" || item.Status == "active") {
+					result[position] = item
+				}
+			} else {
+				positions[subject.ID] = len(result)
+				result = append(result, item)
+			}
 		}
 		return nil
 	})
@@ -106,6 +117,15 @@ func (s *pricingService) BindPricingCredential(ctx context.Context, directoryID 
 			}
 			if result.BindingStatus != "unbound" {
 				return ErrCredentialNotSelectable
+			}
+			associations, err := repository.LoadCredentialPricingAssociations(tx)
+			if err != nil {
+				return err
+			}
+			for _, association := range associations {
+				if association.AuthType == identity.AuthType && association.Identity == identity.Identity {
+					return ErrCredentialBindingConflict // Rebinding is an explicit correction.
+				}
 			}
 			idBytes := make([]byte, 16)
 			if _, err := rand.Read(idBytes); err != nil {
@@ -171,7 +191,7 @@ func pricingCredential(identity entities.UsageIdentity, subjects []entities.Cred
 	}
 	matches := 0
 	for _, subject := range subjects {
-		if subject.AuthType == identity.AuthType && subject.Identity == identity.Identity {
+		if !subject.BindingDisabled && subject.AuthType == identity.AuthType && subject.Identity == identity.Identity {
 			matches++
 			result.SubjectID = subject.ID
 			result.BindingStatus = "bound"

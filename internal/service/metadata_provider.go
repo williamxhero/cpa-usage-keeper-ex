@@ -31,7 +31,7 @@ func persistProviderMetadata(ctx context.Context, db *gorm.DB, snapshot provider
 		}
 		for _, old := range oldIdentities {
 			for _, subject := range subjects {
-				if old.AuthType == entities.UsageIdentityAuthTypeAIProvider && subject.AuthType == old.AuthType && subject.Identity == old.Identity && subject.AuthTypeName == old.AuthTypeName {
+				if !subject.BindingDisabled && old.AuthType == entities.UsageIdentityAuthTypeAIProvider && subject.AuthType == old.AuthType && subject.Identity == old.Identity && subject.AuthTypeName == old.AuthTypeName {
 					previous[old.Identity] = old.BindingIdentityStatus
 				}
 			}
