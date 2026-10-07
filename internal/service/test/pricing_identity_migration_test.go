@@ -12,6 +12,8 @@ import (
 
 	"cpa-usage-keeper/internal/config"
 	"cpa-usage-keeper/internal/cpa/dto/authfiles"
+	"cpa-usage-keeper/internal/cpa/dto/providerconfig"
+	"cpa-usage-keeper/internal/cpa/dto/response"
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/repository"
 	"cpa-usage-keeper/internal/service"
@@ -441,6 +443,100 @@ func TestIdentityMigrationCorrectionPreservesPersistedFixedModesDefaultsChannels
 		defaultConfig, err := f.prices.(service.PricingCredentialDefaultsProvider).GetCredentialDefault(ctx, subject)
 		if err != nil || defaultConfig.Multiplier == nil || *defaultConfig.Multiplier != .2 {
 			t.Fatalf("lost default %+v %v", defaultConfig, err)
+		}
+	}
+}
+
+func TestIdentityMigrationCandidateAndCorrectionCommitFailureKeepPublishedOwnership(t *testing.T) {
+	f := newCredentialDefaultFixture(t)
+	ctx := context.Background()
+	if _, err := f.defaults.SetCredentialDefault(ctx, f.subjectID, ".2"); err != nil {
+		t.Fatal(err)
+	}
+	provider := f.prices.(service.PricingIdentityMigrationProvider)
+	before := f.catalog.Snapshot()
+	bad := entities.CredentialModelMultiplier{SubjectID: f.subjectID, Model: "invalid-candidate", Mode: "unsupported", Multiplier: .2}
+	if err := f.db.Create(&bad).Error; err != nil {
+		t.Fatal(err)
+	}
+	state := identityState(t, f.prices)
+	if _, err := provider.MigratePricingIdentity(ctx, service.PricingIdentityMigrationInput{SubjectID: f.subjectID, DirectoryRef: migrationSelection(t, state, fixtureDirectory(t, f, "synthetic-b").ID), SnapshotID: state.SnapshotID, Confirmed: true}); !errors.Is(err, repository.ErrInvalidPricingSnapshot) {
+		t.Fatalf("candidate failure %v", err)
+	}
+	if f.catalog.Snapshot() != before || len(identityState(t, f.prices).Bindings) != 1 {
+		t.Fatal("candidate failure published or committed association")
+	}
+	if err := f.db.Where("subject_id = ? AND model = ?", f.subjectID, bad.Model).Delete(&entities.CredentialModelMultiplier{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	migrated := migrateFixtureIdentity(t, f, fixtureDirectory(t, f, "synthetic-b").ID)
+	before = f.catalog.Snapshot()
+	if err := f.db.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Exec(`CREATE TABLE correction_commit_probe (subject_id TEXT, FOREIGN KEY(subject_id) REFERENCES credential_pricing_subjects(id) DEFERRABLE INITIALLY DEFERRED)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Exec(`CREATE TRIGGER fail_correction_commit AFTER UPDATE ON credential_pricing_associations BEGIN INSERT INTO correction_commit_probe(subject_id) VALUES ('absent-subject'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	state = identityState(t, f.prices)
+	if _, err := provider.CorrectPricingIdentity(ctx, service.PricingIdentityCorrectionInput{BindingRef: migrated.BindingRef, ExpectedSubjectID: f.subjectID, Action: "unbind", SnapshotID: state.SnapshotID, Confirmed: true}); err == nil {
+		t.Fatal("expected deferred correction commit failure")
+	}
+	if f.catalog.Snapshot() != before || !identityState(t, f.prices).Bindings[1].Enabled {
+		t.Fatal("failed correction changed ownership")
+	}
+	f.assertCostFamilies(t, 6, true)
+	if _, err := provider.MigratePricingIdentity(ctx, service.PricingIdentityMigrationInput{SubjectID: f.subjectID, DirectoryRef: migrationSelection(t, state, fixtureDirectory(t, f, "synthetic-b").ID), SnapshotID: state.SnapshotID, Confirmed: true}); err == nil {
+		t.Fatal("duplicate migration accepted")
+	}
+}
+
+func TestIdentityMigrationProviderPartialFailurePreservesMultipleExactAssociations(t *testing.T) {
+	f := newCredentialDefaultFixture(t)
+	ctx := context.Background()
+	if _, err := f.defaults.SetCredentialDefault(ctx, f.subjectID, ".2"); err != nil {
+		t.Fatal(err)
+	}
+	fetcher := newMetadataTestFetcher()
+	file := authfiles.AuthFile{AuthIndex: "synthetic-a", Name: "safe.json", Email: "safe@example.invalid", Type: "codex", Provider: "codex"}
+	fetcher.setAuthFiles([]authfiles.AuthFile{file})
+	fetcher.standardResults["codex"] = &response.ProviderKeyConfigResult{StatusCode: 200, Payload: []providerconfig.ProviderKeyConfig{{AuthIndex: "rotated-api", APIKey: "synthetic-private-provider-key", Name: "Safe provider"}}}
+	syncer := service.NewSyncServiceWithOptions(f.db, service.SyncServiceOptions{BaseURL: "https://cpa.example.invalid", MetadataFetcher: fetcher, Now: func() time.Time { return f.now }, PricingCatalog: f.catalog})
+	if err := syncer.SyncMetadata(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var identity entities.UsageIdentity
+	if err := f.db.Where("identity = ? AND auth_type = ?", "rotated-api", entities.UsageIdentityAuthTypeAIProvider).First(&identity).Error; err != nil {
+		t.Fatal(err)
+	}
+	migrateFixtureIdentity(t, f, identity.ID)
+	check := func() {
+		t.Helper()
+		for _, event := range []entities.UsageEvent{{Model: "base", AuthType: "apikey", AuthIndex: "rotated-api", InputTokens: 1_000_000}, {Model: "base", AuthType: "oauth", AuthIndex: "synthetic-a", InputTokens: 1_000_000}} {
+			cost := f.catalog.NewResolver().Calculate(repository.UsageEventCostSubject(event))
+			closeCost(t, cost.Cost.TotalCostUSD, 2)
+			if cost.CredentialSubjectID != f.subjectID {
+				t.Fatal("lost migrated exact owner")
+			}
+		}
+	}
+	check()
+	fetcher.standardErrors["claude"] = context.DeadlineExceeded
+	if err := syncer.SyncMetadata(ctx); err == nil {
+		t.Fatal("expected controlled partial warning")
+	}
+	check()
+	fetcher.standardErrors["codex"] = context.DeadlineExceeded
+	if err := syncer.SyncMetadata(ctx); err == nil {
+		t.Fatal("expected scoped timeout")
+	}
+	check()
+	state := identityState(t, f.prices)
+	for _, binding := range state.Bindings {
+		if !binding.Enabled || binding.Credential.Status != "active" {
+			t.Fatalf("timeout marked saved association deleted %+v", binding)
 		}
 	}
 }
