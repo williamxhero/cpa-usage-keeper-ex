@@ -20,7 +20,7 @@ describe('identity migration and correction translations', () => {
 
 describe('credential model exception translations', () => {
   it('has complete nonempty exact-match, inheritance, baseline and history copy in every language', () => {
-    const keys = ['title', 'scope_help', 'history_warning', 'replacement_warning', 'select', 'empty', 'refresh', 'model', 'model_search', 'no_models', 'model_help', 'current', 'inherited', 'active', 'canonical', 'multiplier', 'input_help', 'save', 'clear', 'saved', 'cleared', 'invalid_multiplier', 'load_failed', 'save_failed', 'clear_failed', 'permission_denied', 'conflict']
+    const keys = ['title', 'scope_help', 'history_warning', 'replacement_warning', 'select', 'empty', 'refresh', 'model', 'model_search', 'no_models', 'model_help', 'current', 'inherited', 'active', 'canonical', 'multiplier', 'input_help', 'save', 'clear', 'saved', 'cleared', 'invalid_multiplier', 'load_failed', 'save_failed', 'clear_failed', 'permission_denied', 'conflict', 'mode', 'fixed', 'prompt_price_per_1m', 'completion_price_per_1m', 'cache_read_price_per_1m', 'cache_write_price_per_1m', 'fixed_help', 'style', 'style_inherit', 'style_help', 'invalid_fixed', 'style_required']
     for (const language of SUPPORTED_LANGUAGES) {
       const bundle = i18n.getResourceBundle(language, 'translation').pricing_credential_models
       expect(Object.keys(bundle).sort()).toEqual([...keys].sort())
@@ -33,6 +33,11 @@ describe('credential model exception translations', () => {
       expect(bundle.model_help).toContain('ModelAlias')
       expect(bundle.input_help).toContain('0')
       expect(bundle.replacement_warning).toContain('reasoning')
+      expect(bundle.fixed_help).toContain('USD / 1M')
+      expect(bundle.fixed_help).toContain(language === 'en' ? 'zero' : '零')
+      expect(bundle.style_help).toContain('ModelAlias')
+      expect(bundle.style_help).toContain('OpenAI')
+      expect(bundle.style_help).toContain('Claude')
     }
   })
 })

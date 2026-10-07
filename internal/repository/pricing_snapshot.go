@@ -78,7 +78,11 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 	}
 	modelConfigs := make([]pricing.CredentialModelConfig, 0, len(exceptions))
 	for _, value := range exceptions {
-		modelConfigs = append(modelConfigs, pricing.CredentialModelConfig{SubjectID: value.SubjectID, Model: value.Model, Multiplier: value.Multiplier})
+		config := pricing.CredentialModelConfig{SubjectID: value.SubjectID, Model: value.Model, Multiplier: value.Multiplier, Mode: value.Mode}
+		if value.Mode == pricing.ModeFixed {
+			config.Fixed = &pricing.FixedTariff{PromptPricePer1M: value.PromptPricePer1M, CompletionPricePer1M: value.CompletionPricePer1M, CacheReadPricePer1M: value.CacheReadPricePer1M, CacheWritePricePer1M: value.CacheWritePricePer1M, PricingStyle: value.PricingStyle}
+		}
+		modelConfigs = append(modelConfigs, config)
 	}
 	snapshot, err := pricing.CompileSnapshotWithCredentials(configs, compileCredentialBindings(identities, subjects), credentialConfigs, pricing.OverrideConfig{Channels: channels, CredentialModels: modelConfigs})
 	if err != nil {

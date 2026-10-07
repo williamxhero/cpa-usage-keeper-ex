@@ -16,12 +16,12 @@ This change is source-only. It does not modify CPA, installed services or databa
 | --- | --- | --- | --- | --- |
 | [#2](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/2) | Safe credential selection and registration | — | Complete | `683f2db979f2dafbc80b5f109f9acaa1d3ec578a` |
 | [#3](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/3) | Credential-wide default multiplier | #2 | Complete with historical-evidence limitation | `85351fd6`, `68354c5e`, `b586f11f` |
-| [#4](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/4) | Named channels and channel default multiplier | #3 | In progress | — |
+| [#4](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/4) | Named channels and channel default multiplier | #3 | Complete | `46836784`, `8809bb6e`, `e6bbbca8`, `7bd8074d`; integrated `869e4e00` |
 | [#5](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/5) | Credential model-specific multiplier | #3 | Complete | `f50d1f53`, `c3ad0880`; integrated `f5a2f383` |
 | [#6](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/6) | Credential model-specific fixed four-part tariff | #5 | In progress | — |
 | [#7](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/7) | Channel model exceptions and full precedence | #4, #6 | Pending | — |
 | [#8](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/8) | Dual costs and request pricing explanation | #7 | Pending | — |
-| [#9](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/9) | Stale binding and explicit identity migration | #4 | Pending | — |
+| [#9](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/9) | Stale binding and explicit identity migration | #4 | In progress | — |
 
 ## Required verification
 
@@ -66,6 +66,16 @@ Integrated final tip `b586f11f2f868f80d4302ce04d4cebffe1fc91cc`: backend `85351f
 
 Neither channel defaults nor credential model exceptions are claimed by #3.
 
+### #4 — named channels and channel defaults
+
+Accepted backend `46836784641b1308545820a4088fc06ac6c59fb1`, safety `8809bb6e86dbdefa491ea6894e9af157ea3b1e2b`, UI `e6bbbca8e51310f0f99f4c7ec58a6d73df09832c`, and normal accepted-#5 composition `7bd8074d87fdefb4a4c3bbed2be105ca7736421e`; integrated/pushed through `869e4e00`.
+
+- Persisted opaque channels, safe names, explicitly selected exclusive credential-subject members, administrator CRUD/default save/readback, rename, inheritance clear, and dependency-confirmed deletion. Existing historical credential identities/prices are not cascaded away.
+- Shared resolver precedence is credential model > credential default > channel default > complete legacy; provider type/name/endpoint never identifies a channel. Channel-only configuration activates evidence guards. Genuine named-channel comparisons retain distinct $2/$5/$7 amounts, exact typed membership and explicit unknown/incomplete historical attribution.
+- Real service/admin HTTP/compiler tests cover member conflicts, credential .3 priority, composed Model-before-Alias selection, clear-through-all-layers, four buckets, hot/archive reconciliation, query-family agreement, pinned readers, candidate/COMMIT failures and restart.
+- Independent review's known-secret channel-name defect was corrected: save validates against all known directory/subject evidence; successful reload sanitizes outward snapshot names; committed metadata followed by failed reload publishes generic names and disables stale attribution without mutating pinned snapshots/configurations. Actual metadata failure/recovery privacy regression was reproduced red then green and the narrow correction reviewed.
+- Final composed focused backend passed 52 top-level / 71 including-subtest cases. Full Go suite passed 31 test packages, 1,696 top-level / 3,014 including subtests, zero failures. npm ci, full frontend tests (181 files / 1,493 tests with process-only Node compatibility flag/two workers), lint, typecheck and build passed. Actual make verify remained unavailable, and all recipes were executed individually. Passing frontend fixture socket stderr and existing bundle-size warning remain. Final worktree/diff checks clean; tracked dist placeholder restored.
+
 ### #5 — credential model multipliers
 
 Accepted backend `f50d1f53c114b98b06a6d814c6afc530822d0fd8` and UI `c3ad08803d9bf1288b3118add922a7ea1f8ec464`, integrated and pushed via `f5a2f383`.
@@ -75,7 +85,7 @@ Accepted backend `f50d1f53c114b98b06a6d814c6afc530822d0fd8` and UI `c3ad08803d9b
 - Six new real service tests and two HTTP tests cover all cost families, future baseline validation, exact typed identity, missing baseline/zero, failure and COMMIT atomicity, concurrency, inheritance and restart. A deliberate default-only guard mutation failed (33.24 instead of expected 33.44), then passed when the model-aware guard was restored. Bounded independent backend review found no verified actionable blocker.
 - Focused backend checks passed across five packages. Focused frontend tests passed 75 tests in three files, including 32 new card cases, translations and responsive layout. Full Go suite passed (31 successful package results); npm ci, full frontend tests (180 files / 1,464 tests, 98.90 seconds, process-only Node compatibility flag/two workers), lint, typecheck and build passed. Actual `make verify` exited 127 because make remains unavailable. No retries, skipped assertions or configuration changes were needed. Nonfatal frontend socket-fixture stderr and build-size warnings remain. Final diff checks passed; the ticket tree was clean and generated assets were removed.
 
-Current frontier: #4 and #6 in parallel. #7 waits for both; #9 can proceed after #4. Draft delivery PR: https://github.com/williamxhero/cpa-usage-keeper-ex/pull/10 (not ready to merge).
+Current frontier: #6 and #9 in parallel. #7 waits for #6; #8 waits for #7. Draft delivery PR: https://github.com/williamxhero/cpa-usage-keeper-ex/pull/10 (not ready to merge).
 
 ## Remaining limitations
 

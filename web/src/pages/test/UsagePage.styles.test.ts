@@ -60,6 +60,14 @@ describe('UsagePage responsive layout and accessibility', () => {
     expect(card).toMatch(/className=\{styles.actions\}><div className=\{styles.selector\}>/)
   })
 
+  it('keeps fixed tariff fields responsive with four labeled decimal inputs', () => {
+    const card = readSource(new URL('../../components/usage/pricing/PricingCredentialModelsCard.tsx', import.meta.url))
+    expect(card).toContain('className={styles.fixedRates}')
+    expect(card).toContain('inputMode="decimal"')
+    expect(credentialDefaultsStyles).toMatch(/\.fixedRates\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
+    expect(credentialDefaultsStyles).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*\.fixedRates\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+  })
+
   it('wraps credential default metadata, options, errors and actions on narrow screens', () => {
     expect(credentialDefaultsStyles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
     expect(credentialDefaultsStyles).toMatch(/\.actions\s*\{[^}]*flex-wrap:\s*wrap;/)

@@ -153,7 +153,7 @@ func (r Resolver) HasPricingOverrides() bool {
 	return false
 }
 func (r Resolver) UsesPricingOverride(subject CostSubject) bool {
-	if _, _, _, _, selected := r.credentialModel(subject); selected {
+	if _, _, selected := r.credentialModel(subject); selected {
 		return true
 	}
 	if r.UsesCredentialDefault(subject) {
@@ -174,10 +174,10 @@ func (r Resolver) MayUsePricingOverride(subject CostSubject) bool {
 		if _, ok := r.snapshot.credentialDefaults[id]; ok {
 			return true
 		}
-		if _, ok := r.snapshot.CredentialModel(id, subject.Dimensions.Model); ok {
+		if _, ok := r.snapshot.CredentialModelPricing(id, subject.Dimensions.Model); ok {
 			return true
 		}
-		if _, ok := r.snapshot.CredentialModel(id, subject.Dimensions.ModelAlias); ok {
+		if _, ok := r.snapshot.CredentialModelPricing(id, subject.Dimensions.ModelAlias); ok {
 			return true
 		}
 		if channel := r.snapshot.channels[r.snapshot.subjectChannels[id]]; channel.Multiplier != nil {
