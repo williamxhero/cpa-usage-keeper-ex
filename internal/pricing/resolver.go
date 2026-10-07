@@ -34,6 +34,8 @@ type CostResult struct {
 	Scope               string
 	Multiplier          *float64
 	UnavailableReason   string
+	SelectedModel       string
+	SelectedBy          string
 }
 
 // Resolver 在创建时固定绑定一个 Snapshot，确保单个响应不会混用新旧价格。
@@ -50,6 +52,12 @@ func (r Resolver) ActiveFields() ActiveFields {
 
 func (r Resolver) Calculate(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
+	if id, multiplier, selectedModel, selectedBy, selected := r.credentialModel(subject); selected {
+		result := calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+		result.Scope = "credential_model"
+		result.SelectedModel, result.SelectedBy = selectedModel, selectedBy
+		return result
+	}
 	if id, multiplier, selected := r.credentialDefault(subject); selected {
 		return calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
 	}

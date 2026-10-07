@@ -715,6 +715,7 @@ func (s *usageService) ListUsageEvents(ctx context.Context, filter servicedto.Us
 			CostUSD:             row.CostUSD,
 			CostAvailable:       row.CostAvailable,
 			PricingStyle:        row.PricingStyle,
+			PricingSelection:    row.PricingSelection,
 		})
 	}
 	return &servicedto.UsageEventsPage{Events: result, TotalCount: page.TotalCount, Page: page.Page, PageSize: page.PageSize, TotalPages: page.TotalPages, HasMore: page.HasMore}, nil
@@ -773,6 +774,7 @@ func (s *usageService) StreamUsageEvents(ctx context.Context, filter servicedto.
 			CostUSD:             row.CostUSD,
 			CostAvailable:       row.CostAvailable,
 			PricingStyle:        row.PricingStyle,
+			PricingSelection:    row.PricingSelection,
 		})
 	}, s.pricing.NewResolver())
 }

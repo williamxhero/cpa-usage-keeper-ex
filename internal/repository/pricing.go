@@ -32,9 +32,9 @@ func ListUsedModels(db *gorm.DB) ([]string, error) {
 	}
 
 	var modelsList []sql.NullString
-	if err := db.Model(&entities.UsageEvent{}).
-		Distinct().
-		Pluck("model", &modelsList).Error; err != nil {
+	// Model and the existing alias are exact selectable identifiers even when
+	// no baseline is configured. Archived history remains a valid source.
+	if err := db.Raw("SELECT model FROM usage_events UNION SELECT model_alias FROM usage_events UNION SELECT model FROM usage_events_archive UNION SELECT model_alias FROM usage_events_archive").Scan(&modelsList).Error; err != nil {
 		return nil, fmt.Errorf("list used models: %w", err)
 	}
 

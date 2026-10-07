@@ -23,6 +23,7 @@ func TestAllIncludesCoreModels(t *testing.T) {
 		&ModelPriceRule{},
 		&CredentialPricingSubject{},
 		&CredentialPriceDefault{},
+		&CredentialModelMultiplier{},
 		&UsageIdentity{},
 		&CPAAPIKey{},
 		&UsageOverviewHourlyStat{},

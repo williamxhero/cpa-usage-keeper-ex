@@ -46,28 +46,8 @@ func (s *pricingService) SetCredentialDefault(ctx context.Context, id, text stri
 		return CredentialDefault{}, fmt.Errorf("%w: invalid multiplier", ErrInvalidPricingInput)
 	}
 	snapshot, err := s.mutatePricing(ctx, func(tx *gorm.DB) error {
-		identities, subjects, err := repository.LoadCredentialPricingDirectory(tx)
-		if err != nil {
+		if err := validatePricingCredentialSubject(tx, id); err != nil {
 			return err
-		}
-		found := false
-		for _, subject := range subjects {
-			if subject.ID != id {
-				continue
-			}
-			found = true
-			for _, identity := range identities {
-				if identity.AuthType != subject.AuthType || identity.Identity != subject.Identity {
-					continue
-				}
-				status := pricingCredential(identity, subjects).BindingStatus
-				if status != "bound" && status != "stale" {
-					return ErrCredentialNotSelectable
-				}
-			}
-		}
-		if !found {
-			return ErrPricingCredentialNotFound
 		}
 		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "subject_id"}}, DoUpdates: clause.AssignmentColumns([]string{"multiplier", "updated_at"})}).Create(&entities.CredentialPriceDefault{SubjectID: id, Multiplier: value}).Error
 	})
