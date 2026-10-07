@@ -19,6 +19,10 @@ type UsageEventFilterOptionsRecord struct {
 
 // UsageEventRecord 是单条 usage event 的查询结果。
 type UsageEventRecord struct {
+	ChannelID          string
+	ChannelName        string
+	AttributionWarning string
+	PricingSnapshotID  string
 	// Internal pricing evidence; existing display normalization stays unchanged.
 	PricingAuthType         string
 	PricingAuthIndex        string

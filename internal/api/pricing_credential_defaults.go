@@ -39,24 +39,10 @@ func registerPricingCredentialDefaultRoutes(router gin.IRoutes, pricingProvider 
 				invalidCredentialMultiplier(c)
 				return
 			}
-			var text string
-			if json.Unmarshal(request.Multiplier, &text) != nil {
-				var number json.Number
-				if len(request.Multiplier) == 0 || string(request.Multiplier) == "null" || json.Unmarshal(request.Multiplier, &number) != nil {
-					invalidCredentialMultiplier(c)
-					return
-				}
-				value, parseErr := number.Float64()
-				if parseErr != nil || value < 0 {
-					invalidCredentialMultiplier(c)
-					return
-				}
-				// Numeric JSON may use exponents; normalize into decimal text before the
-				// same service validation used for string input.
-				if value == 0 {
-					value = 0 // Canonicalize JSON negative zero as numeric zero.
-				}
-				text = strconv.FormatFloat(value, 'f', -1, 64)
+			text, valid := multiplierJSONText(request.Multiplier)
+			if !valid {
+				invalidCredentialMultiplier(c)
+				return
 			}
 			result, err = provider.SetCredentialDefault(c.Request.Context(), id, text)
 		}
@@ -76,6 +62,29 @@ func registerPricingCredentialDefaultRoutes(router gin.IRoutes, pricingProvider 
 	router.GET("/pricing/credentials/:subjectID/default", handler)
 	router.PUT("/pricing/credentials/:subjectID/default", handler)
 	router.DELETE("/pricing/credentials/:subjectID/default", handler)
+}
+
+// Numeric JSON may use exponents; string forms use domain decimal parsing.
+func multiplierJSONText(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", false
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text, true
+	}
+	var number json.Number
+	if json.Unmarshal(raw, &number) != nil {
+		return "", false
+	}
+	value, err := number.Float64()
+	if err != nil || value < 0 {
+		return "", false
+	}
+	if value == 0 {
+		value = 0
+	}
+	return strconv.FormatFloat(value, 'f', -1, 64), true
 }
 
 func invalidCredentialMultiplier(c *gin.Context) {

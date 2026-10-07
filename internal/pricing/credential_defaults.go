@@ -57,7 +57,7 @@ type credentialIdentity struct{ authType, authIndex string }
 
 // CompileSnapshotWithCredentials validates the whole candidate, including
 // unadjusted baseline safety even when legacy model multipliers are zero.
-func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialBinding, defaults []CredentialConfig) (*Snapshot, error) {
+func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialBinding, defaults []CredentialConfig, extra ...OverrideConfig) (*Snapshot, error) {
 	snapshot, err := CompileSnapshot(models)
 	if err != nil {
 		return nil, err
@@ -123,8 +123,18 @@ func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialB
 		}
 		snapshot.credentialDefaults[config.SubjectID] = config.Multiplier
 	}
+	if len(extra) > 1 {
+		return nil, fmt.Errorf("expected at most one override config")
+	}
+	var channels []ChannelConfig
+	if len(extra) == 1 {
+		channels = extra[0].Channels
+	}
+	if err := snapshot.compileChannels(channels); err != nil {
+		return nil, err
+	}
 	snapshot.legacyActiveFields = snapshot.activeFields
-	if len(defaults) > 0 {
+	if (Resolver{snapshot: snapshot}).HasPricingOverrides() {
 		// Retained-event reconciliation must identify the original rollup cohorts,
 		// including dimensions not used by current legacy rules.
 		for field := RuleFieldAPIGroupKey; field < ruleFieldCount; field++ {
@@ -176,7 +186,7 @@ func (r Resolver) LegacyActiveFields() ActiveFields {
 	if r.snapshot == nil {
 		return 0
 	}
-	if r.HasCredentialDefaults() {
+	if r.HasPricingOverrides() || r.HasChannels() {
 		return r.snapshot.legacyActiveFields
 	}
 	return r.snapshot.activeFields

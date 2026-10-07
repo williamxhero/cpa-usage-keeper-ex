@@ -571,7 +571,7 @@ func (a *codexQuotaEfficiencyUsageAccumulator) add(event codexQuotaEfficiencyUsa
 
 	subject := newUsagePricingCostSubject(event.APIGroupKey, event.Model, authIndex, event.ModelAlias, event.ServiceTier, event.ResponseServiceTier, event.ReasoningEffort, event.Endpoint, event.ExecutorType, event.InputTokens, event.OutputTokens, event.CacheReadTokens, event.CacheCreationTokens)
 	subject.AuthType = "oauth" // The stream WHERE clause proves this exact type.
-	if resolver.UsesCredentialDefault(subject) {
+	if resolver.UsesPricingOverride(subject) {
 		cost := resolver.Calculate(subject)
 		a.target.TotalCostUSD += cost.Cost.TotalCostUSD
 		if !cost.Available {

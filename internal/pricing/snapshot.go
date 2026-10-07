@@ -44,6 +44,8 @@ type Snapshot struct {
 	credentialIndexes  map[string]string
 	credentialSubjects map[string]string
 	credentialDefaults map[string]float64
+	channels           map[string]ChannelConfig
+	subjectChannels    map[string]string
 }
 
 // CompileSnapshot 规范化并校验完整价格集合，只有整个候选集合安全时才返回快照。

@@ -14,7 +14,8 @@ import (
 // 时间轴和数据共用项目时区，空桶保留为零；完整天用 AddDate 避免 DST 导致日期漂移。
 func newUsageOverviewComparisons(filter dto.UsageQueryFilter, byDay bool) *dto.UsageOverviewComparisonsRecord {
 	result := &dto.UsageOverviewComparisonsRecord{
-		Models: map[string]*dto.UsageComparisonItemRecord{}, APIKeys: map[string]*dto.UsageComparisonItemRecord{},
+		Channels: map[string]*dto.UsageComparisonItemRecord{},
+		Models:   map[string]*dto.UsageComparisonItemRecord{}, APIKeys: map[string]*dto.UsageComparisonItemRecord{},
 		AuthFiles: map[string]*dto.UsageComparisonItemRecord{}, AIProviders: map[string]*dto.UsageComparisonItemRecord{},
 		Buckets: usageOverviewComparisonBuckets(filter, byDay), Granularity: "hourly",
 	}
@@ -52,7 +53,11 @@ func applyUsageEventToComparisonOnly(comparisons *dto.UsageOverviewComparisonsRe
 	row := dto.UsageComparisonItemRecord{Requests: 1, Failures: failed, InputTokens: event.InputTokens, OutputTokens: event.OutputTokens, CacheReadTokens: event.CacheReadTokens, CacheCreationTokens: event.CacheCreationTokens, ReasoningTokens: event.ReasoningTokens, TotalTokens: event.TotalTokens, CostUSD: result.Cost.TotalCostUSD, CostAvailable: result.Available}
 	row.Bucket, _ = usageOverviewBucket(event.Timestamp, comparisons.Granularity == "daily")
 	applyUsageOverviewComparison(comparisons, event.Model, event.APIGroupKey, row)
-	if resolver.HasCredentialDefaults() {
+	if resolver.HasPricingOverrides() || resolver.HasChannels() {
+		comparisons.PricingSnapshotID = resolver.SnapshotID()
+	}
+	applyPricingChannelComparison(comparisons, resolver, UsageEventCostSubject(event), row)
+	if resolver.HasPricingOverrides() {
 		applyPricingExactIdentityComparison(comparisons, identityLookup, usagePricingIdentity{event.AuthType, event.AuthIndex}, row)
 		return
 	}
@@ -122,14 +127,14 @@ func calculateUsageOverviewComparisonProjectionCost(costResolver pricing.Resolve
 // 比较查询复用范围规划，边界事件由调用方读取一次并补入比较结果。
 func loadAndApplyUsageOverviewStats(overview *dto.UsageOverviewRecord, db *gorm.DB, filter dto.UsageQueryFilter, start, end time.Time, grain string, bucketByDay bool, resolver pricing.Resolver) error {
 	evidenceGrain := grain
-	if filter.ComparisonOnly && !resolver.HasCredentialDefaults() {
+	if filter.ComparisonOnly && !resolver.HasPricingOverrides() && !resolver.HasChannels() {
 		evidenceGrain = "range"
 	}
 	evidence, err := loadUsagePricingEvidence(db, filter, start, end, evidenceGrain, resolver)
 	if err != nil {
 		return err
 	}
-	if filter.ComparisonOnly && resolver.HasCredentialDefaults() {
+	if filter.ComparisonOnly && (resolver.HasPricingOverrides() || resolver.HasChannels()) {
 		return loadAndApplyPricedUsageComparisons(overview, db, filter, start, end, grain, bucketByDay, resolver, evidence)
 	}
 	if filter.ComparisonOnly {
@@ -179,7 +184,7 @@ func loadAndApplyPricedUsageComparisons(overview *dto.UsageOverviewRecord, db *g
 	if grain == "daily" {
 		model = &entities.UsageOverviewDailyStat{}
 	}
-	rows, err := loadUsageOverviewStatProjection(db.Model(model), filter, start, end, grain, resolver.ActiveFields())
+	rows, err := loadUsageOverviewStatProjection(db.Model(model), filter, start, end, grain, resolver.AttributionFields())
 	if err != nil {
 		return err
 	}
@@ -202,7 +207,9 @@ func loadAndApplyPricedUsageComparisons(overview *dto.UsageOverviewRecord, db *g
 		subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, 0, 0, 0, 0)
 		key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}
 		retained := evidence[key]
-		if result.Scope == "credential_default" && retained.Selected && retained.covers(row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens}) {
+		covered := retained.covers(row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens})
+		applyPricingRollupChannelComparison(overview.Comparisons, resolver, retained, covered, comparison, row.BucketStart, bucketByDay)
+		if result.Scope != "" && retained.Selected && covered {
 			for exact, typed := range retained.Typed {
 				typed.Bucket, _ = usageOverviewBucket(row.BucketStart, bucketByDay)
 				applyPricingExactIdentityComparison(overview.Comparisons, lookup, exact, typed)

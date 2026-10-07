@@ -26,13 +26,15 @@ type usageOverviewComparisonItem struct {
 }
 
 type usageOverviewComparisons struct {
-	Buckets     []string                      `json:"buckets"`
-	Granularity string                        `json:"granularity"`
-	Timezone    string                        `json:"timezone"`
-	Models      []usageOverviewComparisonItem `json:"models"`
-	APIKeys     []usageOverviewComparisonItem `json:"api_keys,omitempty"`
-	AuthFiles   []usageOverviewComparisonItem `json:"auth_files,omitempty"`
-	AIProviders []usageOverviewComparisonItem `json:"ai_providers,omitempty"`
+	PricingSnapshotID string                        `json:"pricing_snapshot_id,omitempty"`
+	Channels          []usageOverviewComparisonItem `json:"channels,omitempty"`
+	Buckets           []string                      `json:"buckets"`
+	Granularity       string                        `json:"granularity"`
+	Timezone          string                        `json:"timezone"`
+	Models            []usageOverviewComparisonItem `json:"models"`
+	APIKeys           []usageOverviewComparisonItem `json:"api_keys,omitempty"`
+	AuthFiles         []usageOverviewComparisonItem `json:"auth_files,omitempty"`
+	AIProviders       []usageOverviewComparisonItem `json:"ai_providers,omitempty"`
 }
 
 func buildUsageOverviewComparisons(overview *servicedto.UsageOverviewSnapshot, infos map[string]analysisAPIKeyInfo) *usageOverviewComparisons {
@@ -40,6 +42,8 @@ func buildUsageOverviewComparisons(overview *servicedto.UsageOverviewSnapshot, i
 	if overview == nil || overview.Comparisons == nil {
 		return result
 	}
+	result.Channels = mapUsageOverviewComparison(overview.Comparisons.Channels, nil, false, overview.Comparisons.Buckets)
+	result.PricingSnapshotID = overview.Comparisons.PricingSnapshotID
 	result.Buckets = overview.Comparisons.Buckets
 	result.Granularity = overview.Comparisons.Granularity
 	result.Models = mapUsageOverviewComparison(overview.Comparisons.Models, nil, false, result.Buckets)

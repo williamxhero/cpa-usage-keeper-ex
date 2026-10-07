@@ -122,7 +122,7 @@ func SumUsageWindowStatsByAuthIndex(ctx context.Context, db *gorm.DB, authIndex 
 }
 
 func loadConsistentUsageWindowTokenStats(db *gorm.DB, authIndex string, start time.Time, end *time.Time, resolver pricing.Resolver) ([]usageWindowTokenStats, error) {
-	if !resolver.HasCredentialDefaults() {
+	if !resolver.HasPricingOverrides() {
 		return loadUsageWindowTokenStats(db, authIndex, start, end, resolver)
 	}
 	var result []usageWindowTokenStats
@@ -246,7 +246,7 @@ func sumLongUsageWindowTokenStats(db *gorm.DB, authIndex string, start time.Time
 }
 
 func sumRawUsageWindowTokenStats(db *gorm.DB, authIndex string, start time.Time, end *time.Time, resolver pricing.Resolver) ([]usageWindowTokenStats, error) {
-	if resolver.HasCredentialDefaults() {
+	if resolver.HasPricingOverrides() {
 		return loadPricedRawUsageWindowRows(db, authIndex, start, end, resolver)
 	}
 	dimensions := UsagePricingDimensionColumns(resolver.ActiveFields())
@@ -286,7 +286,7 @@ func sumRawUsageWindowTokenStats(db *gorm.DB, authIndex string, start time.Time,
 }
 
 func sumHourlyUsageWindowTokenStats(db *gorm.DB, authIndex string, start time.Time, end time.Time, resolver pricing.Resolver) ([]usageWindowTokenStats, error) {
-	if resolver.HasCredentialDefaults() {
+	if resolver.HasPricingOverrides() {
 		return loadPricedHourlyUsageWindowRows(db, authIndex, start, end, resolver)
 	}
 	dimensions := UsagePricingDimensionColumns(resolver.ActiveFields())
@@ -404,7 +404,7 @@ func usageWindowGroupedStatsFromTokenStats(rows []usageWindowTokenStats, costRes
 
 func addUsageWindowTokenStats(stats UsageWindowStats, row usageWindowTokenStats, costResolver pricing.Resolver) UsageWindowStats {
 	stats.Tokens += row.TotalTokens
-	if costResolver.HasCredentialDefaults() {
+	if costResolver.HasPricingOverrides() {
 		stats.PricingSnapshotID = costResolver.SnapshotID()
 	}
 	result := costResolver.CalculateLegacy(newUsagePricingCostSubject(
@@ -490,7 +490,7 @@ func loadPricedRawUsageWindowRows(db *gorm.DB, authIndex string, start time.Time
 			return nil, err
 		}
 		subject := UsageEventCostSubject(event)
-		if !resolver.UsesCredentialDefault(subject) {
+		if !resolver.UsesPricingOverride(subject) {
 			mergeUsageWindowTokenStats(merged, []usageWindowTokenStats{usageWindowRow(projectLegacyUsageWindowSubject(subject, resolver), event.TotalTokens)})
 			continue
 		}
@@ -520,7 +520,7 @@ func loadPricedHourlyUsageWindowRows(db *gorm.DB, authIndex string, start, end t
 	for _, row := range rows {
 		subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens)
 		key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, "hourly"), Dimensions: subject.Dimensions}
-		if !resolver.MayUseCredentialDefault(subject) && !evidence[key].Selected {
+		if !resolver.MayUsePricingOverride(subject) && !evidence[key].Selected {
 			mergeUsageWindowTokenStats(merged, []usageWindowTokenStats{usageWindowRow(projectLegacyUsageWindowSubject(subject, resolver), row.TotalTokens)})
 			continue
 		}

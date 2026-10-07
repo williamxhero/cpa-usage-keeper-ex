@@ -138,12 +138,14 @@ type UsageComparisonItemRecord struct {
 
 // UsageOverviewComparisonsRecord 在压缩汇总行与边界事件遍历中按维度累计。
 type UsageOverviewComparisonsRecord struct {
-	Buckets     []string
-	Granularity string
-	Models      map[string]*UsageComparisonItemRecord
-	APIKeys     map[string]*UsageComparisonItemRecord
-	AuthFiles   map[string]*UsageComparisonItemRecord
-	AIProviders map[string]*UsageComparisonItemRecord
+	PricingSnapshotID string
+	Channels          map[string]*UsageComparisonItemRecord
+	Buckets           []string
+	Granularity       string
+	Models            map[string]*UsageComparisonItemRecord
+	APIKeys           map[string]*UsageComparisonItemRecord
+	AuthFiles         map[string]*UsageComparisonItemRecord
+	AIProviders       map[string]*UsageComparisonItemRecord
 }
 
 // RealtimeWindowSummaryRecord 是选定可见短窗的非重叠总量，排除平滑预热段。

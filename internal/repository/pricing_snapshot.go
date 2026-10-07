@@ -60,7 +60,11 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 	for _, value := range defaults {
 		credentialConfigs = append(credentialConfigs, pricing.CredentialConfig{SubjectID: value.SubjectID, Multiplier: value.Multiplier})
 	}
-	snapshot, err := pricing.CompileSnapshotWithCredentials(configs, compileCredentialBindings(identities, subjects), credentialConfigs)
+	channels, err := LoadPricingChannels(query)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := pricing.CompileSnapshotWithCredentials(configs, compileCredentialBindings(identities, subjects), credentialConfigs, pricing.OverrideConfig{Channels: channels})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
 	}
