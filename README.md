@@ -176,7 +176,7 @@ npm --prefix ./web ci
 npm --prefix ./web run dev -- --host 127.0.0.1
 ```
 
-Open `http://127.0.0.1:5173`. The frontend proxies `/api` to `http://127.0.0.1:8080`; override it with `VITE_API_PROXY_TARGET` when the backend uses another port.
+Open `http://127.0.0.1:5173`. The frontend proxies `/api` to `http://127.0.0.1:8318`; override it with `VITE_API_PROXY_TARGET` when the backend uses another port.
 
 ### Tests
 
@@ -200,7 +200,7 @@ npm --prefix ./web run build
 
 ## Deployment
 
-After startup, open `http://your-server-address:8080` (`http://127.0.0.1:8080` for a local deployment) and sign in with your Keeper login password. Adjust the URL if you configure a different port, HTTPS, or a base path.
+After startup, open `http://your-server-address:8318` (`http://127.0.0.1:8318` for a local deployment) and sign in with your Keeper login password. Adjust the URL if you configure a different port, HTTPS, or a base path.
 
 ### Docker Compose (Recommended)
 
@@ -253,7 +253,7 @@ Alternatively, put the settings in `./keeper/.env`; the template loads it throug
 docker compose up -d
 ```
 
-Open `http://your-server-address:8080` and sign in with your Keeper password. Run `docker compose down` to stop the stack.
+Open `http://your-server-address:8318` and sign in with your Keeper password. Run `docker compose down` to stop the stack.
 
 For a new deployment, add model credentials in CPA and make a model request to generate usage records.
 
@@ -297,7 +297,7 @@ For other network layouts, set `CPA_BASE_URL` to a CPA address reachable from th
 docker compose up -d
 ```
 
-Open `http://your-server-address:8080` and sign in with your Keeper password. Run `docker compose down` to stop the stack.
+Open `http://your-server-address:8318` and sign in with your Keeper password. Run `docker compose down` to stop the stack.
 
 Keeper data is stored under `./data` by the provided template.
 
@@ -330,7 +330,7 @@ Use the same `.env` values as the Keeper-only Compose setup when you prefer `doc
 docker run -d \
   --name cpa-usage-keeper \
   --add-host=host.docker.internal:host-gateway \
-  -p 8080:8080 \
+  -p 8318:8318 \
   -v "$(pwd)/keeper:/data" \
   --env-file .env \
   ghcr.io/willxup/cpa-usage-keeper:latest
@@ -437,13 +437,13 @@ For a first deployment, set the CPA address, CPA management key, and Keeper logi
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `APP_HOST` | No | all interfaces | Keeper HTTP listen host; native deployments can set `127.0.0.1` for local-only access |
-| `APP_PORT` | No | `8080` | Keeper HTTP listen port |
+| `APP_PORT` | No | `8318` | Keeper HTTP listen port |
 | `APP_BASE_PATH` | No | root path | Keeper subpath prefix, such as `/keeper`; empty means `/` |
 | `CPA_PUBLIC_URL` | No | current browser origin root | Public CPA URL for the "Back to CPA" link and CPAMC frame trust |
 | `TRUSTED_PROXY_CIDRS` | No | local loopback only | Additional reverse-proxy CIDRs allowed to provide `X-Forwarded-For`, separated by commas |
 
 - The `--host` startup flag overrides `APP_HOST`. When neither is set, Keeper preserves its existing behavior and listens on all available network interfaces.
-- For Docker/Compose, keep `APP_HOST` empty. To restrict access to the Docker host, publish the port as `127.0.0.1:8080:8080`.
+- For Docker/Compose, keep `APP_HOST` empty. To restrict access to the Docker host, publish the port as `127.0.0.1:8318:8318`.
 - `APP_BASE_PATH` must be empty or start with `/`; `/cpa/` is normalized to `/cpa`.
 - `CPA_BASE_URL` is the server-side CPA address and may use a private host or Docker service name.
 - `CPA_PUBLIC_URL` controls browser navigation and cross-origin CPAMC frame trust. Leave it empty for same-origin `/management.html`, or set an explicit public CPA URL when domains, ports, or paths differ.
@@ -529,7 +529,7 @@ When serving under `/cpa`, set `APP_BASE_PATH=/cpa` and keep the prefix in your 
 
 ```nginx
 location /cpa/ {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://127.0.0.1:8318;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -58,8 +58,8 @@ func TestLoadFromEnvAppliesDefaults(t *testing.T) {
 		t.Fatalf("LoadFromEnv returned error: %v", err)
 	}
 
-	if cfg.AppPort != "8080" {
-		t.Fatalf("expected default app port 8080, got %s", cfg.AppPort)
+	if cfg.AppPort != "8318" {
+		t.Fatalf("expected default app port 8318, got %s", cfg.AppPort)
 	}
 	if cfg.AppBasePath != "" {
 		t.Fatalf("expected default app base path to be empty, got %q", cfg.AppBasePath)
