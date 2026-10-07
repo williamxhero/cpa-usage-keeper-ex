@@ -955,6 +955,7 @@ export interface PricingCredential {
   subject_id?: string
   name: string
   alias?: string
+  key_hint?: string
   provider_type: string
   auth_type: string
   endpoint?: string

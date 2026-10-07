@@ -7,6 +7,7 @@ type PricingCredential struct {
 	SubjectID     string `json:"subject_id,omitempty"`
 	Name          string `json:"name"`
 	Alias         string `json:"alias,omitempty"`
+	KeyHint       string `json:"key_hint,omitempty"`
 	ProviderType  string `json:"provider_type"`
 	AuthType      string `json:"auth_type"`
 	Endpoint      string `json:"endpoint,omitempty"`

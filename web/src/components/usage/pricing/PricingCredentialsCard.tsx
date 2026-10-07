@@ -94,8 +94,14 @@ export function PricingCredentialsCard({ canManage = true, onChanged }: { canMan
       if (!controller.signal.aborted) handleError(cause, 'pricing_credentials.save_failed');
     } finally { if (!controller.signal.aborted) setBusy(false); }
   };
-  const bindingLabel = (item: PricingCredential) => t(`pricing_credentials.binding.${item.binding_status}`);
-  const label = (item: PricingCredential) => [item.alias, item.name, item.provider_type, item.auth_type, item.endpoint, t(`pricing_credentials.status.${item.status}`), bindingLabel(item), `${t('pricing_credentials.reference')} ${item.directory_id}`].filter(Boolean).join(' · ');
+  const label = (item: PricingCredential) => [
+    item.auth_type === 'apikey' ? item.alias || item.key_hint : item.name,
+    item.provider_type,
+    item.auth_type === 'oauth' ? 'Oauth' : item.auth_type,
+    item.auth_type === 'apikey' ? item.endpoint : undefined,
+    t(`pricing_credentials.status.${item.status}`),
+    t(`pricing_credentials.binding.${item.binding_status}`),
+  ].filter(Boolean).join(' · ');
 
   if (!canManage) return null;
   return (
@@ -121,9 +127,7 @@ export function PricingCredentialsCard({ canManage = true, onChanged }: { canMan
           <h3 className={styles.heading}>{t('pricing_credentials.subjects')}</h3>
           {subjects.length === 0 ? <p className={styles.hint}>{t('pricing_credentials.no_subjects')}</p> :
             <ul className={styles.subjects}>{subjects.map(item => <li key={item.subject_id}>
-              <span>{[item.alias, item.name, item.provider_type, item.auth_type].filter(Boolean).join(' · ')}</span>
-              <span>{item.endpoint} · {t(`pricing_credentials.status.${item.status}`)} · {bindingLabel(item)}</span>
-              {item.directory_id > 0 && <span>{t('pricing_credentials.reference')} {item.directory_id}</span>}
+              <span>{label(item)}</span>
               <code>{item.subject_id}</code>
             </li>)}</ul>}
         </>}
