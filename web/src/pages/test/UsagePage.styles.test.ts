@@ -37,6 +37,19 @@ const relativeLuminance = (hex: string) => {
 }
 
 describe('UsagePage responsive layout and accessibility', () => {
+  it('mounts separate identity migration/correction with safe wrapping and mobile actions', () => {
+    const card = readSource(new URL('../../components/usage/pricing/PricingIdentityMigrationCard.tsx', import.meta.url))
+    const styles = readSource(new URL('../../components/usage/pricing/PricingIdentityMigrationCard.module.scss', import.meta.url))
+    expect(readSource(new URL('../UsagePage.tsx', import.meta.url))).toContain('<PricingIdentityMigrationCard />')
+    expect(card).toContain('pricing_identity_migration.migrate_title')
+    expect(card).toContain('pricing_identity_migration.correction_title')
+    expect(styles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(styles).toMatch(/\.selector\s*\{[^}]*width:\s*100%;/)
+    expect(styles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(styles).toContain('@media (max-width: 600px)')
+    expect(styles).toContain('.actions :global(.btn) { flex: 1 1 auto; }')
+  })
+
   it('mounts model exceptions as a distinct card reusing narrow-screen wrapping styles', () => {
     const card = readSource(new URL('../../components/usage/pricing/PricingCredentialModelsCard.tsx', import.meta.url))
     const page = readSource(new URL('../UsagePage.tsx', import.meta.url))

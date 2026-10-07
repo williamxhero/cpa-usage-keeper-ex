@@ -20,6 +20,17 @@ const getInitialLanguage = (): SupportedLanguage => {
 const resources = {
   en: {
     translation: {
+      pricing_identity_migration: {
+        title: 'Identity migration and correction', scope_help: 'Associate exact observed upstream identities with saved Keeper subjects. Names, endpoints, provider types and directory positions never merge accounts automatically.',
+        refresh: 'Refresh associations', subject: 'Select the saved subject to preserve', directory: 'Select the new current identity', target: 'Select the correction target subject', binding: 'Select a saved identity association', owner: 'Saved owner', receipt: 'Committed association',
+        no_subjects: 'No saved subjects. Register a subject first.', no_directory: 'No selectable current identities', no_bindings: 'No saved identity associations',
+        migrate_title: 'Migrate a rotated identity', migrate_help: 'Choose the historical subject and a new unbound identity explicitly. Old and new exact associations share the same subject, prices and channel membership.', migrate: 'Review migration', migrate_confirm: 'Confirm identity migration',
+        correction_title: 'Correct an association', correction_help: 'Separate from migration: unbind one mistaken association or rebind it to an explicitly selected saved subject. Disabled associations require correction, never ordinary registration.', unbind: 'Review unbind', rebind: 'Review rebind', correction_confirm: 'Confirm historical ownership correction', confirm: 'Confirm this exact association change',
+        migrate_warning: 'Existing historical associations are preserved. All old and new requests use the same saved subject prices and channel. Estimates are recalculated with current configuration, not frozen invoices.',
+        correction_warning: 'This changes ownership and recalculates historical fees and channel attribution for the selected exact association. Raw history, subject IDs, prices and memberships are retained. Missing historical evidence stays incomplete.',
+        migrate_detail: 'Add the selected current identity to the same saved subject; do not replace its old association.', unbind_detail: 'Disable only this association. Its requests will no longer select this subject’s prices or channel.', rebind_detail: 'Assign only this association to the selected target subject, using that subject’s existing prices and channel.',
+        saved: 'Association change committed. Current configuration recalculates historical estimates.', permission_denied: 'Administrator access is required.', conflict: 'Selection or ownership changed, or the identity is occupied, shared or ambiguous. Nothing was saved. Refresh, select again and explicitly confirm.', load_failed: 'Unable to read associations. Refresh before selecting.', save_failed: 'Unable to change this association. Refresh and confirm again.', readback_failed: 'The change was committed, but its refreshed state could not be read. The committed receipt is shown; refresh before another change.'
+      },
       pricing_channels: {
         title: 'Named pricing channels', scope_help: 'Create a Keeper channel and explicitly select registered upstream credential subjects. Provider types, names and endpoints are labels, not channel identities.',
         history_warning: 'Saving prices or members, clearing and deleting recalculates historical costs and attribution using current configuration. Estimates are not a frozen bill.',
@@ -1015,6 +1026,17 @@ const resources = {
   },
   zh: {
     translation: {
+      pricing_identity_migration: {
+        title: '身份迁移与纠错', scope_help: '将精确的上游观测身份关联至已保存的 Keeper 主体。名称、端点、provider 类型和目录位置都不会自动合并账号。',
+        refresh: '刷新关联', subject: '选择要保留的已保存主体', directory: '选择新的当前身份', target: '选择纠错目标主体', binding: '选择已保存的身份关联', owner: '已保存归属', receipt: '已提交的关联',
+        no_subjects: '尚无已保存主体，请先登记主体。', no_directory: '没有可选的当前身份', no_bindings: '尚无已保存的身份关联',
+        migrate_title: '迁移轮换身份', migrate_help: '明确选择历史主体和新的未绑定身份。新旧精确关联共用同一主体、价格与渠道成员关系。', migrate: '核对迁移', migrate_confirm: '确认身份迁移',
+        correction_title: '纠正关联', correction_help: '与迁移分开操作：解绑一个错误关联，或将其重新绑定至明确选择的已保存主体。停用关联必须通过纠错恢复，不能普通登记。', unbind: '核对解绑', rebind: '核对重新绑定', correction_confirm: '确认历史归属纠错', confirm: '确认此次精确关联变更',
+        migrate_warning: '保留已有历史关联。新旧请求使用同一主体已保存的价格与渠道。估算费用按当前配置回算，并非冻结账单。',
+        correction_warning: '此操作变更归属，并回算所选精确关联的历史费用与渠道归属。保留原始历史、主体 ID、价格和成员关系。缺失历史证据仍标记为不完整。',
+        migrate_detail: '把所选当前身份添加到同一已保存主体，不替换旧关联。', unbind_detail: '仅停用此关联，其请求将不再选用该主体的价格或渠道。', rebind_detail: '仅将此关联改为所选目标主体，使用目标已有的价格与渠道。',
+        saved: '关联变更已提交，历史估算按当前配置回算。', permission_denied: '需要管理员权限。', conflict: '选择或归属已变更，或身份被占用、共享或有歧义。此次未保存，请刷新、重新选择并明确确认。', load_failed: '无法读取关联，请刷新后选择。', save_failed: '无法变更此关联，请刷新并重新确认。', readback_failed: '变更已提交，但无法读取刷新后的状态。显示已提交回执，请刷新后再操作。'
+      },
       pricing_channels: {
         title: '具体命名定价渠道', scope_help: '创建 Keeper 渠道并明确选择已登记的上游凭证主体。provider 类型、名称和端点只是识别信息，不是渠道身份。',
         history_warning: '保存价格或成员、清除与删除操作会按当前配置回算历史费用和归属。估算值不是冻结账单。',
@@ -2010,6 +2032,17 @@ const resources = {
   },
   'zh-TW': {
     translation: {
+      pricing_identity_migration: {
+        title: '身分遷移與更正', scope_help: '將精確的上游觀測身分關聯至已儲存的 Keeper 主體。名稱、端點、provider 類型和目錄位置都不會自動合併帳號。',
+        refresh: '重新整理關聯', subject: '選擇要保留的已儲存主體', directory: '選擇新的目前身分', target: '選擇更正目標主體', binding: '選擇已儲存的身分關聯', owner: '已儲存歸屬', receipt: '已提交的關聯',
+        no_subjects: '尚無已儲存主體，請先登記主體。', no_directory: '沒有可選的目前身分', no_bindings: '尚無已儲存的身分關聯',
+        migrate_title: '遷移輪換身分', migrate_help: '明確選擇歷史主體和新的未綁定身分。新舊精確關聯共用同一主體、價格與渠道成員關係。', migrate: '核對遷移', migrate_confirm: '確認身分遷移',
+        correction_title: '更正關聯', correction_help: '與遷移分開操作：解除一個錯誤關聯，或將其重新綁定至明確選擇的已儲存主體。停用關聯必須透過更正恢復，不能普通登記。', unbind: '核對解除綁定', rebind: '核對重新綁定', correction_confirm: '確認歷史歸屬更正', confirm: '確認此次精確關聯變更',
+        migrate_warning: '保留已有歷史關聯。新舊請求使用同一主體已儲存的價格與渠道。估算費用按目前設定回算，並非凍結帳單。',
+        correction_warning: '此操作變更歸屬，並回算所選精確關聯的歷史費用與渠道歸屬。保留原始歷史、主體 ID、價格和成員關係。缺失歷史證據仍標記為不完整。',
+        migrate_detail: '把所選目前身分新增至同一已儲存主體，不取代舊關聯。', unbind_detail: '僅停用此關聯，其請求將不再選用該主體的價格或渠道。', rebind_detail: '僅將此關聯改為所選目標主體，使用目標已有的價格與渠道。',
+        saved: '關聯變更已提交，歷史估算按目前設定回算。', permission_denied: '需要管理員權限。', conflict: '選擇或歸屬已變更，或身分被佔用、共用或有歧義。此次未儲存，請重新整理、重新選擇並明確確認。', load_failed: '無法讀取關聯，請重新整理後選擇。', save_failed: '無法變更此關聯，請重新整理並重新確認。', readback_failed: '變更已提交，但無法讀取重新整理後的狀態。顯示已提交回執，請重新整理後再操作。'
+      },
       pricing_channels: {
         title: '具體命名定價渠道', scope_help: '建立 Keeper 渠道並明確選擇已登記的上游憑證主體。provider 類型、名稱和端點只是識別資訊，不是渠道身分。',
         history_warning: '儲存價格或成員、清除與刪除操作會按目前設定回算歷史費用和歸屬。估算值不是凍結帳單。',
