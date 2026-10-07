@@ -28,6 +28,8 @@ type Fetcher interface {
 
 // Credential 是 provider endpoint 归一化后的纯 metadata，不依赖数据库实体。
 type Credential struct {
+	// Ambiguous records repeated claims before the legacy first-item fold.
+	Ambiguous bool
 	// LookupKey 只接收 CPA api-key，供 Keeper 内部 usage lookup 使用。
 	LookupKey string
 	// Prefix 只接收 CPA 独立 prefix 字段。

@@ -49,6 +49,14 @@ func persistProviderMetadata(ctx context.Context, db *gorm.DB, snapshot provider
 			// Note 原样保留 CPA nullable 语义。
 			Note: credential.Note,
 		}
+		identity.BindingIdentityStatus = "unique"
+		if fetchErr != nil {
+			// A failed source may contain another claim; partial success cannot prove uniqueness.
+			identity.BindingIdentityStatus = "unknown"
+		}
+		if credential.Ambiguous {
+			identity.BindingIdentityStatus = "ambiguous"
+		}
 		// 按稳定 snapshot 顺序加入本轮单事务输入。
 		identities = append(identities, identity)
 	}

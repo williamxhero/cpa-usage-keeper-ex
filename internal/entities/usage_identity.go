@@ -18,19 +18,22 @@ type UsageIdentity struct {
 	AuthType     UsageIdentityAuthType `gorm:"uniqueIndex:uniq_usage_identities_type_identity;index:idx_usage_identities_auth_type_name_id,priority:1;index:idx_usage_identities_auth_type_type,priority:1"`
 	AuthTypeName string
 	Identity     string `gorm:"uniqueIndex:uniq_usage_identities_type_identity"`
-	Type         string `gorm:"column:type;index:idx_usage_identities_auth_type_type,priority:2"`
-	Provider     string
-	LookupKey    string
-	Prefix       string
-	BaseURL      string
-	FileName     *string
-	FilePath     *string
-	Priority     *int
-	Disabled     *bool
-	Note         *string
-	AccountID    *string
-	ProjectID    *string
-	XAIUserID    *string
+	// BindingIdentityStatus retains evidence before legacy first-item deduplication.
+	// Existing directories remain unknown until a successful metadata refresh.
+	BindingIdentityStatus string `gorm:"not null;default:unknown"`
+	Type                  string `gorm:"column:type;index:idx_usage_identities_auth_type_type,priority:2"`
+	Provider              string
+	LookupKey             string
+	Prefix                string
+	BaseURL               string
+	FileName              *string
+	FilePath              *string
+	Priority              *int
+	Disabled              *bool
+	Note                  *string
+	AccountID             *string
+	ProjectID             *string
+	XAIUserID             *string
 
 	ActiveStart *time.Time `gorm:"serializer:storageTime"`
 	ActiveUntil *time.Time `gorm:"serializer:storageTime"`

@@ -20,6 +20,18 @@ const getInitialLanguage = (): SupportedLanguage => {
 const resources = {
   en: {
     translation: {
+      pricing_credentials: {
+        title: 'Credential pricing subjects',
+        no_pricing_change: 'Register an upstream credential identity. This does not change prices or existing costs.',
+        identity_help: 'Select an observed identity explicitly. Directory references identify current rows, not permanent upstream credentials. Keeper subject IDs persist; rotated identities are not migrated automatically.',
+        select: 'Select an upstream credential', search: 'Search safe credential metadata', empty: 'No credentials available',
+        register: 'Register subject', refresh: 'Refresh', reference: 'Directory reference', subjects: 'Saved subjects', no_subjects: 'No subjects registered',
+        saved: 'Credential subject registered', load_failed: 'Unable to load credential subjects. Refresh to retry.',
+        save_failed: 'Unable to register this credential. Refresh before retrying.', permission_denied: 'Administrator access is required.',
+        conflict: 'This identity is already registered or cannot be uniquely selected. Refresh the directory.',
+        status: { active: 'Active', disabled: 'Disabled', stale: 'Historical identity', unknown: 'Unknown status' },
+        binding: { unbound: 'Unbound', bound: 'Bound', stale: 'Stale binding', unknown: 'Identity not verified', ambiguous: 'Attribution conflict / indistinguishable' }
+      },
       common: {
         loading: 'Loading...',
         save: 'Save',
@@ -954,6 +966,18 @@ const resources = {
   },
   zh: {
     translation: {
+      pricing_credentials: {
+        title: '凭证定价主体',
+        no_pricing_change: '登记上游凭证身份，不改变价格或既有费用。',
+        identity_help: '请明确选择已观测身份。目录引用仅标识当前行，并非永久上游凭证。Keeper 主体 ID 持久保存；身份轮换不会自动迁移绑定。',
+        select: '选择上游凭证', search: '搜索安全凭证信息', empty: '没有可用凭证',
+        register: '登记主体', refresh: '刷新', reference: '目录引用', subjects: '已保存主体', no_subjects: '尚未登记主体',
+        saved: '凭证主体已登记', load_failed: '无法加载凭证主体，请刷新重试。',
+        save_failed: '无法登记此凭证，请刷新后重试。', permission_denied: '需要管理员权限。',
+        conflict: '此身份已登记或无法唯一选择，请刷新目录。',
+        status: { active: '有效', disabled: '已禁用', stale: '历史身份', unknown: '状态未知' },
+        binding: { unbound: '未绑定', bound: '已绑定', stale: '绑定失效', unknown: '身份未确认', ambiguous: '归属冲突／无法区分' }
+      },
       common: {
         loading: '加载中...',
         save: '保存',
@@ -1888,6 +1912,18 @@ const resources = {
   },
   'zh-TW': {
     translation: {
+      pricing_credentials: {
+        title: '憑證定價主體',
+        no_pricing_change: '登記上游憑證身分，不改變價格或既有費用。',
+        identity_help: '請明確選擇已觀測身分。目錄參照僅識別目前資料列，並非永久上游憑證。Keeper 主體 ID 持久儲存；身分輪替不會自動遷移綁定。',
+        select: '選擇上游憑證', search: '搜尋安全憑證資訊', empty: '沒有可用憑證',
+        register: '登記主體', refresh: '重新整理', reference: '目錄參照', subjects: '已儲存主體', no_subjects: '尚未登記主體',
+        saved: '憑證主體已登記', load_failed: '無法載入憑證主體，請重新整理後重試。',
+        save_failed: '無法登記此憑證，請重新整理後重試。', permission_denied: '需要管理員權限。',
+        conflict: '此身分已登記或無法唯一選擇，請重新整理目錄。',
+        status: { active: '有效', disabled: '已停用', stale: '歷史身分', unknown: '狀態未知' },
+        binding: { unbound: '未綁定', bound: '已綁定', stale: '綁定失效', unknown: '身分未確認', ambiguous: '歸屬衝突／無法區分' }
+      },
       common: {
         loading: '載入中...',
         save: '儲存',

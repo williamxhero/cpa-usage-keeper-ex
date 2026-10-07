@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import i18n, { SUPPORTED_LANGUAGES } from '../index'
 
+describe('pricing credential translations', () => {
+  it('has complete selector, save, error, identity and status copy in every language', () => {
+    const keys = ['title', 'no_pricing_change', 'identity_help', 'select', 'search', 'empty', 'register', 'refresh', 'reference', 'subjects', 'no_subjects', 'saved', 'load_failed', 'save_failed', 'permission_denied', 'conflict', ...['active', 'disabled', 'stale', 'unknown'].map(key => `status.${key}`), ...['unbound', 'bound', 'stale', 'unknown', 'ambiguous'].map(key => `binding.${key}`)]
+    for (const language of SUPPORTED_LANGUAGES) {
+      for (const key of keys) {
+        const path = `pricing_credentials.${key}`
+        expect(i18n.exists(path, { lng: language, fallbackLng: false }), `${language}: ${path}`).toBe(true)
+        expect(i18n.t(path, { lng: language })).not.toBe(path)
+      }
+    }
+  })
+})
+
 describe('pricing rule translations', () => {
   it('keeps the help copy limited to the two approved examples', () => {
     for (const language of SUPPORTED_LANGUAGES) {

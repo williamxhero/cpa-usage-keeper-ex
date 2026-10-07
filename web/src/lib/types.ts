@@ -876,6 +876,23 @@ export interface PricingResponse {
   pricing: PricingEntry[]
 }
 
+// Directory references select an observed row; only subject_id is Keeper-owned and stable.
+export interface PricingCredential {
+  directory_id: number
+  subject_id?: string
+  name: string
+  alias?: string
+  provider_type: string
+  auth_type: string
+  endpoint?: string
+  status: 'active' | 'disabled' | 'stale' | 'unknown'
+  binding_status: 'unbound' | 'bound' | 'stale' | 'unknown' | 'ambiguous'
+}
+
+export interface PricingCredentialsResponse {
+  credentials: PricingCredential[]
+}
+
 export interface PricingRule {
   key: string
   value: string

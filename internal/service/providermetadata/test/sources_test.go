@@ -105,7 +105,8 @@ func TestFetchNormalizesEightSourcesInRegistryOrder(t *testing.T) {
 		t.Fatalf("FetchedProviderTypes = %#v, want %#v", snapshot.FetchedProviderTypes, wantTypes)
 	}
 	wantCredentials := []providermetadata.Credential{
-		{LookupKey: "codex-key", Prefix: "codex-prefix", ProviderType: "codex", DisplayName: "Codex Team", AuthIndex: "codex-auth", BaseURL: "https://codex.example/v1", Priority: &priority, Disabled: &disabled, Note: &note},
+		// Duplicate claims retain the original display row but cannot prove attribution.
+		{Ambiguous: true, LookupKey: "codex-key", Prefix: "codex-prefix", ProviderType: "codex", DisplayName: "Codex Team", AuthIndex: "codex-auth", BaseURL: "https://codex.example/v1", Priority: &priority, Disabled: &disabled, Note: &note},
 		{LookupKey: "xai-key", Prefix: "xai-prefix", ProviderType: "xai", DisplayName: "xAI", AuthIndex: "xai-auth", BaseURL: "https://api.x.ai/v1"},
 		{LookupKey: "gemini-key", Prefix: "gemini-prefix", ProviderType: "gemini", DisplayName: "gemini", AuthIndex: "gemini-auth", BaseURL: "https://gemini.example/v1"},
 		{LookupKey: "interactions-key", Prefix: "interactions-prefix", ProviderType: "gemini-interactions", DisplayName: "Gemini Interactions", AuthIndex: "interactions-auth", BaseURL: "https://interactions.example/v1"},

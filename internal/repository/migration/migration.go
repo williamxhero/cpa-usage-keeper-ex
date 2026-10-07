@@ -252,6 +252,7 @@ func orderedMigrations() []databaseMigration {
 		{version: migrationAddUsageEventStreamStatusCode, run: addUsageEventStreamStatusCodeMigration},
 		{version: migrationNormalizeUsageEventParentSessionNull, run: normalizeUsageEventParentSessionNullMigration},
 		{version: migrationLimitLatencySamplePoints, run: limitLatencySamplePointsMigration, destructive: true},
+		{version: "20261007_credential_pricing_subjects", run: credentialPricingSubjectsMigration},
 	}
 }
 
