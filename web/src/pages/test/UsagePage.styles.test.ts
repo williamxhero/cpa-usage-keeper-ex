@@ -7,6 +7,7 @@ const usagePageStyles = readSource(new URL('../UsagePage.module.scss', import.me
 const keyOverviewPageStyles = readSource(new URL('../../features/key-viewer/KeyViewerShell.module.scss', import.meta.url))
 const priceRulesStyles = readSource(new URL('../../components/usage/pricing/PriceRulesModal.module.scss', import.meta.url))
 const credentialDefaultsStyles = readSource(new URL('../../components/usage/pricing/PricingCredentialDefaultsCard.module.scss', import.meta.url))
+const channelStyles = readSource(new URL('../../components/usage/pricing/PricingChannelsCard.module.scss', import.meta.url))
 const credentialStyles = readSource(new URL('../../components/usage/credentials/CredentialSections.module.scss', import.meta.url))
 const analysisPanelStyles = readSource(new URL('../../components/usage/analysis/AnalysisPanel.module.scss', import.meta.url))
 const timeRangeControlStyles = readSource(new URL('../../components/usage/TimeRangeControl.module.scss', import.meta.url))
@@ -43,6 +44,16 @@ describe('UsagePage responsive layout and accessibility', () => {
     expect(credentialDefaultsStyles).toMatch(/\.options\s*\[role='option'\]\s*\{[^}]*height:\s*auto;/)
     expect(credentialDefaultsStyles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
     expect(credentialDefaultsStyles).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{\s*\.selector\s*\{[^}]*flex-basis:\s*100%;/)
+  })
+
+  it('wraps channel names, member labels, readback, errors and actions on narrow screens', () => {
+    expect(channelStyles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(channelStyles).toMatch(/\.actions\s*\{[^}]*flex-wrap:\s*wrap;/)
+    expect(channelStyles).toMatch(/\.readback\s*\{[^}]*flex-wrap:\s*wrap;/)
+    expect(channelStyles).toMatch(/\.members\s*\{[\s\S]*?li\s*\{[^}]*flex-wrap:\s*wrap;/)
+    expect(channelStyles).toMatch(/\.options\s*\[role='option'\]\s*\{[^}]*height:\s*auto;/)
+    expect(channelStyles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(channelStyles).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{\s*\.selector\s*\{[^}]*flex-basis:\s*100%;/)
   })
 
   it('lets dashboard page frames consume the mode-specific width cap', () => {

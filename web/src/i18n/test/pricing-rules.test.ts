@@ -30,6 +30,24 @@ describe('pricing credential translations', () => {
   })
 })
 
+describe('named pricing channel translations', () => {
+  it('provides all management, priority, history and dependency copy in every language', () => {
+    const keys = ['title', 'scope_help', 'history_warning', 'priority_help', 'select', 'new', 'refresh', 'name', 'members_help', 'member_select', 'no_subjects', 'add_member', 'members', 'remove_member', 'no_members', 'create', 'save_channel', 'delete', 'delete_title', 'delete_help', 'confirm_delete', 'current', 'inherited', 'active', 'canonical', 'multiplier', 'input_help', 'save_default', 'clear', 'saved', 'deleted', 'invalid_name', 'invalid_multiplier', 'load_failed', 'save_failed', 'save_default_failed', 'clear_failed', 'delete_failed', 'permission_denied', 'conflict']
+    for (const language of SUPPORTED_LANGUAGES) {
+      const bundle = i18n.getResourceBundle(language, 'translation').pricing_channels
+      expect(Object.keys(bundle).sort()).toEqual([...keys].sort())
+      for (const key of keys) {
+        const path = `pricing_channels.${key}`
+        expect(i18n.exists(path, { lng: language, fallbackLng: false }), `${language}: ${path}`).toBe(true)
+        expect(i18n.t(path, { lng: language, fallbackLng: false }).trim()).not.toBe('')
+        expect(i18n.t(path, { lng: language, fallbackLng: false })).not.toBe(path)
+      }
+      expect(bundle.delete_help).toContain('{{count}}')
+      expect(bundle.delete_help).toContain('{{multiplier}}')
+    }
+  })
+})
+
 describe('pricing rule translations', () => {
   it('keeps the help copy limited to the two approved examples', () => {
     for (const language of SUPPORTED_LANGUAGES) {
