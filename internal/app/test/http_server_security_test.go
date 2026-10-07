@@ -10,7 +10,7 @@ import (
 )
 
 func TestHTTPServerProtectsConnectionSetupWithoutLimitingAuthenticatedResponses(t *testing.T) {
-	server := keeperapp.NewHTTPServer(config.Config{AppHost: "127.0.0.1", AppPort: "8080"}, http.NotFoundHandler())
+	server := keeperapp.NewHTTPServer(config.Config{AppHost: "127.0.0.1", AppPort: "8318"}, http.NotFoundHandler())
 
 	if server.ReadHeaderTimeout != 5*time.Second {
 		t.Fatalf("expected five second read-header timeout, got %s", server.ReadHeaderTimeout)

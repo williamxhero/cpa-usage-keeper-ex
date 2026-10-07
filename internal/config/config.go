@@ -266,7 +266,7 @@ func Load(options LoadOptions) (*Config, error) {
 
 	cfg := &Config{
 		AppHost:                         strings.TrimSpace(os.Getenv("APP_HOST")),
-		AppPort:                         getString("APP_PORT", "8080"),
+		AppPort:                         getString("APP_PORT", "8318"),
 		AppBasePath:                     appBasePath,
 		CPAPublicURL:                    strings.TrimSpace(os.Getenv("CPA_PUBLIC_URL")),
 		TrustedProxyCIDRs:               trustedProxyCIDRs,

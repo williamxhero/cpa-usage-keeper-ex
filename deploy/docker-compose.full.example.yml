@@ -20,7 +20,7 @@ services:
     depends_on:
       - cli-proxy-api
     ports:
-      - "8080:8080"
+      - "8318:8318"
     env_file:
       - path: ./keeper/.env
         required: false
