@@ -1,4 +1,4 @@
-import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingChannel, type PricingChannelInput, type PricingChannelModel, type PricingChannelModelsResponse, type PricingChannelsResponse, type PricingCredential, type PricingCredentialDefault, type PricingCredentialFixedInput, type PricingCredentialModel, type PricingCredentialModelsResponse, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
+import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingChannel, type PricingChannelInput, type PricingChannelModel, type PricingChannelModelsResponse, type PricingChannelsResponse, type PricingIdentityState, type PricingIdentityMigrationInput, type PricingIdentityCorrectionInput, type PricingIdentityMutationResult, type PricingCredential, type PricingCredentialDefault, type PricingCredentialFixedInput, type PricingCredentialModel, type PricingCredentialModelsResponse, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed'
 import { resolveUsageRequestRange } from '@/utils/usage/rangeQuery'
 
@@ -986,6 +986,30 @@ export async function bindPricingCredential(directoryId: number, signal?: AbortS
     signal,
   })
   if (!response.ok) await parseApiError(response, 'Unable to register credential')
+  return response.json()
+}
+
+export async function fetchPricingIdentityState(signal?: AbortSignal): Promise<PricingIdentityState> {
+  const response = await apiFetch(apiPath('/pricing/identity-bindings'), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load identity associations')
+  return response.json()
+}
+
+export async function migratePricingIdentity(input: PricingIdentityMigrationInput, signal?: AbortSignal): Promise<PricingIdentityMutationResult> {
+  const response = await apiFetch(apiPath('/pricing/identity-bindings/migrate'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject_id: input.subject_id, directory_ref: input.directory_ref, snapshot_id: input.snapshot_id, confirmed: input.confirmed }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to migrate identity association')
+  return response.json()
+}
+
+export async function correctPricingIdentity(bindingRef: string, input: PricingIdentityCorrectionInput, signal?: AbortSignal): Promise<PricingIdentityMutationResult> {
+  const response = await apiFetch(apiPath(`/pricing/identity-bindings/${encodeURIComponent(bindingRef)}/correction`), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expected_subject_id: input.expected_subject_id, target_subject_id: input.target_subject_id, action: input.action, snapshot_id: input.snapshot_id, confirmed: input.confirmed }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to correct identity association')
   return response.json()
 }
 

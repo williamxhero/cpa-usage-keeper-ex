@@ -899,6 +899,42 @@ export interface PricingCredentialsResponse {
   credentials: PricingCredential[]
 }
 
+export interface PricingIdentityBinding {
+  ref: string
+  subject_id: string
+  enabled: boolean
+  credential: PricingCredential
+}
+
+export interface PricingIdentityState {
+  snapshot_id: string
+  subjects: PricingCredential[]
+  directory: { ref: string; credential: PricingCredential }[]
+  bindings: PricingIdentityBinding[]
+}
+
+export interface PricingIdentityMigrationInput {
+  subject_id: string
+  directory_ref: string
+  snapshot_id: string
+  confirmed: boolean
+}
+
+export interface PricingIdentityCorrectionInput {
+  expected_subject_id: string
+  target_subject_id?: string
+  action: 'unbind' | 'rebind'
+  snapshot_id: string
+  confirmed: boolean
+}
+
+export interface PricingIdentityMutationResult {
+  binding_ref: string
+  subject_id: string
+  enabled: boolean
+  snapshot_id: string
+}
+
 export interface PricingCredentialDefault {
   subject_id: string
   // null inherits legacy pricing; explicit 0 and 1 are active overrides.

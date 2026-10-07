@@ -22,6 +22,7 @@ func TestAllIncludesCoreModels(t *testing.T) {
 		&ModelPriceSetting{},
 		&ModelPriceRule{},
 		&CredentialPricingSubject{},
+		&CredentialPricingAssociation{},
 		&CredentialPriceDefault{},
 		&PricingChannel{},
 		&PricingChannelMember{},

@@ -1,5 +1,6 @@
 import { CredentialEditModal } from '@/components/usage/credentials/CredentialEditModal';
 import { PricingCredentialsCard } from '@/components/usage/pricing/PricingCredentialsCard';
+import { PricingIdentityMigrationCard } from '@/components/usage/pricing/PricingIdentityMigrationCard';
 import { PricingCredentialDefaultsCard } from '@/components/usage/pricing/PricingCredentialDefaultsCard';
 import { PricingChannelsCard } from '@/components/usage/pricing/PricingChannelsCard';
 import { PricingCredentialModelsCard } from '@/components/usage/pricing/PricingCredentialModelsCard';
@@ -2469,6 +2470,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                   onNotice={showTopNotice}
                 />
                 <PricingCredentialsCard />
+                <PricingIdentityMigrationCard />
                 <PricingCredentialDefaultsCard />
                 <PricingChannelsCard />
                 <PricingCredentialModelsCard />

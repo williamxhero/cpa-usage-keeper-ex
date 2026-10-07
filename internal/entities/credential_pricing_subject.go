@@ -11,4 +11,8 @@ type CredentialPricingSubject struct {
 	AuthTypeName    string
 	Identity        string    `gorm:"uniqueIndex:uniq_credential_pricing_identity"`
 	CreatedAt       time.Time `gorm:"serializer:storageTime"`
+	// Read-model fields describe the effective association, never persisted over
+	// the original relation. Disabled origins remain private sanitization evidence.
+	BindingRef      string `gorm:"-"`
+	BindingDisabled bool   `gorm:"-"`
 }

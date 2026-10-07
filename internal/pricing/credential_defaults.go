@@ -80,7 +80,10 @@ func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialB
 		if binding.SubjectID != "" {
 			name := binding.SafeName
 			if name == "" {
-				name = "Credential"
+				name = snapshot.credentialSubjects[binding.SubjectID]
+				if name == "" {
+					name = "Credential"
+				}
 			}
 			snapshot.credentialSubjects[binding.SubjectID] = name
 		}

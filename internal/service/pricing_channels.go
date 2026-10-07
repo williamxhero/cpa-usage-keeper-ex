@@ -140,7 +140,7 @@ func validateChannelMembers(tx *gorm.DB, channelID string, members []string) err
 		}
 		found := false
 		for _, subject := range subjects {
-			if subject.ID != id {
+			if subject.ID != id || subject.BindingDisabled {
 				continue
 			}
 			found = true

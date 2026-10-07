@@ -258,6 +258,7 @@ func orderedMigrations() []databaseMigration {
 		{version: "20261007_credential_model_multipliers", run: credentialModelMultipliersMigration},
 		{version: "20261007_credential_model_fixed", run: credentialModelFixedMigration},
 		{version: "20261007_channel_model_prices", run: channelModelPricesMigration},
+		{version: "20261007_credential_pricing_associations", run: credentialPricingAssociationsMigration},
 	}
 }
 

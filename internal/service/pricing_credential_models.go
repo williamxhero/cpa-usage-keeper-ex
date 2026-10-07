@@ -147,8 +147,13 @@ func validatePricingCredentialSubject(tx *gorm.DB, id string) error {
 	if err != nil {
 		return err
 	}
+	found := false
 	for _, subject := range subjects {
 		if subject.ID != id {
+			continue
+		}
+		found = true
+		if subject.BindingDisabled {
 			continue
 		}
 		for _, identity := range identities {
@@ -160,6 +165,8 @@ func validatePricingCredentialSubject(tx *gorm.DB, id string) error {
 				return ErrCredentialNotSelectable
 			}
 		}
+	}
+	if found {
 		return nil
 	}
 	return ErrPricingCredentialNotFound

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, clearPricingChannelModel, deletePricing, fetchPricingChannelModel, fetchPricingChannelModels, fetchPricingRules, fetchPricingSyncPreview, replacePricingRules, savePricingChannelFixed, savePricingChannelModel, updatePricing, updatePricingBatch } from '../api'
+import { ApiError, clearPricingChannelModel, correctPricingIdentity, deletePricing, fetchPricingChannelModel, fetchPricingChannelModels, fetchPricingIdentityState, fetchPricingRules, fetchPricingSyncPreview, migratePricingIdentity, replacePricingRules, savePricingChannelFixed, savePricingChannelModel, updatePricing, updatePricingBatch } from '../api'
 
 const headerValue = (init: RequestInit | undefined, name: string): string | null => (
   new Headers(init?.headers).get(name)
@@ -12,6 +12,27 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('identity association API client', () => {
+  it('uses exact opaque references, bounded safe payload fields, credentials and cancellation', async () => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: '/keeper' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({}))
+    const signal = new AbortController().signal
+    await fetchPricingIdentityState(signal)
+    expect(fetchMock.mock.calls[0]).toEqual(['/keeper/api/v1/pricing/identity-bindings', expect.objectContaining({ cache: 'no-store', credentials: 'include', signal })])
+    const migration = { subject_id: 'cred_a', directory_ref: 'selection_new', snapshot_id: 'snapshot_old', confirmed: true, raw_identity: 'never-serialize' }
+    await migratePricingIdentity(migration, signal)
+    const [url, init] = fetchMock.mock.calls[1]
+    expect(url).toBe('/keeper/api/v1/pricing/identity-bindings/migrate')
+    expect(init).toMatchObject({ credentials: 'include', method: 'POST', signal })
+    expect(JSON.parse(String(init?.body))).toEqual({ subject_id: 'cred_a', directory_ref: 'selection_new', snapshot_id: 'snapshot_old', confirmed: true })
+    await correctPricingIdentity('binding/opaque', { expected_subject_id: 'cred_a', target_subject_id: 'cred_b', action: 'rebind', snapshot_id: 'snapshot_new', confirmed: true }, signal)
+    const [correctionURL, correction] = fetchMock.mock.calls[2]
+    expect(correctionURL).toBe('/keeper/api/v1/pricing/identity-bindings/binding%2Fopaque/correction')
+    expect(correction).toMatchObject({ credentials: 'include', method: 'PUT', signal })
+    expect(JSON.parse(String(correction?.body))).toEqual({ expected_subject_id: 'cred_a', target_subject_id: 'cred_b', action: 'rebind', snapshot_id: 'snapshot_new', confirmed: true })
+  })
 })
 
 describe('pricing API client', () => {
