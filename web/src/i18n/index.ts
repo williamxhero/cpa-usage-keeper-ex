@@ -20,6 +20,21 @@ const getInitialLanguage = (): SupportedLanguage => {
 const resources = {
   en: {
     translation: {
+      pricing_credential_models: {
+        title: 'Credential model exceptions',
+        scope_help: 'Set an exact-model exception above the credential default. Other and future models still inherit the credential default or next pricing layer.',
+        history_warning: 'Saving or clearing recalculates historical estimates using current prices; this is not a bill frozen at request time.',
+        replacement_warning: 'An active exception replaces every legacy model multiplier and matching rule adjustment, including tier and reasoning; it does not stack with them. Clear explicitly to inherit the credential default, next pricing layer or legacy pricing.',
+        select: 'Select a registered credential', empty: 'No registered credentials. Register a subject above, then refresh.',
+        refresh: 'Refresh', model: 'Select an exact model', model_search: 'Search existing models', no_models: 'No existing models',
+        model_help: 'Choices include used models and saved baseline models, even without a baseline price. Exact request Model is checked before the existing ModelAlias; no case folding or guessed aliases. Baseline lookup remains independent.',
+        current: 'Saved exception', inherited: 'Not configured / inherit', active: 'Active override', canonical: 'Saved canonical multiplier', multiplier: 'Model multiplier',
+        input_help: 'Enter a nonnegative decimal, optionally x, X or %: 0.2, 0.2x and 20% are equivalent. Explicit 0 and 1 are active overrides; blank is not saved. A missing usable baseline remains unavailable, even with multiplier 0.',
+        save: 'Save exception', clear: 'Clear exception / inherit', saved: 'Exception saved; historical estimates use current prices.', cleared: 'Exception cleared; pricing now inherits.',
+        invalid_multiplier: 'Enter a finite nonnegative decimal, optionally x, X or %. Blank, signs, scientific notation, mixed units and values outside the supported pricing range cannot be saved.',
+        load_failed: 'Unable to load saved exceptions. Refresh and retry.', save_failed: 'Unable to save the exception. The last confirmed value is shown; refresh and retry.', clear_failed: 'Unable to clear the exception. The last confirmed value is shown; refresh and retry.',
+        permission_denied: 'Administrator permission is required.', conflict: 'The subject or binding changed, or attribution is ambiguous. Refresh and retry.'
+      },
       pricing_credential_defaults: {
         title: 'Credential default multiplier',
         scope_help: 'Set one multiplier for all models used by a registered upstream credential, including future models with baseline prices.',
@@ -982,6 +997,21 @@ const resources = {
   },
   zh: {
     translation: {
+      pricing_credential_models: {
+        title: '凭证模型例外倍率',
+        scope_help: '精确模型例外优先于凭证默认倍率；其他和未来模型继续继承凭证默认值或下一定价层。',
+        history_warning: '保存或清除会使用当前价格回算历史估算费用，不是请求发生时冻结的账单。',
+        replacement_warning: '生效例外替代全部旧模型倍率和命中的规则调整，包括 tier 与 reasoning，不与它们连乘。显式清除后继承凭证默认值、下一定价层或旧定价。',
+        select: '选择已登记凭证', empty: '暂无已登记凭证。请先在上方登记主体，再刷新。',
+        refresh: '刷新', model: '选择精确模型', model_search: '搜索现有模型', no_models: '暂无现有模型',
+        model_help: '选项包含已使用模型及已保存基准价模型，即使没有基准价也可选择。先精确匹配请求 Model，再匹配已有 ModelAlias；不忽略大小写或猜测别名。基准价查找独立进行。',
+        current: '已保存例外', inherited: '未配置／继承', active: '生效覆盖', canonical: '已保存规范倍率', multiplier: '模型倍率',
+        input_help: '输入非负十进制数，可加 x、X 或 %：0.2、0.2x 与 20% 等价。显式 0 和 1 都是生效覆盖；空白不会保存。即使倍率为 0，缺少可用基准价仍表示费用不可用。',
+        save: '保存例外', clear: '清除例外／继承', saved: '例外已保存，历史估算费用使用当前价格。', cleared: '例外已清除，定价恢复继承。',
+        invalid_multiplier: '请输入有限非负十进制数，可加 x、X 或 %。空白、正负号、科学计数法、混合单位及超出支持计价范围的数值无法保存。',
+        load_failed: '无法读取已保存例外，请刷新重试。', save_failed: '无法保存例外。当前显示最后确认的值，请刷新后重试。', clear_failed: '无法清除例外。当前显示最后确认的值，请刷新后重试。',
+        permission_denied: '此操作需要管理员权限。', conflict: '该主体或绑定已变化，或归属存在歧义，请刷新后重试。'
+      },
       pricing_credential_defaults: {
         title: '凭证全模型默认倍率',
         scope_help: '为已登记的上游凭证设置一个适用于所有模型的倍率，后续有基准价的新模型也自动适用。',
@@ -1944,6 +1974,21 @@ const resources = {
   },
   'zh-TW': {
     translation: {
+      pricing_credential_models: {
+        title: '憑證模型例外倍率',
+        scope_help: '精確模型例外優先於憑證預設倍率；其他和未來模型繼續繼承憑證預設值或下一定價層。',
+        history_warning: '儲存或清除會使用目前價格回算歷史估算費用，不是請求發生時凍結的帳單。',
+        replacement_warning: '生效例外取代全部舊模型倍率和命中的規則調整，包括 tier 與 reasoning，不與它們連乘。明確清除後繼承憑證預設值、下一定價層或舊定價。',
+        select: '選擇已登記憑證', empty: '暫無已登記憑證。請先在上方登記主體，再重新整理。',
+        refresh: '重新整理', model: '選擇精確模型', model_search: '搜尋現有模型', no_models: '暫無現有模型',
+        model_help: '選項包含已使用模型及已儲存基準價模型，即使沒有基準價也可選擇。先精確匹配請求 Model，再匹配已有 ModelAlias；不忽略大小寫或猜測別名。基準價查找獨立進行。',
+        current: '已儲存例外', inherited: '未設定／繼承', active: '生效覆蓋', canonical: '已儲存標準倍率', multiplier: '模型倍率',
+        input_help: '輸入非負十進位數，可加 x、X 或 %：0.2、0.2x 與 20% 等價。明確設定的 0 和 1 都是生效覆蓋；空白不會儲存。即使倍率為 0，缺少可用基準價仍表示費用不可用。',
+        save: '儲存例外', clear: '清除例外／繼承', saved: '例外已儲存，歷史估算費用使用目前價格。', cleared: '例外已清除，定價恢復繼承。',
+        invalid_multiplier: '請輸入有限非負十進位數，可加 x、X 或 %。空白、正負號、科學記號、混合單位及超出支援計價範圍的數值無法儲存。',
+        load_failed: '無法讀取已儲存例外，請重新整理後重試。', save_failed: '無法儲存例外。目前顯示最後確認的值，請重新整理後重試。', clear_failed: '無法清除例外。目前顯示最後確認的值，請重新整理後重試。',
+        permission_denied: '此操作需要管理員權限。', conflict: '該主體或綁定已變更，或歸屬存在歧義，請重新整理後重試。'
+      },
       pricing_credential_defaults: {
         title: '憑證全模型預設倍率',
         scope_help: '為已登記的上游憑證設定一個適用於所有模型的倍率，後續有基準價的新模型也自動適用。',
