@@ -157,6 +157,20 @@ func safeCredentialText(value string, identity entities.UsageIdentity) string {
 	return pricing.SafeCredentialText(value, identity)
 }
 
+// Key hints are an explicit display-only exception to the credential allowlist.
+// Short keys retain less evidence so the hint never exposes a complete key.
+func pricingCredentialKeyHint(key string) string {
+	characters := []rune(key)
+	switch {
+	case len(characters) < 8:
+		return ""
+	case len(characters) < 16:
+		return string(characters[:3]) + "...."
+	default:
+		return string(characters[:4]) + "...." + string(characters[len(characters)-4:])
+	}
+}
+
 func pricingCredential(identity entities.UsageIdentity, subjects []entities.CredentialPricingSubject) servicedto.PricingCredential {
 	authType := "unknown"
 	switch identity.AuthType {
@@ -167,6 +181,9 @@ func pricingCredential(identity entities.UsageIdentity, subjects []entities.Cred
 	}
 	providerType := safeCredentialProviderType(identity.Type)
 	result := servicedto.PricingCredential{DirectoryID: identity.ID, Name: safeCredentialText(identity.Name, identity), ProviderType: providerType, AuthType: authType, Status: "active", BindingStatus: "unbound"}
+	if authType == "apikey" {
+		result.KeyHint = pricingCredentialKeyHint(identity.LookupKey)
+	}
 	if result.Name == "" {
 		result.Name = "Credential"
 	}

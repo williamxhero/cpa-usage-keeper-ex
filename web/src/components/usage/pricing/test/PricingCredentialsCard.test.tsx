@@ -30,6 +30,50 @@ describe('PricingCredentialsCard', () => {
     document.body.innerHTML = ''
     vi.unstubAllGlobals()
   })
+  it.each([
+    {
+      title: 'apikey alias instead of name or key hint',
+      fields: { alias: 'Selected account', key_hint: 'qxbd....xdgy' },
+      expected: 'Selected account · openai · apikey · https://synthetic.example · pricing_credentials.status.active · pricing_credentials.binding.unbound',
+    },
+    {
+      title: 'apikey key hint when there is no alias',
+      fields: { alias: '', key_hint: 'qxbd....xdgy' },
+      expected: 'qxbd....xdgy · openai · apikey · https://synthetic.example · pricing_credentials.status.active · pricing_credentials.binding.unbound',
+    },
+    {
+      title: 'OAuth account name without alias, key hint or endpoint',
+      fields: { auth_type: 'oauth', name: 'OAuth account', alias: 'Ignored alias', key_hint: 'qxbd....xdgy' },
+      expected: 'OAuth account · openai · Oauth · pricing_credentials.status.active · pricing_credentials.binding.unbound',
+    },
+    {
+      title: 'empty optional fields without empty separators or an apikey name fallback',
+      fields: { alias: '', key_hint: '', provider_type: '', endpoint: '' },
+      expected: 'apikey · pricing_credentials.status.active · pricing_credentials.binding.unbound',
+    },
+  ])('renders $title consistently in candidates and saved subjects', async ({ fields, expected }) => {
+    const item = { ...credential, ...fields }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => response({
+      credentials: String(input).endsWith('credential-subjects') ? [{ ...item, subject_id: 'cred_synthetic' }] : [item],
+    })))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
+    expect(container.querySelector('li > span')?.textContent).toBe(expected)
+    expect(container.textContent).not.toContain('Same friendly name')
+    expect(container.textContent).not.toContain('pricing_credentials.reference')
+    await act(async () => container.querySelector<HTMLButtonElement>('[role="combobox"]')!.click())
+    expect(document.body.querySelector('[role="option"]')?.textContent).toBe(expected)
+    expect(document.body.textContent).not.toContain('pricing_credentials.reference')
+  })
+  it.each(['active', 'disabled', 'stale', 'unknown'])('retains the %s status translation', async status => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ credentials: [{ ...credential, status, subject_id: 'cred_synthetic' }] })))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
+    expect(container.querySelector('li > span')?.textContent).toContain(`pricing_credentials.status.${status}`)
+  })
+  it.each(['unbound', 'bound', 'stale', 'unknown', 'ambiguous'])('retains the %s binding translation', async binding_status => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ credentials: [{ ...credential, binding_status, subject_id: 'cred_synthetic' }] })))
+    await act(async () => root.render(<PricingCredentialsCard onChanged={onChanged} />))
+    expect(container.querySelector('li > span')?.textContent).toContain(`pricing_credentials.binding.${binding_status}`)
+  })
   it('does not expose or fetch the directory for read-only users', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
