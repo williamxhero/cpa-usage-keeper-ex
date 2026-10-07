@@ -87,6 +87,19 @@ func (s *Snapshot) Channels() []ChannelConfig {
 	return result
 }
 
+// SafeChannelText checks all known directory and retained subject evidence, not
+// just chosen members: a friendly channel label must never echo credential data.
+func SafeChannelText(value string, identities []entities.UsageIdentity, subjects []entities.CredentialPricingSubject) string {
+	value = SafeCredentialText(value, entities.UsageIdentity{})
+	for _, identity := range identities {
+		value = SafeCredentialText(value, identity)
+	}
+	for _, subject := range subjects {
+		value = SafeCredentialText(value, entities.UsageIdentity{Identity: subject.Identity})
+	}
+	return value
+}
+
 // Exact evidence is selected independently of normalized legacy dimensions.
 func (r Resolver) credentialSubject(subject CostSubject) string {
 	if r.snapshot == nil {

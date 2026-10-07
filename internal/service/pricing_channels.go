@@ -84,6 +84,13 @@ func (s *pricingService) savePricingChannel(ctx context.Context, id string, inpu
 				return err
 			}
 		}
+		identities, subjects, err := repository.LoadCredentialPricingDirectory(tx)
+		if err != nil {
+			return err
+		}
+		if pricing.SafeChannelText(input.Name, identities, subjects) != input.Name {
+			return ErrInvalidPricingInput
+		}
 		if err := validateChannelMembers(tx, id, input.MemberSubjectIDs); err != nil {
 			return err
 		}

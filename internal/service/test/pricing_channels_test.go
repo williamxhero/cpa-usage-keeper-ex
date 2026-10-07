@@ -110,6 +110,61 @@ func (f channelFixture) assertChannels(t *testing.T, expected map[string]float64
 		}
 	}
 }
+func TestChannelNamesExcludeKnownSecretsAndSanitizeRefreshedMetadata(t *testing.T) {
+	f := newChannelFixture(t)
+	ctx := context.Background()
+	fileName, filePath := "synthetic-file.json", "/private/synthetic-path.json"
+	if err := f.db.Model(&entities.UsageIdentity{}).Where("identity = ?", "synthetic-a").Updates(map[string]any{
+		"lookup_key": "synthetic-private-source-a", "file_name": fileName, "file_path": filePath,
+		"base_url": "https://synthetic-user:synthetic-password@example.invalid?key=synthetic-query-secret",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	before := f.catalog.Snapshot().ID()
+	for _, secret := range []string{"synthetic-private-source-a", "synthetic-a", "synthetic-file.json", "synthetic-file", "synthetic-path", "synthetic-user", "synthetic-password", "synthetic-query-secret"} {
+		t.Run(secret, func(t *testing.T) {
+			input := service.PricingChannelInput{Name: secret, MemberSubjectIDs: []string{}}
+			if _, err := f.channels.CreatePricingChannel(ctx, input); !errors.Is(err, service.ErrInvalidPricingInput) {
+				t.Fatalf("secret create accepted: %v", err)
+			}
+			if _, err := f.channels.UpdatePricingChannel(ctx, f.ids[0], input); !errors.Is(err, service.ErrInvalidPricingInput) {
+				t.Fatalf("secret rename accepted: %v", err)
+			}
+		})
+	}
+	if f.catalog.Snapshot().ID() != before {
+		t.Fatal("rejected names published a snapshot")
+	}
+	var count int64
+	if err := f.db.Model(&entities.PricingChannel{}).Count(&count).Error; err != nil || count != 2 {
+		t.Fatalf("rejected names changed DB: %d %v", count, err)
+	}
+	// A previously harmless label becomes known secret evidence after metadata refresh.
+	if err := f.db.Model(&entities.UsageIdentity{}).Where("identity = ?", "synthetic-a").Update("lookup_key", "Channel A").Error; err != nil {
+		t.Fatal(err)
+	}
+	f.set(t, f.ids[0], ".2")
+	f.set(t, f.ids[1], ".5")
+	readback, err := f.channels.GetPricingChannel(ctx, f.ids[0])
+	if err != nil || readback.Name != "Channel" || readback.ID != f.ids[0] || len(readback.MemberSubjectIDs) != 1 || *readback.Multiplier != .2 {
+		t.Fatalf("unsafe metadata publication: %+v %v", readback, err)
+	}
+	result := f.catalog.NewResolver().Calculate(repository.UsageEventCostSubject(f.events[0]))
+	if result.ChannelName != "Channel" || result.Cost.TotalCostUSD != 2 {
+		t.Fatalf("unsafe event label: %+v", result)
+	}
+	snapshot, err := repository.LoadPricingSnapshot(ctx, f.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range snapshot.Channels() {
+		if item.ID == f.ids[0] && item.Name != "Channel" {
+			t.Fatalf("unsafe restarted label: %+v", item)
+		}
+	}
+	f.assertChannels(t, map[string]float64{f.ids[0]: 2, f.ids[1]: 5})
+}
+
 func TestChannelDefaultRealSaveAllCostFamiliesClearRenameRestart(t *testing.T) {
 	f := newChannelFixture(t)
 	ctx := context.Background()

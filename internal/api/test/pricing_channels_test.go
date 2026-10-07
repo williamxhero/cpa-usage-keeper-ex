@@ -208,7 +208,7 @@ func TestPricingChannelsAdminHTTPRealPersistenceQueriesReadbackAndDeletion(t *te
 	if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"name":"Renamed channel"`) || !strings.Contains(readback.Body.String(), `"multiplier":0.2`) {
 		t.Fatal(readback.Body.String())
 	}
-	for _, body := range []string{`{}`, `{"name":"Bad","member_subject_ids":null}`, fmt.Sprintf(`{"name":"Duplicate","member_subject_ids":[%q,%q]}`, subjects[0], subjects[0]), fmt.Sprintf(`{"name":"Conflict","member_subject_ids":[%q]}`, subjects[1]), `{"name":"Unknown","member_subject_ids":["missing"]}`, `{"name":"sk-synthetic-secret","member_subject_ids":[]}`, `{"name":"Safe","member_subject_ids":[],"api_key":"synthetic-private-source-a"}`} {
+	for _, body := range []string{`{}`, `{"name":"Bad","member_subject_ids":null}`, fmt.Sprintf(`{"name":"Duplicate","member_subject_ids":[%q,%q]}`, subjects[0], subjects[0]), fmt.Sprintf(`{"name":"Conflict","member_subject_ids":[%q]}`, subjects[1]), `{"name":"Unknown","member_subject_ids":["missing"]}`, `{"name":"sk-synthetic-secret","member_subject_ids":[]}`, `{"name":"synthetic-private-source-a","member_subject_ids":[]}`, `{"name":"synthetic-a","member_subject_ids":[]}`, `{"name":"Safe","member_subject_ids":[],"api_key":"synthetic-private-source-a"}`} {
 		response := serveCredentialMutation(router, http.MethodPut, path, body, cookie)
 		if response.Code != 400 && response.Code != 409 {
 			t.Fatalf("invalid accepted %d %s", response.Code, response.Body.String())

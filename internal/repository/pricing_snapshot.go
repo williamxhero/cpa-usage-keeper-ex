@@ -64,6 +64,14 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 	if err != nil {
 		return nil, err
 	}
+	for index := range channels {
+		// Metadata refreshes may reveal secret evidence after the label was saved.
+		// Preserve ID, membership and prices, but never publish that label outward.
+		channels[index].Name = pricing.SafeChannelText(channels[index].Name, identities, subjects)
+		if channels[index].Name == "" {
+			channels[index].Name = "Channel"
+		}
+	}
 	snapshot, err := pricing.CompileSnapshotWithCredentials(configs, compileCredentialBindings(identities, subjects), credentialConfigs, pricing.OverrideConfig{Channels: channels})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
