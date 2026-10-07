@@ -61,20 +61,15 @@ func (r Resolver) Calculate(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
 	var result CostResult
 	if config, selectedBy, selected := r.credentialModel(subject); selected {
-		if config.Mode == ModeFixed {
-			style := config.Fixed.PricingStyle
-			if found {
-				style = model.pricing.PricingStyle
-			}
-			result = CostResult{Available: true, PricingStyle: style, CredentialSubjectID: config.SubjectID, RuleMultiplier: 1, Fixed: cloneFixed(config.Fixed), MatchedModel: matchedModel, MatchedBy: matchedBy}
-			result.Cost = helper.CalculateUsageTokenCostBreakdown(subject.Tokens, config.Fixed.pricing(style))
-		} else {
-			result = calculateCredentialDefault(subject, config.SubjectID, config.Multiplier, model, matchedModel, matchedBy, found)
-		}
+		result = calculateModelOverride(subject, config.SubjectID, config.Mode, config.Multiplier, config.Fixed, model, matchedModel, matchedBy, found)
 		result.Scope, result.Mode = "credential_model", config.Mode
 		result.SelectedModel, result.SelectedBy = config.Model, selectedBy
 	} else if id, multiplier, selected := r.credentialDefault(subject); selected {
 		result = calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+	} else if config, selectedBy, selected := r.channelModel(subject); selected {
+		result = calculateModelOverride(subject, r.credentialSubject(subject), config.Mode, config.Multiplier, config.Fixed, model, matchedModel, matchedBy, found)
+		result.Scope, result.Mode = "channel_model", config.Mode
+		result.SelectedModel, result.SelectedBy = config.Model, selectedBy
 	} else if _, multiplier, selected := r.channelDefault(subject); selected {
 		result = calculateCredentialDefault(subject, r.credentialSubject(subject), multiplier, model, matchedModel, matchedBy, found)
 		result.Scope = "channel_default"
@@ -85,6 +80,21 @@ func (r Resolver) Calculate(subject CostSubject) CostResult {
 		result = withBaselineReference(result, subject, model, found)
 	}
 	result.ChannelID, result.ChannelName, result.AttributionWarning = r.ChannelAttribution(subject)
+	return result
+}
+
+// Scope selection precedes this shared calculator; missing baselines never
+// cause a selected multiplier to fall through to a lower fixed configuration.
+func calculateModelOverride(subject CostSubject, id, mode string, multiplier float64, fixed *FixedTariff, model compiledModel, matchedModel, matchedBy string, found bool) CostResult {
+	if mode != ModeFixed {
+		return calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+	}
+	style := fixed.PricingStyle
+	if found {
+		style = model.pricing.PricingStyle
+	}
+	result := CostResult{Available: true, PricingStyle: style, CredentialSubjectID: id, RuleMultiplier: 1, Fixed: cloneFixed(fixed), MatchedModel: matchedModel, MatchedBy: matchedBy}
+	result.Cost = helper.CalculateUsageTokenCostBreakdown(subject.Tokens, fixed.pricing(style))
 	return result
 }
 

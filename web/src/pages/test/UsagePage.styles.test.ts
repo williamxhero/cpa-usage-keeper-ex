@@ -47,6 +47,25 @@ describe('UsagePage responsive layout and accessibility', () => {
     expect(card).toMatch(/className=\{styles.actions\}><div className=\{styles.selector\}>/)
   })
 
+  it('mounts channel model exceptions only in the existing admin settings surface with shared mobile styles', () => {
+    const card = readSource(new URL('../../components/usage/pricing/PricingChannelModelsCard.tsx', import.meta.url))
+    const page = readSource(new URL('../UsagePage.tsx', import.meta.url))
+    const app = readSource(new URL('../../App.tsx', import.meta.url))
+    const settingsStart = page.indexOf("{activeTab === 'settings' && (\n              <div className={styles.settingsSections}>")
+    expect(settingsStart).toBeGreaterThan(0)
+    expect(page.indexOf('<PricingChannelModelsCard />')).toBeGreaterThan(settingsStart)
+    expect(app).toMatch(/else if \(authRole === 'api_key_viewer'\)[\s\S]*KeyOverviewPage[\s\S]*else\s*\{\s*page = <UsagePage/)
+    expect(card).toContain("import styles from './PricingCredentialDefaultsCard.module.scss'")
+    expect(card).toContain('dropdownClassName={styles.options}')
+    expect(card).toContain('className={styles.readback}'); expect(card).toContain('className={styles.fixedRates}')
+    expect(card).toContain('inputMode="decimal"')
+    expect(card).toContain('count: choice.member_subject_ids.length')
+    expect(card).not.toContain('fetchCredentialPricingSubjects')
+    expect(card).not.toContain('updatePricing(')
+    expect(credentialDefaultsStyles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(credentialDefaultsStyles).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*\.fixedRates\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+  })
+
   it('keeps fixed tariff fields responsive with four labeled decimal inputs', () => {
     const card = readSource(new URL('../../components/usage/pricing/PricingCredentialModelsCard.tsx', import.meta.url))
     expect(card).toContain('className={styles.fixedRates}')

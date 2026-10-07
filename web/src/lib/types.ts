@@ -949,6 +949,22 @@ export interface PricingCredentialModelsResponse {
   snapshot_id: string
 }
 
+export interface PricingChannelModel {
+  channel_id: string
+  model: string
+  // Fixed tariffs are active despite a null multiplier; only inherit clears an override.
+  multiplier: number | null
+  mode: 'inherit' | 'multiplier' | 'fixed'
+  fixed?: PricingCredentialFixed
+  snapshot_id: string
+}
+
+export interface PricingChannelModelsResponse {
+  channel_id: string
+  models: PricingChannelModel[]
+  snapshot_id: string
+}
+
 export interface PricingRule {
   key: string
   value: string

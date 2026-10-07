@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { deletePricing, fetchPricingRules, fetchPricingSyncPreview, replacePricingRules, updatePricing, updatePricingBatch } from '../api'
+import { ApiError, clearPricingChannelModel, deletePricing, fetchPricingChannelModel, fetchPricingChannelModels, fetchPricingRules, fetchPricingSyncPreview, replacePricingRules, savePricingChannelFixed, savePricingChannelModel, updatePricing, updatePricingBatch } from '../api'
 
 const headerValue = (init: RequestInit | undefined, name: string): string | null => (
   new Headers(init?.headers).get(name)
@@ -93,6 +93,65 @@ describe('pricing API client', () => {
 	expect(new URL(String(rawURL), 'http://localhost').pathname).toBe('/api/v1/pricing/batch')
 	expect(init).toMatchObject({ credentials: 'include', method: 'PUT' })
 	expect(JSON.parse(String(init?.body))).toEqual({ pricing })
+  })
+})
+
+describe('channel model pricing API', () => {
+  const channelId = 'channel/synthetic +?#中文'
+  const model = 'provider/Exact Model+?#中文'
+  const canonical = { channel_id: channelId, model, multiplier: 0, mode: 'multiplier', snapshot_id: 'snapshot_synthetic' }
+  const fixed = { prompt_price_per_1m: '0', completion_price_per_1m: '2.00', cache_read_price_per_1m: '.3', cache_write_price_per_1m: '4', pricing_style: 'claude' as const }
+
+  it('loads saved exceptions with encoded stable channel ID, base path and cancellation', async () => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: '/keeper' })
+    const body = { channel_id: channelId, models: [canonical], snapshot_id: 'snapshot_synthetic' }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(body))
+    const signal = new AbortController().signal
+    expect(await fetchPricingChannelModels(channelId, signal)).toEqual(body)
+    expect(fetchMock.mock.calls[0][0]).toBe(`/keeper/api/v1/pricing/channels/${encodeURIComponent(channelId)}/models`)
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ credentials: 'include', signal, cache: 'no-store' })
+  })
+
+  it.each(['GET', 'PUT', 'FIXED', 'DELETE'])('uses exact model query and canonical response for %s', async method => {
+    vi.stubGlobal('window', { __APP_BASE_PATH__: '/keeper' })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(canonical))
+    const signal = new AbortController().signal
+    const saved = method === 'GET' ? await fetchPricingChannelModel(channelId, model, signal)
+      : method === 'PUT' ? await savePricingChannelModel(channelId, model, '20%', signal)
+        : method === 'FIXED' ? await savePricingChannelFixed(channelId, model, fixed, signal)
+          : await clearPricingChannelModel(channelId, model, signal)
+    expect(saved).toEqual(canonical)
+    const [rawURL, init] = fetchMock.mock.calls[0]
+    const url = new URL(String(rawURL), 'http://localhost')
+    expect(url.pathname).toBe(`/keeper/api/v1/pricing/channels/${encodeURIComponent(channelId)}/model`)
+    expect([...url.searchParams.entries()]).toEqual([['model', model]])
+    expect(init).toMatchObject({ credentials: 'include', signal })
+    if (method === 'GET') {
+      expect(init?.cache).toBe('no-store'); expect(init?.body).toBeUndefined()
+    } else {
+      expect(init?.method).toBe(method === 'FIXED' ? 'PUT' : method)
+      expect(headerValue(init, 'X-CPA-Usage-Keeper-Request')).toBe('fetch')
+      if (method === 'DELETE') expect(init?.body).toBeUndefined()
+      else {
+        expect(headerValue(init, 'Content-Type')).toBe('application/json')
+        expect(JSON.parse(String(init?.body))).toEqual(method === 'FIXED' ? { mode: 'fixed', fixed } : { mode: 'multiplier', multiplier: '20%' })
+      }
+    }
+  })
+
+  it.each([400, 401, 403, 404, 409, 422, 500])('preserves status %s for safe localized handling', async status => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ error: 'synthetic failure' }, { status }))
+    const calls = [
+      () => fetchPricingChannelModels(channelId), () => fetchPricingChannelModel(channelId, model),
+      () => savePricingChannelModel(channelId, model, '0'), () => savePricingChannelFixed(channelId, model, fixed),
+      () => clearPricingChannelModel(channelId, model),
+    ]
+    for (const call of calls) {
+      const result = call()
+      await expect(result).rejects.toBeInstanceOf(ApiError)
+      await expect(result).rejects.toMatchObject({ status })
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(5)
   })
 })
 

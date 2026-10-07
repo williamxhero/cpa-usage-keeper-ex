@@ -84,7 +84,19 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 		}
 		modelConfigs = append(modelConfigs, config)
 	}
-	snapshot, err := pricing.CompileSnapshotWithCredentials(configs, compileCredentialBindings(identities, subjects), credentialConfigs, pricing.OverrideConfig{Channels: channels, CredentialModels: modelConfigs})
+	var channelPrices []entities.ChannelModelPrice
+	if err := query.Find(&channelPrices).Error; err != nil {
+		return nil, err
+	}
+	channelModels := make([]pricing.ChannelModelConfig, 0, len(channelPrices))
+	for _, value := range channelPrices {
+		config := pricing.ChannelModelConfig{ChannelID: value.ChannelID, Model: value.Model, Multiplier: value.Multiplier, Mode: value.Mode}
+		if value.Mode == pricing.ModeFixed {
+			config.Fixed = &pricing.FixedTariff{PromptPricePer1M: value.PromptPricePer1M, CompletionPricePer1M: value.CompletionPricePer1M, CacheReadPricePer1M: value.CacheReadPricePer1M, CacheWritePricePer1M: value.CacheWritePricePer1M, PricingStyle: value.PricingStyle}
+		}
+		channelModels = append(channelModels, config)
+	}
+	snapshot, err := pricing.CompileSnapshotWithCredentials(configs, compileCredentialBindings(identities, subjects), credentialConfigs, pricing.OverrideConfig{Channels: channels, CredentialModels: modelConfigs, ChannelModels: channelModels})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
 	}

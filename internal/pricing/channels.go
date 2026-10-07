@@ -13,6 +13,7 @@ import (
 type OverrideConfig struct {
 	Channels         []ChannelConfig
 	CredentialModels []CredentialModelConfig
+	ChannelModels    []ChannelModelConfig
 }
 
 type ChannelConfig struct {
@@ -140,7 +141,7 @@ func (r Resolver) AttributionFields() ActiveFields {
 
 func (r Resolver) HasChannels() bool { return r.snapshot != nil && len(r.snapshot.channels) > 0 }
 func (r Resolver) HasPricingOverrides() bool {
-	if r.HasCredentialDefaults() || (r.snapshot != nil && len(r.snapshot.credentialModels) > 0) {
+	if r.HasCredentialDefaults() || (r.snapshot != nil && (len(r.snapshot.credentialModels) > 0 || len(r.snapshot.channelModels) > 0)) {
 		return true
 	}
 	if r.snapshot != nil {
@@ -157,6 +158,9 @@ func (r Resolver) UsesPricingOverride(subject CostSubject) bool {
 		return true
 	}
 	if r.UsesCredentialDefault(subject) {
+		return true
+	}
+	if _, _, selected := r.channelModel(subject); selected {
 		return true
 	}
 	_, _, selected := r.channelDefault(subject)
@@ -180,7 +184,14 @@ func (r Resolver) MayUsePricingOverride(subject CostSubject) bool {
 		if _, ok := r.snapshot.CredentialModelPricing(id, subject.Dimensions.ModelAlias); ok {
 			return true
 		}
-		if channel := r.snapshot.channels[r.snapshot.subjectChannels[id]]; channel.Multiplier != nil {
+		channelID := r.snapshot.subjectChannels[id]
+		if _, ok := r.snapshot.ChannelModelPricing(channelID, subject.Dimensions.Model); ok {
+			return true
+		}
+		if _, ok := r.snapshot.ChannelModelPricing(channelID, subject.Dimensions.ModelAlias); ok {
+			return true
+		}
+		if channel := r.snapshot.channels[channelID]; channel.Multiplier != nil {
 			return true
 		}
 	}

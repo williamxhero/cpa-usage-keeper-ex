@@ -15,6 +15,7 @@ func All() []any {
 		&PricingChannelMember{},
 		&ChannelPriceDefault{},
 		&CredentialModelMultiplier{},
+		&ChannelModelPrice{},
 		&UsageIdentity{},
 		&CPAAPIKey{},
 		&UsageOverviewHourlyStat{},

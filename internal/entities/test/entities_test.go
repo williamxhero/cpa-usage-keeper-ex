@@ -27,6 +27,7 @@ func TestAllIncludesCoreModels(t *testing.T) {
 		&PricingChannelMember{},
 		&ChannelPriceDefault{},
 		&CredentialModelMultiplier{},
+		&ChannelModelPrice{},
 		&UsageIdentity{},
 		&CPAAPIKey{},
 		&UsageOverviewHourlyStat{},
