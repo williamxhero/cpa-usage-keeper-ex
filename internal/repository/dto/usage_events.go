@@ -7,12 +7,13 @@ import (
 
 // UsageEventsPageRecord 是 usage events 列表的仓储查询结果。
 type UsageEventsPageRecord struct {
-	Events     []UsageEventRecord
-	TotalCount int64
-	Page       int
-	PageSize   int
-	TotalPages int
-	HasMore    bool
+	PricingSnapshotID string
+	Events            []UsageEventRecord
+	TotalCount        int64
+	Page              int
+	PageSize          int
+	TotalPages        int
+	HasMore           bool
 }
 
 // UsageEventFilterOptionsRecord 是 usage events 筛选项的仓储查询结果。
@@ -22,6 +23,7 @@ type UsageEventFilterOptionsRecord struct {
 
 // UsageEventRecord 是单条 usage event 的查询结果。
 type UsageEventRecord struct {
+	DualCosts          pricing.DualCosts
 	ChannelID          string
 	ChannelName        string
 	AttributionWarning string

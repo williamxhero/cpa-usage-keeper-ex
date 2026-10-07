@@ -84,7 +84,7 @@ type codexQuotaEfficiencyUsageAccumulator struct {
 // BuildCodexQuotaEfficiencyHistory 动态连接额度历史与 UsageEvent；它只读数据，绝不把 Token 或 Cost 写入历史表。
 func BuildCodexQuotaEfficiencyHistory(ctx context.Context, db *gorm.DB, query repositorydto.CodexQuotaEfficiencyQuery, costResolver pricing.Resolver) (repositorydto.CodexQuotaEfficiencyHistory, error) {
 	// 先构造空响应，使“账号暂时没有历史”仍返回稳定的时间口径。
-	result := repositorydto.CodexQuotaEfficiencyHistory{GeneratedAt: query.Now, RangeStart: query.RangeStart}
+	result := repositorydto.CodexQuotaEfficiencyHistory{GeneratedAt: query.Now, RangeStart: query.RangeStart, PricingSnapshotID: costResolver.SnapshotID()}
 	if db == nil {
 		return result, fmt.Errorf("build codex quota efficiency history: database is nil")
 	}
@@ -571,8 +571,11 @@ func (a *codexQuotaEfficiencyUsageAccumulator) add(event codexQuotaEfficiencyUsa
 
 	subject := newUsagePricingCostSubject(event.APIGroupKey, event.Model, authIndex, event.ModelAlias, event.ServiceTier, event.ResponseServiceTier, event.ReasoningEffort, event.Endpoint, event.ExecutorType, event.InputTokens, event.OutputTokens, event.CacheReadTokens, event.CacheCreationTokens)
 	subject.AuthType = "oauth" // The stream WHERE clause proves this exact type.
+	// Reference normalization is per event, never the legacy pricing group's token sum.
+	cost := resolver.Calculate(subject)
+	a.target.DualCosts.Reference.Merge(cost.DualCosts().Reference)
 	if resolver.UsesPricingOverride(subject) {
-		cost := resolver.Calculate(subject)
+		a.target.DualCosts.Configured.Merge(cost.DualCosts().Configured)
 		a.target.TotalCostUSD += cost.Cost.TotalCostUSD
 		if !cost.Available {
 			a.target.CostAvailable = false
@@ -617,10 +620,13 @@ func (a *codexQuotaEfficiencyUsageAccumulator) finalize(authIndex string, costRe
 			cost.Available = false
 		}
 		a.target.TotalCostUSD += cost.Cost.TotalCostUSD
+		a.target.DualCosts.Configured.Merge(cost.DualCosts().Configured)
 		if !cost.Available {
 			a.target.CostAvailable = false
 		}
 	}
+	a.target.DualCosts = a.target.DualCosts.Normalized()
+	a.target.PricingSnapshotID = costResolver.SnapshotID()
 }
 
 func finalizeCodexQuotaEfficiencyTransitions(cycle *repositorydto.CodexQuotaEfficiencyCycle) {
@@ -630,5 +636,8 @@ func finalizeCodexQuotaEfficiencyTransitions(cycle *repositorydto.CodexQuotaEffi
 		transition.TokensPerPoint = float64(transition.Usage.TotalTokens) / points
 		transition.CostPerPoint = transition.Usage.TotalCostUSD / points
 		transition.CostPerPointAvailable = transition.Usage.CostAvailable
+		if points > 0 {
+			transition.DualCostsPerPoint = transition.Usage.DualCosts.Scale(1 / points)
+		}
 	}
 }

@@ -1007,7 +1007,12 @@ func TestApplyUsageHeaderSnapshotsProcessesAtMostTwoIdentitiesConcurrently(t *te
 				break
 			}
 		}
-		entered <- struct{}{}
+		// Only the first two notifications gate the test. Later configured/reference
+		// reads must not block when the notification buffer is no longer drained.
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
 		<-release
 		active.Add(-1)
 	}); err != nil {

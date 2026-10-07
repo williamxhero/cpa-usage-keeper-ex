@@ -139,6 +139,16 @@ func (r Resolver) AttributionFields() ActiveFields {
 	return fields
 }
 
+// EvidenceFields retains physical membership coordinates without changing the
+// legacy fields used to group configured estimates.
+func (r Resolver) EvidenceFields() ActiveFields {
+	var fields ActiveFields
+	for field := RuleFieldAPIGroupKey; field < ruleFieldCount; field++ {
+		fields = fields.with(field)
+	}
+	return fields
+}
+
 func (r Resolver) HasChannels() bool { return r.snapshot != nil && len(r.snapshot.channels) > 0 }
 func (r Resolver) HasPricingOverrides() bool {
 	if r.HasCredentialDefaults() || (r.snapshot != nil && (len(r.snapshot.credentialModels) > 0 || len(r.snapshot.channelModels) > 0)) {

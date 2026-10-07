@@ -1,8 +1,6 @@
 package pricing
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"path"
@@ -150,11 +148,6 @@ func CompileSnapshotWithCredentials(models []ModelConfig, bindings []CredentialB
 			snapshot.activeFields = snapshot.activeFields.with(field)
 		}
 	}
-	id := make([]byte, 16)
-	if _, err := rand.Read(id); err != nil {
-		return nil, err
-	}
-	snapshot.id = hex.EncodeToString(id)
 	return snapshot, nil
 }
 

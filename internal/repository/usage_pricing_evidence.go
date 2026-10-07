@@ -49,10 +49,7 @@ func pricingEvidenceBucket(timestamp time.Time, grain string) time.Time {
 // secrets. Hot/archive share IDs and move atomically; the anti-join also guards
 // against counting an accidentally duplicated stored ID twice. It does not
 // change which events an existing endpoint includes in its usage totals.
-func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, end time.Time, grain string, resolver pricing.Resolver) (usagePricingEvidenceMap, error) {
-	if !resolver.HasPricingOverrides() && !resolver.HasChannels() {
-		return nil, nil
-	}
+func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, end time.Time, grain string, resolver pricing.Resolver, projectionColumns ...[]string) (usagePricingEvidenceMap, error) {
 	columns := "id, api_group_key, model, model_alias, auth_index, auth_type, service_tier, response_service_tier, reasoning_effort, endpoint, executor_type, timestamp, failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
 	// Only committed Overview members can explain its rollups. A newly
 	// ingested historical request must never replace a pruned old request with
@@ -68,8 +65,27 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 		where += " AND api_group_key = ?"
 		args = append(args, key)
 	}
-	sql := "SELECT " + columns + " FROM usage_events WHERE " + where + " UNION ALL SELECT " + columns + " FROM usage_events_archive WHERE " + where + " AND NOT EXISTS (SELECT 1 FROM usage_events hot WHERE hot.id = usage_events_archive.id)"
-	args = append(args, args...)
+	// Retention-only databases can omit either raw table. Existing rollup
+	// configured fees remain readable; absent facts never prove a reference.
+	hasHot := db.Migrator().HasTable(&entities.UsageEvent{})
+	hasArchive := db.Migrator().HasTable(&entities.UsageEventArchive{})
+	if !hasHot && !hasArchive {
+		return usagePricingEvidenceMap{}, nil
+	}
+	sql := ""
+	if hasHot {
+		sql = "SELECT " + columns + " FROM usage_events WHERE " + where
+	}
+	if hasArchive {
+		archiveSQL := "SELECT " + columns + " FROM usage_events_archive WHERE " + where
+		if hasHot {
+			archiveSQL += " AND NOT EXISTS (SELECT 1 FROM usage_events hot WHERE hot.id = usage_events_archive.id)"
+			sql += " UNION ALL " + archiveSQL
+			args = append(args, args...)
+		} else {
+			sql = archiveSQL
+		}
+	}
 	rows, err := db.Raw(sql, args...).Rows()
 	if err != nil {
 		return nil, fmt.Errorf("load retained pricing evidence: %w", err)
@@ -82,7 +98,13 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 			return nil, err
 		}
 		subject := UsageEventCostSubject(event)
-		key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(event.Timestamp, grain), Dimensions: subject.Dimensions}
+		dimensions := subject.Dimensions
+		dimensions.Model = normalizeUsageOverviewDimension(dimensions.Model)
+		dimensions.APIGroupKey = normalizeUsageOverviewDimension(dimensions.APIGroupKey)
+		if len(projectionColumns) > 0 {
+			dimensions = projectPricingEvidenceDimensions(dimensions, projectionColumns[0])
+		}
+		key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(event.Timestamp, grain), Dimensions: dimensions}
 		evidence, exists := result[key]
 		if !exists {
 			evidence.Result.Available = true
@@ -96,6 +118,9 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 		evidence.TotalTokens += event.TotalTokens
 		evidence.Selected = evidence.Selected || resolver.UsesPricingOverride(subject)
 		cost := resolver.Calculate(subject)
+		dual := cost.DualCosts()
+		evidence.Result.ConfiguredEstimate.Merge(dual.Configured)
+		evidence.Result.ReferenceEstimate.Merge(dual.Reference)
 		// Preserve safe matching evidence for existing availability guards. A
 		// cohort may contain several typed credentials, so it has no single ID
 		// or multiplier, but must not masquerade as an unmatched model.
@@ -122,6 +147,7 @@ func loadUsagePricingEvidence(db *gorm.DB, filter dto.UsageQueryFilter, start, e
 		typed.CacheCreationTokens += event.CacheCreationTokens
 		typed.ReasoningTokens += event.ReasoningTokens
 		typed.TotalTokens += event.TotalTokens
+		typed.DualCosts.Merge(dual)
 		typed.CostUSD += cost.Cost.TotalCostUSD
 		typed.CostAvailable = typed.CostAvailable && cost.Available
 		evidence.Typed[identity] = typed
@@ -150,21 +176,23 @@ func addUsagePricingCost(a, b helper.UsageTokenCostBreakdown) helper.UsageTokenC
 // case proves per-event clamping or exact auth_type for that aggregate.
 func calculateUsageRollupCost(resolver pricing.Resolver, legacySubject pricing.CostSubject, bucket time.Time, grain string, requests, totalTokens int64, rawTokens helper.UsageTokenCostInput, evidence usagePricingEvidenceMap) pricing.CostResult {
 	legacy := resolver.Calculate(legacySubject)
+	key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(bucket, grain), Dimensions: legacySubject.Dimensions}
+	retained, exists := evidence[key]
+	reference := referenceForUsageCohort(resolver, legacySubject, retained, exists, requests, totalTokens, rawTokens)
+	legacy = legacy.WithReference(reference)
 	if !resolver.HasPricingOverrides() {
 		return legacy
 	}
-	key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(bucket, grain), Dimensions: legacySubject.Dimensions}
-	retained, exists := evidence[key]
 	selected := resolver.UsesPricingOverride(legacySubject)
 	if exists && retained.covers(requests, totalTokens, rawTokens) {
 		if retained.Selected {
-			return retained.Result
+			return retained.Result.WithReference(reference)
 		}
 		// Exact retained evidence may disprove a type-less index attribution.
 		// No new selection means the original rollup normalization/grouping
 		// must remain unchanged, not be replaced by per-request legacy costs.
 		if selected {
-			return resolver.CalculateLegacy(legacySubject)
+			return resolver.CalculateLegacy(legacySubject).WithReference(reference)
 		}
 		return legacy
 	}
@@ -176,6 +204,55 @@ func calculateUsageRollupCost(resolver pricing.Resolver, legacySubject pricing.C
 		}
 	}
 	return legacy
+}
+
+// Projection coordinates match the physical membership being reconciled, not a
+// new grouping for the configured legacy amount.
+func projectPricingEvidenceDimensions(d pricing.UsageDimensions, columns []string) pricing.UsageDimensions {
+	has := func(column string) bool { return containsUsageOverviewDimension(columns, column) }
+	if !has("api_group_key") {
+		d.APIGroupKey = "unknown"
+	}
+	if !has("auth_index") {
+		d.AuthIndex = ""
+	}
+	if !has("service_tier") {
+		d.ServiceTier = ""
+	}
+	if !has("response_service_tier") {
+		d.ResponseServiceTier = ""
+	}
+	if !has("reasoning_effort") {
+		d.ReasoningEffort = ""
+	}
+	if !has("endpoint") {
+		d.Endpoint = ""
+	}
+	if !has("executor_type") {
+		d.ExecutorType = ""
+	}
+	return d
+}
+
+func referenceForUsageCohort(resolver pricing.Resolver, subject pricing.CostSubject, retained usagePricingEvidence, exists bool, requests, totalTokens int64, tokens helper.UsageTokenCostInput) pricing.PriceEstimate {
+	if exists && retained.covers(requests, totalTokens, tokens) {
+		return retained.Result.ReferenceEstimate
+	}
+	missing := resolver.CalculateLegacy(subject).IncompleteReference("retained_evidence_incomplete").DualCosts().Reference
+	// A retained strict subset of the committed prefix has known amounts, but
+	// cannot establish completeness. Equal counts with inconsistent facts prove
+	// neither coverage nor a safe subset; do not substitute a new cohort.
+	if exists && retained.Requests > 0 && retained.Requests < requests {
+		missing.Merge(retained.Result.ReferenceEstimate)
+	}
+	return missing
+}
+
+func calculateUsageOverviewProjectionReference(resolver pricing.Resolver, row usageOverviewStatProjection, grain string, evidence usagePricingEvidenceMap) pricing.PriceEstimate {
+	subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens)
+	key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}
+	retained, exists := evidence[key]
+	return referenceForUsageCohort(resolver, subject, retained, exists, row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens})
 }
 
 // Typed retained facts split upstream composition only after the parent cohort
@@ -233,7 +310,7 @@ func pricingExactIdentity(lookup analysisIdentityLookup, identity usagePricingId
 	return analysisIdentityInfo{}, false
 }
 
-func applyAnalysisPricingIdentityComposition(lookup analysisIdentityLookup, authFiles, providers map[string]*dto.AnalysisCompositionRecord, row analysisOverviewStatProjection, grain string, result pricing.CostResult, evidence usagePricingEvidenceMap) {
+func applyAnalysisPricingIdentityComposition(lookup analysisIdentityLookup, authFiles, providers map[string]*dto.AnalysisCompositionRecord, row analysisOverviewStatProjection, grain string, result pricing.CostResult, evidence usagePricingEvidenceMap, dual ...pricing.DualCosts) {
 	subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, 0, 0, 0, 0)
 	key := usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}
 	retained := evidence[key]
@@ -248,9 +325,12 @@ func applyAnalysisPricingIdentityComposition(lookup analysisIdentityLookup, auth
 			if identity.authType == entities.UsageIdentityAuthTypeAIProvider {
 				totals = providers
 			}
-			applyAnalysisIdentityCompositionTotal(totals, identity, typed.Requests, typed.InputTokens, typed.OutputTokens, typed.CacheReadTokens, typed.CacheCreationTokens, typed.ReasoningTokens, typed.TotalTokens, typed.CostUSD, typed.CostAvailable)
+			applyAnalysisIdentityCompositionTotal(totals, identity, typed.Requests, typed.InputTokens, typed.OutputTokens, typed.CacheReadTokens, typed.CacheCreationTokens, typed.ReasoningTokens, typed.TotalTokens, typed.CostUSD, typed.CostAvailable, typed.DualCosts)
 		}
 		return
 	}
-	applyAnalysisIdentityComposition(lookup, authFiles, providers, row.AuthIndex, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, result.Cost, result.Available)
+	if len(dual) == 0 {
+		dual = []pricing.DualCosts{result.DualCosts()}
+	}
+	applyAnalysisIdentityComposition(lookup, authFiles, providers, row.AuthIndex, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, result.Cost, result.Available, dual...)
 }

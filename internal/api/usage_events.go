@@ -22,13 +22,14 @@ import (
 )
 
 type usageEventsResponse struct {
-	Events     []usageEventPayload `json:"events"`
-	TotalCount int64               `json:"total_count"`
-	Page       int                 `json:"page"`
-	PageSize   int                 `json:"page_size"`
-	TotalPages int                 `json:"total_pages"`
-	NextCursor string              `json:"next_cursor,omitempty"`
-	HasMore    bool                `json:"has_more"`
+	PricingSnapshotID string              `json:"pricing_snapshot_id"`
+	Events            []usageEventPayload `json:"events"`
+	TotalCount        int64               `json:"total_count"`
+	Page              int                 `json:"page"`
+	PageSize          int                 `json:"page_size"`
+	TotalPages        int                 `json:"total_pages"`
+	NextCursor        string              `json:"next_cursor,omitempty"`
+	HasMore           bool                `json:"has_more"`
 }
 
 type usageSourceFilterOption struct {
@@ -43,10 +44,11 @@ type usageEventFilterOptionsResponse struct {
 }
 
 type usageEventPayload struct {
+	DualCosts           pricing.DualCosts      `json:"dual_costs"`
 	ChannelID           string                 `json:"channel_id,omitempty"`
 	ChannelName         string                 `json:"channel_name,omitempty"`
 	AttributionWarning  string                 `json:"attribution_warning,omitempty"`
-	PricingSnapshotID   string                 `json:"pricing_snapshot_id,omitempty"`
+	PricingSnapshotID   string                 `json:"pricing_snapshot_id"`
 	ID                  string                 `json:"id,omitempty"`
 	Timestamp           string                 `json:"timestamp"`
 	APIKey              string                 `json:"api_key,omitempty"`
@@ -77,7 +79,7 @@ type usageEventPayload struct {
 	CostUSD             float64                `json:"cost_usd"`
 	CostAvailable       bool                   `json:"cost_available"`
 	PricingStyle        string                 `json:"pricing_style,omitempty"`
-	PricingSelection    *pricing.CostSelection `json:"pricing_selection,omitempty"`
+	PricingSelection    *pricing.CostSelection `json:"pricing_selection"`
 }
 
 type usageEventTokenPayload struct {
@@ -110,39 +112,43 @@ type usageEventRequestLogDownloadTokenPayload struct {
 }
 
 type usageEventExportPayload struct {
-	ID                  string   `json:"id"`
-	Timestamp           string   `json:"timestamp"`
-	APIKey              string   `json:"api_key"`
-	CPAAPIKeyID         string   `json:"cpa_api_key_id"`
-	Source              string   `json:"source"`
-	SourceType          string   `json:"source_type"`
-	AuthIndex           string   `json:"auth_index"`
-	IsIdentityDeleted   bool     `json:"is_identity_deleted"`
-	Model               string   `json:"model"`
-	ModelAlias          string   `json:"model_alias"`
-	ResponseModel       string   `json:"response_model"`
-	ReasoningEffort     string   `json:"reasoning_effort"`
-	ServiceTier         string   `json:"service_tier"`
-	ResponseServiceTier string   `json:"response_service_tier"`
-	ClientIP            *string  `json:"client_ip"`
-	XForwardedFor       *string  `json:"x_forwarded_for"`
-	UserAgent           *string  `json:"user_agent"`
-	ExecutorType        string   `json:"executor_type"`
-	Result              string   `json:"result"`
-	StatusCode          *int     `json:"status_code,omitempty"`
-	Stream              *bool    `json:"stream,omitempty"`
-	Endpoint            string   `json:"endpoint"`
-	TTFTMS              *int64   `json:"ttft_ms"`
-	LatencyMS           int64    `json:"latency_ms"`
-	SpeedTPS            *float64 `json:"speed_tps"`
-	InputTokens         int64    `json:"input_tokens"`
-	OutputTokens        int64    `json:"output_tokens"`
-	ReasoningTokens     int64    `json:"reasoning_tokens"`
-	CacheReadTokens     int64    `json:"cache_read_tokens"`
-	CacheCreationTokens int64    `json:"cache_creation_tokens"`
-	CacheReadRate       *float64 `json:"cache_read_rate"`
-	TotalTokens         int64    `json:"total_tokens"`
-	CostUSD             float64  `json:"cost_usd"`
+	ID                  string                 `json:"id"`
+	Timestamp           string                 `json:"timestamp"`
+	APIKey              string                 `json:"api_key"`
+	CPAAPIKeyID         string                 `json:"cpa_api_key_id"`
+	Source              string                 `json:"source"`
+	SourceType          string                 `json:"source_type"`
+	AuthIndex           string                 `json:"auth_index"`
+	IsIdentityDeleted   bool                   `json:"is_identity_deleted"`
+	Model               string                 `json:"model"`
+	ModelAlias          string                 `json:"model_alias"`
+	ResponseModel       string                 `json:"response_model"`
+	ReasoningEffort     string                 `json:"reasoning_effort"`
+	ServiceTier         string                 `json:"service_tier"`
+	ResponseServiceTier string                 `json:"response_service_tier"`
+	ClientIP            *string                `json:"client_ip"`
+	XForwardedFor       *string                `json:"x_forwarded_for"`
+	UserAgent           *string                `json:"user_agent"`
+	ExecutorType        string                 `json:"executor_type"`
+	Result              string                 `json:"result"`
+	StatusCode          *int                   `json:"status_code,omitempty"`
+	Stream              *bool                  `json:"stream,omitempty"`
+	Endpoint            string                 `json:"endpoint"`
+	TTFTMS              *int64                 `json:"ttft_ms"`
+	LatencyMS           int64                  `json:"latency_ms"`
+	SpeedTPS            *float64               `json:"speed_tps"`
+	InputTokens         int64                  `json:"input_tokens"`
+	OutputTokens        int64                  `json:"output_tokens"`
+	ReasoningTokens     int64                  `json:"reasoning_tokens"`
+	CacheReadTokens     int64                  `json:"cache_read_tokens"`
+	CacheCreationTokens int64                  `json:"cache_creation_tokens"`
+	CacheReadRate       *float64               `json:"cache_read_rate"`
+	TotalTokens         int64                  `json:"total_tokens"`
+	CostUSD             float64                `json:"cost_usd"`
+	DualCosts           pricing.DualCosts      `json:"dual_costs"`
+	PricingSnapshotID   string                 `json:"pricing_snapshot_id"`
+	PricingSelection    *pricing.CostSelection `json:"pricing_selection"`
+	CostAvailable       bool                   `json:"cost_available"`
 }
 
 type usageEventStreamFunc func(func(servicedto.UsageEventRecord) error) error
@@ -216,13 +222,14 @@ func registerUsageEventsRoute(
 			nextCursor = encodeUsageEventsCursor(lastEvent.Timestamp, lastEvent.ID)
 		}
 		c.JSON(http.StatusOK, usageEventsResponse{
-			Events:     buildUsageEventsPayload(rows.Events, resolver, apiKeyInfos),
-			TotalCount: rows.TotalCount,
-			Page:       rows.Page,
-			PageSize:   rows.PageSize,
-			TotalPages: rows.TotalPages,
-			NextCursor: nextCursor,
-			HasMore:    rows.HasMore,
+			PricingSnapshotID: rows.PricingSnapshotID,
+			Events:            buildUsageEventsPayload(rows.Events, resolver, apiKeyInfos),
+			TotalCount:        rows.TotalCount,
+			Page:              rows.Page,
+			PageSize:          rows.PageSize,
+			TotalPages:        rows.TotalPages,
+			NextCursor:        nextCursor,
+			HasMore:           rows.HasMore,
 		})
 	})
 
@@ -465,6 +472,7 @@ func buildUsageEventsPayload(rows []servicedto.UsageEventRecord, resolver usageI
 			SpeedTPS:            usageEventSpeedTPS(row),
 			CostUSD:             row.CostUSD,
 			CostAvailable:       row.CostAvailable,
+			DualCosts:           row.DualCosts.Normalized(),
 			PricingStyle:        strings.TrimSpace(row.PricingStyle),
 			ChannelID:           row.ChannelID, ChannelName: row.ChannelName, AttributionWarning: row.AttributionWarning, PricingSnapshotID: row.PricingSnapshotID,
 			PricingSelection: row.PricingSelection,
@@ -563,6 +571,10 @@ func buildUsageEventExportPayload(row servicedto.UsageEventRecord, resolver usag
 		CacheReadRate:       usageEventCacheReadRate(row),
 		TotalTokens:         row.TotalTokens,
 		CostUSD:             row.CostUSD,
+		CostAvailable:       row.CostAvailable,
+		DualCosts:           row.DualCosts.Normalized(),
+		PricingSnapshotID:   row.PricingSnapshotID,
+		PricingSelection:    row.PricingSelection,
 	}
 }
 
@@ -617,6 +629,21 @@ var usageEventsExportCSVHeader = []string{
 	"cache_read_rate",
 	"total_tokens",
 	"cost_usd",
+	"configured_total_cost_usd",
+	"configured_status",
+	"configured_uncached_input_cost_usd",
+	"configured_output_cost_usd",
+	"configured_cache_read_cost_usd",
+	"configured_cache_write_cost_usd",
+	"reference_total_cost_usd",
+	"reference_status",
+	"reference_uncached_input_cost_usd",
+	"reference_output_cost_usd",
+	"reference_cache_read_cost_usd",
+	"reference_cache_write_cost_usd",
+	"pricing_snapshot_id",
+	"pricing_selection",
+	"cost_available",
 }
 
 func writeUsageEventsJSONExport(c *gin.Context, stream usageEventStreamFunc, resolver usageIdentityResolver, apiKeyInfos map[string]analysisAPIKeyInfo) error {
@@ -686,7 +713,11 @@ func writeUsageEventsCSVExport(c *gin.Context, stream usageEventStreamFunc, reso
 		if err := begin(); err != nil {
 			return err
 		}
-		if err := writer.Write(usageEventExportCSVRecord(buildUsageEventExportPayload(row, resolver, apiKeyInfos))); err != nil {
+		record, err := usageEventExportCSVRecord(buildUsageEventExportPayload(row, resolver, apiKeyInfos))
+		if err != nil {
+			return err
+		}
+		if err := writer.Write(record); err != nil {
 			return err
 		}
 		count++
@@ -782,7 +813,12 @@ func requestLogAttachmentDisposition(filename string) string {
 	return `attachment; filename="` + fallback + `"; filename*=UTF-8''` + url.PathEscape(sanitizeAttachmentFilenameStar(original))
 }
 
-func usageEventExportCSVRecord(event usageEventExportPayload) []string {
+func usageEventExportCSVRecord(event usageEventExportPayload) ([]string, error) {
+	selection, err := json.Marshal(event.PricingSelection)
+	if err != nil {
+		return nil, err
+	}
+	dualCosts := event.DualCosts.Normalized()
 	return []string{
 		event.ID,
 		event.Timestamp,
@@ -817,7 +853,22 @@ func usageEventExportCSVRecord(event usageEventExportPayload) []string {
 		formatOptionalFloat64(event.CacheReadRate),
 		strconv.FormatInt(event.TotalTokens, 10),
 		strconv.FormatFloat(event.CostUSD, 'f', -1, 64),
-	}
+		formatOptionalFloat64(dualCosts.Configured.TotalCostUSD),
+		dualCosts.Configured.Status,
+		strconv.FormatFloat(dualCosts.Configured.UncachedInputCostUSD, 'f', -1, 64),
+		strconv.FormatFloat(dualCosts.Configured.OutputCostUSD, 'f', -1, 64),
+		strconv.FormatFloat(dualCosts.Configured.CacheReadCostUSD, 'f', -1, 64),
+		strconv.FormatFloat(dualCosts.Configured.CacheWriteCostUSD, 'f', -1, 64),
+		formatOptionalFloat64(dualCosts.Reference.TotalCostUSD),
+		dualCosts.Reference.Status,
+		strconv.FormatFloat(dualCosts.Reference.UncachedInputCostUSD, 'f', -1, 64),
+		strconv.FormatFloat(dualCosts.Reference.OutputCostUSD, 'f', -1, 64),
+		strconv.FormatFloat(dualCosts.Reference.CacheReadCostUSD, 'f', -1, 64),
+		strconv.FormatFloat(dualCosts.Reference.CacheWriteCostUSD, 'f', -1, 64),
+		event.PricingSnapshotID,
+		string(selection),
+		strconv.FormatBool(event.CostAvailable),
+	}, nil
 }
 
 func formatOptionalInt64(value *int64) string {

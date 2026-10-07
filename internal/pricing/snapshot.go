@@ -1,6 +1,8 @@
 package pricing
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sort"
@@ -72,6 +74,11 @@ func CompileSnapshot(configs []ModelConfig) (*Snapshot, error) {
 	sort.Slice(snapshot.modelConfigs, func(i, j int) bool {
 		return snapshot.modelConfigs[i].Pricing.Model < snapshot.modelConfigs[j].Pricing.Model
 	})
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
+		return nil, err
+	}
+	snapshot.id = hex.EncodeToString(id)
 	return snapshot, nil
 }
 

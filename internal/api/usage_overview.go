@@ -10,6 +10,7 @@ import (
 
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/helper"
+	"cpa-usage-keeper/internal/pricing"
 	repodto "cpa-usage-keeper/internal/repository/dto"
 	"cpa-usage-keeper/internal/service"
 	servicedto "cpa-usage-keeper/internal/service/dto"
@@ -19,10 +20,11 @@ import (
 )
 
 type usageOverviewResponse struct {
-	Usage    usageOverviewPayload `json:"usage"`
-	Summary  usageOverviewSummary `json:"summary"`
-	Series   usageOverviewSeries  `json:"series"`
-	Timezone string               `json:"timezone"`
+	PricingSnapshotID string               `json:"pricing_snapshot_id"`
+	Usage             usageOverviewPayload `json:"usage"`
+	Summary           usageOverviewSummary `json:"summary"`
+	Series            usageOverviewSeries  `json:"series"`
+	Timezone          string               `json:"timezone"`
 }
 
 type usageOverviewPayload struct {
@@ -33,65 +35,71 @@ type usageOverviewPayload struct {
 }
 
 type usageOverviewSummary struct {
-	UnavailableReason     string   `json:"unavailable_reason,omitempty"`
-	PricingSnapshotID     string   `json:"pricing_snapshot_id,omitempty"`
-	RPM                   float64  `json:"rpm"`
-	TPM                   float64  `json:"tpm"`
-	TotalCost             float64  `json:"total_cost"`
-	CostAvailable         bool     `json:"cost_available"`
-	InputTokens           int64    `json:"input_tokens"`
-	CacheReadTokens       int64    `json:"cache_read_tokens"`
-	CacheCreationTokens   int64    `json:"cache_creation_tokens"`
-	ReasoningTokens       int64    `json:"reasoning_tokens"`
-	DailyAverageRequests  *float64 `json:"daily_average_requests,omitempty"`
-	DailyAverageTokens    *float64 `json:"daily_average_tokens,omitempty"`
-	DailyAverageCost      *float64 `json:"daily_average_cost,omitempty"`
-	DailyAverageRangeDays *float64 `json:"daily_average_range_days,omitempty"`
+	DualCosts             pricing.DualCosts  `json:"dual_costs"`
+	DailyAverageDualCosts *pricing.DualCosts `json:"daily_average_dual_costs,omitempty"`
+	UnavailableReason     string             `json:"unavailable_reason,omitempty"`
+	PricingSnapshotID     string             `json:"pricing_snapshot_id"`
+	RPM                   float64            `json:"rpm"`
+	TPM                   float64            `json:"tpm"`
+	TotalCost             float64            `json:"total_cost"`
+	CostAvailable         bool               `json:"cost_available"`
+	InputTokens           int64              `json:"input_tokens"`
+	CacheReadTokens       int64              `json:"cache_read_tokens"`
+	CacheCreationTokens   int64              `json:"cache_creation_tokens"`
+	ReasoningTokens       int64              `json:"reasoning_tokens"`
+	DailyAverageRequests  *float64           `json:"daily_average_requests,omitempty"`
+	DailyAverageTokens    *float64           `json:"daily_average_tokens,omitempty"`
+	DailyAverageCost      *float64           `json:"daily_average_cost,omitempty"`
+	DailyAverageRangeDays *float64           `json:"daily_average_range_days,omitempty"`
 }
 
 type usageOverviewSeries struct {
-	Buckets       []string   `json:"buckets"`
-	Requests      []int64    `json:"requests"`
-	Tokens        []int64    `json:"tokens"`
-	RPM           []float64  `json:"rpm"`
-	TPM           []float64  `json:"tpm"`
-	Cost          []float64  `json:"cost"`
-	CacheReadRate []*float64 `json:"cache_read_rate"`
+	DualCosts     []pricing.DualCosts `json:"dual_costs"`
+	Buckets       []string            `json:"buckets"`
+	Requests      []int64             `json:"requests"`
+	Tokens        []int64             `json:"tokens"`
+	RPM           []float64           `json:"rpm"`
+	TPM           []float64           `json:"tpm"`
+	Cost          []float64           `json:"cost"`
+	CacheReadRate []*float64          `json:"cache_read_rate"`
 }
 
 type usageOverviewRealtime struct {
-	Insights       *usageRealtimeInsights            `json:"insights,omitempty"`
-	Window         string                            `json:"window"`
-	Timezone       string                            `json:"timezone"`
-	BucketSeconds  int64                             `json:"bucket_seconds"`
-	WindowStart    *time.Time                        `json:"window_start,omitempty"`
-	WindowEnd      *time.Time                        `json:"window_end,omitempty"`
-	TokenVelocity  []usageOverviewTokenVelocityPoint `json:"token_velocity"`
-	LatencyScatter usageOverviewLatencyScatter       `json:"latency_scatter"`
-	CurrentUsage   usageOverviewRealtimeCurrentUsage `json:"current_usage"`
-	RequestLevel   []usageOverviewRequestLevelPoint  `json:"request_level"`
-	CacheLevel     []usageOverviewCacheLevelPoint    `json:"cache_level"`
+	PricingSnapshotID string                            `json:"pricing_snapshot_id"`
+	Insights          *usageRealtimeInsights            `json:"insights,omitempty"`
+	Window            string                            `json:"window"`
+	Timezone          string                            `json:"timezone"`
+	BucketSeconds     int64                             `json:"bucket_seconds"`
+	WindowStart       *time.Time                        `json:"window_start,omitempty"`
+	WindowEnd         *time.Time                        `json:"window_end,omitempty"`
+	TokenVelocity     []usageOverviewTokenVelocityPoint `json:"token_velocity"`
+	LatencyScatter    usageOverviewLatencyScatter       `json:"latency_scatter"`
+	CurrentUsage      usageOverviewRealtimeCurrentUsage `json:"current_usage"`
+	RequestLevel      []usageOverviewRequestLevelPoint  `json:"request_level"`
+	CacheLevel        []usageOverviewCacheLevelPoint    `json:"cache_level"`
 }
 
 type keyUsageOverviewRealtime struct {
-	Insights       *usageRealtimeInsights               `json:"insights,omitempty"`
-	Window         string                               `json:"window"`
-	Timezone       string                               `json:"timezone"`
-	BucketSeconds  int64                                `json:"bucket_seconds"`
-	WindowStart    *time.Time                           `json:"window_start,omitempty"`
-	WindowEnd      *time.Time                           `json:"window_end,omitempty"`
-	TokenVelocity  []usageOverviewTokenVelocityPoint    `json:"token_velocity"`
-	LatencyScatter usageOverviewLatencyScatter          `json:"latency_scatter"`
-	CurrentUsage   keyUsageOverviewRealtimeCurrentUsage `json:"current_usage"`
-	RequestLevel   []usageOverviewRequestLevelPoint     `json:"request_level"`
-	CacheLevel     []usageOverviewCacheLevelPoint       `json:"cache_level"`
+	PricingSnapshotID string                               `json:"pricing_snapshot_id"`
+	Insights          *usageRealtimeInsights               `json:"insights,omitempty"`
+	Window            string                               `json:"window"`
+	Timezone          string                               `json:"timezone"`
+	BucketSeconds     int64                                `json:"bucket_seconds"`
+	WindowStart       *time.Time                           `json:"window_start,omitempty"`
+	WindowEnd         *time.Time                           `json:"window_end,omitempty"`
+	TokenVelocity     []usageOverviewTokenVelocityPoint    `json:"token_velocity"`
+	LatencyScatter    usageOverviewLatencyScatter          `json:"latency_scatter"`
+	CurrentUsage      keyUsageOverviewRealtimeCurrentUsage `json:"current_usage"`
+	RequestLevel      []usageOverviewRequestLevelPoint     `json:"request_level"`
+	CacheLevel        []usageOverviewCacheLevelPoint       `json:"cache_level"`
 }
 
 type usageOverviewTokenVelocityPoint struct {
-	Bucket          string   `json:"bucket"`
-	TokensPerMinute float64  `json:"tokens_per_minute"`
-	Tokens          int64    `json:"tokens"`
-	Cost            *float64 `json:"cost,omitempty"`
+	DualCosts       pricing.DualCosts `json:"dual_costs"`
+	Bucket          string            `json:"bucket"`
+	TokensPerMinute float64           `json:"tokens_per_minute"`
+	Tokens          int64             `json:"tokens"`
+	Cost            *float64          `json:"cost,omitempty"`
 }
 
 type usageOverviewLatencyScatter struct {
@@ -132,12 +140,13 @@ type usageOverviewRealtimeBase struct {
 }
 
 type usageOverviewRealtimeUsageTopItem struct {
-	Key      string   `json:"key"`
-	Label    string   `json:"label"`
-	Tokens   int64    `json:"tokens"`
-	Requests int64    `json:"requests"`
-	Cost     *float64 `json:"cost,omitempty"`
-	Share    float64  `json:"share"`
+	DualCosts pricing.DualCosts `json:"dual_costs"`
+	Key       string            `json:"key"`
+	Label     string            `json:"label"`
+	Tokens    int64             `json:"tokens"`
+	Requests  int64             `json:"requests"`
+	Cost      *float64          `json:"cost,omitempty"`
+	Share     float64           `json:"share"`
 }
 
 type usageOverviewRequestLevelPoint struct {
@@ -260,7 +269,7 @@ func writeUsageOverviewResponse(c *gin.Context, usageProvider service.UsageProvi
 	if usageProvider == nil {
 		c.JSON(http.StatusOK, usageOverviewResponse{
 			Usage:    buildUsageOverviewPayload(nil),
-			Summary:  usageOverviewSummary{},
+			Summary:  buildUsageOverviewSummary(nil),
 			Series:   emptyUsageOverviewSeries(),
 			Timezone: time.Local.String(),
 		})
@@ -273,15 +282,18 @@ func writeUsageOverviewResponse(c *gin.Context, usageProvider service.UsageProvi
 		return
 	}
 
+	var snapshotID string
 	var usage *repodto.StatisticsSnapshot
 	if overview != nil {
 		usage = overview.Usage
+		snapshotID = overview.PricingSnapshotID
 	}
 	c.JSON(http.StatusOK, usageOverviewResponse{
-		Usage:    buildUsageOverviewPayload(usage),
-		Summary:  buildUsageOverviewSummary(overview),
-		Series:   buildUsageOverviewSeries(overview),
-		Timezone: time.Local.String(),
+		PricingSnapshotID: snapshotID,
+		Usage:             buildUsageOverviewPayload(usage),
+		Summary:           buildUsageOverviewSummary(overview),
+		Series:            buildUsageOverviewSeries(overview),
+		Timezone:          time.Local.String(),
 	})
 }
 
@@ -344,9 +356,11 @@ func buildUsageOverviewPayload(snapshot *repodto.StatisticsSnapshot) usageOvervi
 
 func buildUsageOverviewSummary(overview *servicedto.UsageOverviewSnapshot) usageOverviewSummary {
 	if overview == nil {
-		return usageOverviewSummary{}
+		return usageOverviewSummary{DualCosts: (pricing.DualCosts{}).Normalized()}
 	}
 	return usageOverviewSummary{
+		DualCosts:             overview.Summary.DualCosts.Normalized(),
+		DailyAverageDualCosts: overview.Summary.DailyAverageDualCosts,
 		RPM:                   overview.Summary.RPM,
 		TPM:                   overview.Summary.TPM,
 		TotalCost:             overview.Summary.TotalCost,
@@ -372,6 +386,7 @@ func emptyUsageOverviewSeries() usageOverviewSeries {
 		RPM:           []float64{},
 		TPM:           []float64{},
 		Cost:          []float64{},
+		DualCosts:     []pricing.DualCosts{},
 		CacheReadRate: []*float64{},
 	}
 }
@@ -380,7 +395,15 @@ func buildUsageOverviewSeries(overview *servicedto.UsageOverviewSnapshot) usageO
 	if overview == nil || overview.Series.Buckets == nil {
 		return emptyUsageOverviewSeries()
 	}
+	dualCosts := make([]pricing.DualCosts, len(overview.Series.Buckets))
+	for index := range dualCosts {
+		if index < len(overview.Series.DualCosts) {
+			dualCosts[index] = overview.Series.DualCosts[index]
+		}
+		dualCosts[index] = dualCosts[index].Normalized()
+	}
 	return usageOverviewSeries{
+		DualCosts:     dualCosts,
 		Buckets:       overview.Series.Buckets,
 		Requests:      overview.Series.Requests,
 		Tokens:        overview.Series.Tokens,
@@ -470,14 +493,15 @@ func buildUsageOverviewRealtime(realtime *servicedto.UsageOverviewRealtime, wind
 		return emptyUsageOverviewRealtime(window)
 	}
 	result := usageOverviewRealtime{
-		Insights:       mapUsageRealtimeInsights(realtime.Insights),
-		Window:         realtime.Window,
-		Timezone:       time.Local.String(),
-		BucketSeconds:  realtime.BucketSeconds,
-		WindowStart:    usageOverviewOptionalTime(realtime.WindowStart),
-		WindowEnd:      usageOverviewOptionalTime(realtime.WindowEnd),
-		TokenVelocity:  make([]usageOverviewTokenVelocityPoint, 0, len(realtime.TokenVelocity)),
-		LatencyScatter: mapUsageOverviewLatencyScatter(realtime.LatencyScatter),
+		PricingSnapshotID: realtime.PricingSnapshotID,
+		Insights:          mapUsageRealtimeInsights(realtime.Insights),
+		Window:            realtime.Window,
+		Timezone:          time.Local.String(),
+		BucketSeconds:     realtime.BucketSeconds,
+		WindowStart:       usageOverviewOptionalTime(realtime.WindowStart),
+		WindowEnd:         usageOverviewOptionalTime(realtime.WindowEnd),
+		TokenVelocity:     make([]usageOverviewTokenVelocityPoint, 0, len(realtime.TokenVelocity)),
+		LatencyScatter:    mapUsageOverviewLatencyScatter(realtime.LatencyScatter),
 		CurrentUsage: usageOverviewRealtimeCurrentUsage{
 			Models:      mapUsageOverviewRealtimeTopItems(realtime.CurrentUsage.Models, false),
 			APIKeys:     mapUsageOverviewRealtimeAPIKeyTopItems(realtime.CurrentUsage.APIKeys, apiKeyInfos),
@@ -499,6 +523,7 @@ func buildUsageOverviewRealtime(realtime *servicedto.UsageOverviewRealtime, wind
 			TokensPerMinute: point.TokensPerMinute,
 			Tokens:          point.Tokens,
 			Cost:            point.CostUSD,
+			DualCosts:       point.DualCosts.Normalized(),
 		})
 	}
 	for _, point := range realtime.RequestLevel {
@@ -525,14 +550,15 @@ func buildKeyUsageOverviewRealtime(realtime *servicedto.UsageOverviewRealtime, w
 		return emptyKeyUsageOverviewRealtime(window)
 	}
 	result := keyUsageOverviewRealtime{
-		Insights:       mapUsageRealtimeInsights(realtime.Insights),
-		Window:         realtime.Window,
-		Timezone:       time.Local.String(),
-		BucketSeconds:  realtime.BucketSeconds,
-		WindowStart:    usageOverviewOptionalTime(realtime.WindowStart),
-		WindowEnd:      usageOverviewOptionalTime(realtime.WindowEnd),
-		TokenVelocity:  make([]usageOverviewTokenVelocityPoint, 0, len(realtime.TokenVelocity)),
-		LatencyScatter: mapUsageOverviewLatencyScatter(realtime.LatencyScatter),
+		PricingSnapshotID: realtime.PricingSnapshotID,
+		Insights:          mapUsageRealtimeInsights(realtime.Insights),
+		Window:            realtime.Window,
+		Timezone:          time.Local.String(),
+		BucketSeconds:     realtime.BucketSeconds,
+		WindowStart:       usageOverviewOptionalTime(realtime.WindowStart),
+		WindowEnd:         usageOverviewOptionalTime(realtime.WindowEnd),
+		TokenVelocity:     make([]usageOverviewTokenVelocityPoint, 0, len(realtime.TokenVelocity)),
+		LatencyScatter:    mapUsageOverviewLatencyScatter(realtime.LatencyScatter),
 		CurrentUsage: keyUsageOverviewRealtimeCurrentUsage{
 			Models: mapUsageOverviewRealtimeTopItems(realtime.CurrentUsage.Models, false),
 		},
@@ -551,6 +577,7 @@ func buildKeyUsageOverviewRealtime(realtime *servicedto.UsageOverviewRealtime, w
 			TokensPerMinute: point.TokensPerMinute,
 			Tokens:          point.Tokens,
 			Cost:            point.CostUSD,
+			DualCosts:       point.DualCosts.Normalized(),
 		})
 	}
 	for _, point := range realtime.RequestLevel {
@@ -597,12 +624,13 @@ func mapUsageOverviewRealtimeTopItems(items []servicedto.RealtimeUsageTopItem, r
 			label = helper.RedactSensitiveValue(label)
 		}
 		result = append(result, usageOverviewRealtimeUsageTopItem{
-			Key:      key,
-			Label:    label,
-			Tokens:   item.Tokens,
-			Requests: item.Requests,
-			Cost:     item.CostUSD,
-			Share:    item.Share,
+			Key:       key,
+			Label:     label,
+			Tokens:    item.Tokens,
+			Requests:  item.Requests,
+			Cost:      item.CostUSD,
+			DualCosts: item.DualCosts.Normalized(),
+			Share:     item.Share,
 		})
 	}
 	return result
@@ -615,7 +643,7 @@ func mapUsageOverviewRealtimeAPIKeyTopItems(items []servicedto.RealtimeUsageTopI
 			// 合成余项不是 API Key，保留它的稳定标识和聚合值。
 			result = append(result, usageOverviewRealtimeUsageTopItem{
 				Key: item.Key, Label: item.Label, Tokens: item.Tokens,
-				Requests: item.Requests, Cost: item.CostUSD, Share: item.Share,
+				Requests: item.Requests, Cost: item.CostUSD, Share: item.Share, DualCosts: item.DualCosts.Normalized(),
 			})
 			continue
 		}
@@ -624,12 +652,13 @@ func mapUsageOverviewRealtimeAPIKeyTopItems(items []servicedto.RealtimeUsageTopI
 			key = fmt.Sprintf("legacy:%x", sha256.Sum256([]byte(item.Key)))
 		}
 		result = append(result, usageOverviewRealtimeUsageTopItem{
-			Key:      key,
-			Label:    analysisAPIKeyLabel(item.Key, apiKeyInfos),
-			Tokens:   item.Tokens,
-			Requests: item.Requests,
-			Cost:     item.CostUSD,
-			Share:    item.Share,
+			Key:       key,
+			Label:     analysisAPIKeyLabel(item.Key, apiKeyInfos),
+			Tokens:    item.Tokens,
+			Requests:  item.Requests,
+			Cost:      item.CostUSD,
+			DualCosts: item.DualCosts.Normalized(),
+			Share:     item.Share,
 		})
 	}
 	return result

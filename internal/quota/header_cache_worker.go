@@ -922,7 +922,7 @@ func mergeUsageHeaderQuotaRows(existing []QuotaRow, header []QuotaRow) []QuotaRo
 			continue
 		}
 		// header 没覆盖的旧 row 原样保留。
-		merged = append(merged, row)
+		merged = append(merged, cloneQuotaRowDualCosts(row))
 		// 只有非空 key 才加入 seen，避免空 key 阻挡 header 新行。
 		if strings.TrimSpace(row.Key) != "" {
 			seen[row.Key] = struct{}{}
@@ -935,7 +935,7 @@ func mergeUsageHeaderQuotaRows(existing []QuotaRow, header []QuotaRow) []QuotaRo
 			continue
 		}
 		// 追加 header 新增的 quota row。
-		merged = append(merged, headerByKey[key])
+		merged = append(merged, cloneQuotaRowDualCosts(headerByKey[key]))
 	}
 	// 返回稳定顺序的合并结果。
 	return merged
@@ -943,7 +943,7 @@ func mergeUsageHeaderQuotaRows(existing []QuotaRow, header []QuotaRow) []QuotaRo
 
 func mergeUsageHeaderQuotaRow(existing QuotaRow, header QuotaRow) QuotaRow {
 	// 以旧 row 为基底，保留 header 没有携带的人工/官方完整字段。
-	merged := existing
+	merged := cloneQuotaRowDualCosts(existing)
 	// header key 非空时覆盖 key，正常情况下与 existing key 相同。
 	if strings.TrimSpace(header.Key) != "" {
 		merged.Key = header.Key
@@ -1005,6 +1005,8 @@ func mergeUsageHeaderQuotaRow(existing QuotaRow, header QuotaRow) QuotaRow {
 		// Header 只负责刷新普通 window 进度条；token/cost 跟随同一窗口重新计算，即使为空也要清掉旧值。
 		merged.WindowUsageTokens = header.WindowUsageTokens
 		merged.WindowUsageCost = header.WindowUsageCost
+		merged.PricingSnapshotID = header.PricingSnapshotID
+		merged.DualCosts = cloneQuotaRowDualCosts(header).DualCosts
 	} else {
 		// 非普通窗口 row 只有 header 明确带 token 时才覆盖旧 token。
 		if header.WindowUsageTokens != nil {
@@ -1013,10 +1015,20 @@ func mergeUsageHeaderQuotaRow(existing QuotaRow, header QuotaRow) QuotaRow {
 		// 非普通窗口 row 只有 header 明确带 cost 时才覆盖旧 cost。
 		if header.WindowUsageCost != nil {
 			merged.WindowUsageCost = header.WindowUsageCost
+			merged.PricingSnapshotID = header.PricingSnapshotID
+			merged.DualCosts = cloneQuotaRowDualCosts(header).DualCosts
 		}
 	}
 	// 返回合并后的单行 quota。
 	return merged
+}
+
+func cloneQuotaRowDualCosts(row QuotaRow) QuotaRow {
+	if row.DualCosts != nil {
+		dual := row.DualCosts.Normalized()
+		row.DualCosts = &dual
+	}
+	return row
 }
 
 func usageHeaderQuotaRowIsWindow(row QuotaRow) bool {
