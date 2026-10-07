@@ -246,6 +246,8 @@ export interface UsageOverviewComparisons {
   api_keys?: UsageComparisonItem[]
   auth_files?: UsageComparisonItem[]
   ai_providers?: UsageComparisonItem[]
+  channels?: UsageComparisonItem[]
+  pricing_snapshot_id?: string
 }
 
 export interface UsageOverviewResponse {
@@ -295,6 +297,10 @@ export interface UsageEvent {
   tokens: UsageEventTokens
   cost_usd?: number
   cost_available?: boolean
+  channel_id?: string
+  channel_name?: string
+  attribution_warning?: 'unknown_identity' | 'unresolved_identity' | 'unbound_channel'
+  pricing_snapshot_id?: string
   pricing_style?: PricingStyle
 }
 
@@ -911,6 +917,24 @@ export interface PricingCredentialFixed {
 export type PricingCredentialFixedInput = {
   [K in keyof Omit<PricingCredentialFixed, 'pricing_style'>]: string
 } & { pricing_style?: PricingStyle }
+
+export interface PricingChannel {
+  id: string
+  name: string
+  member_subject_ids: string[]
+  // null inherits legacy pricing; credential defaults always take precedence.
+  multiplier: number | null
+  snapshot_id: string
+}
+
+export interface PricingChannelInput {
+  name: string
+  member_subject_ids: string[]
+}
+
+export interface PricingChannelsResponse {
+  channels: PricingChannel[]
+}
 
 export interface PricingCredentialModel extends PricingCredentialDefault {
   model: string

@@ -43,6 +43,10 @@ type usageEventFilterOptionsResponse struct {
 }
 
 type usageEventPayload struct {
+	ChannelID           string                 `json:"channel_id,omitempty"`
+	ChannelName         string                 `json:"channel_name,omitempty"`
+	AttributionWarning  string                 `json:"attribution_warning,omitempty"`
+	PricingSnapshotID   string                 `json:"pricing_snapshot_id,omitempty"`
 	ID                  string                 `json:"id,omitempty"`
 	Timestamp           string                 `json:"timestamp"`
 	APIKey              string                 `json:"api_key,omitempty"`
@@ -462,7 +466,8 @@ func buildUsageEventsPayload(rows []servicedto.UsageEventRecord, resolver usageI
 			CostUSD:             row.CostUSD,
 			CostAvailable:       row.CostAvailable,
 			PricingStyle:        strings.TrimSpace(row.PricingStyle),
-			PricingSelection:    row.PricingSelection,
+			ChannelID:           row.ChannelID, ChannelName: row.ChannelName, AttributionWarning: row.AttributionWarning, PricingSnapshotID: row.PricingSnapshotID,
+			PricingSelection: row.PricingSelection,
 			Tokens: usageEventTokenPayload{
 				InputTokens:         row.InputTokens,
 				OutputTokens:        row.OutputTokens,

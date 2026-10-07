@@ -17,8 +17,8 @@ This change is source-only. It does not modify CPA, installed services or databa
 | [#2](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/2) | Safe credential selection and registration | — | Complete | `683f2db979f2dafbc80b5f109f9acaa1d3ec578a` |
 | [#3](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/3) | Credential-wide default multiplier | #2 | Complete with historical-evidence limitation | `85351fd6`, `68354c5e`, `b586f11f` |
 | [#4](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/4) | Named channels and channel default multiplier | #3 | In progress | — |
-| [#5](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/5) | Credential model-specific multiplier | #3 | In progress | — |
-| [#6](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/6) | Credential model-specific fixed four-part tariff | #5 | Pending | — |
+| [#5](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/5) | Credential model-specific multiplier | #3 | Complete | `f50d1f53`, `c3ad0880`; integrated `f5a2f383` |
+| [#6](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/6) | Credential model-specific fixed four-part tariff | #5 | In progress | — |
 | [#7](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/7) | Channel model exceptions and full precedence | #4, #6 | Pending | — |
 | [#8](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/8) | Dual costs and request pricing explanation | #7 | Pending | — |
 | [#9](https://github.com/williamxhero/cpa-usage-keeper-ex/issues/9) | Stale binding and explicit identity migration | #4 | Pending | — |
@@ -64,7 +64,18 @@ Integrated final tip `b586f11f2f868f80d4302ce04d4cebffe1fc91cc`: backend `85351f
 - All six equivalent gates passed on the final tip: full Go tests, npm ci, full 179-file / 1,430-test suite (95.26 seconds; process-only Node compatibility flag and two workers), lint, typecheck, and build. `make verify` was actually retried and remained unavailable. Focused real service/API tests and final diff check passed; the ticket worktree was clean. No generated build output was committed.
 - Actual browser acceptance against the built app/router with a new isolated synthetic SQLite fixture passed in Edge 154: select registered credential; save `20%` and read back 0.2; save active `0x` on mobile; explicitly clear to null/inheritance; reject negative `-1x`; save `120%` and read back 1.2. The actual Overview API returned $10 after clearing and $12 after 1.2, with the same current snapshot ID as the save readback. Desktop 1344 CSS px and mobile 375 CSS px screenshots were inspected; long names, IDs, input help, field errors, save/clear controls wrap and remain usable. en/zh/zh-TW were exercised. Console showed only a `chrome-extension://invalid/` resource failure. Dedicated browser session/app process and all temporary fixture databases/screenshots/harness files were removed; the shared browser daemon was not stopped.
 
-Current frontier: #4 and #5 in parallel. Neither channel defaults nor credential model exceptions are claimed by #3.
+Neither channel defaults nor credential model exceptions are claimed by #3.
+
+### #5 — credential model multipliers
+
+Accepted backend `f50d1f53c114b98b06a6d814c6afc530822d0fd8` and UI `c3ad08803d9bf1288b3118add922a7ea1f8ec464`, integrated and pushed via `f5a2f383`.
+
+- Unique normalized subject/model configurations; independent scoped Model-then-ModelAlias override selection above the credential default, without changing the baseline's existing Model-then-Alias lookup. Selected multiplier scales that same unadjusted reference; no legacy/default stacking or unavailable-baseline downgrade.
+- Administrator list and GET/PUT/DELETE model routes support canonical readback, active 0/1, explicit clearing, persistence/restart, and exact safe selection metadata. Model-only configuration activates all existing attribution/evidence guards even when no credential-wide default exists.
+- Six new real service tests and two HTTP tests cover all cost families, future baseline validation, exact typed identity, missing baseline/zero, failure and COMMIT atomicity, concurrency, inheritance and restart. A deliberate default-only guard mutation failed (33.24 instead of expected 33.44), then passed when the model-aware guard was restored. Bounded independent backend review found no verified actionable blocker.
+- Focused backend checks passed across five packages. Focused frontend tests passed 75 tests in three files, including 32 new card cases, translations and responsive layout. Full Go suite passed (31 successful package results); npm ci, full frontend tests (180 files / 1,464 tests, 98.90 seconds, process-only Node compatibility flag/two workers), lint, typecheck and build passed. Actual `make verify` exited 127 because make remains unavailable. No retries, skipped assertions or configuration changes were needed. Nonfatal frontend socket-fixture stderr and build-size warnings remain. Final diff checks passed; the ticket tree was clean and generated assets were removed.
+
+Current frontier: #4 and #6 in parallel. #7 waits for both; #9 can proceed after #4. Draft delivery PR: https://github.com/williamxhero/cpa-usage-keeper-ex/pull/10 (not ready to merge).
 
 ## Remaining limitations
 

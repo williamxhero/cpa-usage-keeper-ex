@@ -232,9 +232,13 @@ func streamUsageEventRecordsForQuery(db *gorm.DB, query *gorm.DB, emit func(dto.
 		}
 		record := usageEventProjectionToRecord(event)
 		// Request Events cost 只在响应阶段按当前价格配置计算，不回写 usage_events。
-		result := costResolver.Calculate(UsageEventRecordCostSubject(record))
-		record.CostUSD, record.CostAvailable, record.PricingStyle = result.Cost.TotalCostUSD, result.Available, result.PricingStyle
-		record.PricingSelection = costResolver.Selection(result)
+		cost := costResolver.Calculate(UsageEventRecordCostSubject(record))
+		record.CostUSD, record.CostAvailable, record.PricingStyle = cost.Cost.TotalCostUSD, cost.Available, cost.PricingStyle
+		record.ChannelID, record.ChannelName, record.AttributionWarning = cost.ChannelID, cost.ChannelName, cost.AttributionWarning
+		if costResolver.HasPricingOverrides() || costResolver.HasChannels() {
+			record.PricingSnapshotID = costResolver.SnapshotID()
+		}
+		record.PricingSelection = costResolver.Selection(cost)
 		if err := emit(record); err != nil {
 			return err
 		}
@@ -388,7 +392,7 @@ func applyUsageEventListQuery(query *gorm.DB, filter dto.UsageQueryFilter) *gorm
 }
 
 func BuildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResolver pricing.Resolver) (*dto.AnalysisRecord, error) {
-	if db != nil && costResolver.HasPricingOverrides() {
+	if db != nil && (costResolver.HasPricingOverrides() || costResolver.HasChannels()) {
 		var result *dto.AnalysisRecord
 		err := db.Transaction(func(tx *gorm.DB) error {
 			var err error
@@ -862,7 +866,7 @@ func BuildUsageOverviewWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, cost
 }
 
 func BuildUsageOverviewWithFilterAndRecentCache(db *gorm.DB, filter dto.UsageQueryFilter, recentCache *UsageRecentEventCache, costResolver pricing.Resolver) (*dto.UsageOverviewRecord, error) {
-	if db != nil && costResolver.HasPricingOverrides() {
+	if db != nil && (costResolver.HasPricingOverrides() || costResolver.HasChannels()) {
 		var result *dto.UsageOverviewRecord
 		err := db.Transaction(func(tx *gorm.DB) error {
 			var err error

@@ -9,10 +9,6 @@ import (
 	"cpa-usage-keeper/internal/entities"
 )
 
-// OverrideConfig extends complete-candidate compilation without changing callers
-// that have only legacy prices or credential defaults.
-type OverrideConfig struct{ CredentialModels []CredentialModelConfig }
-
 const (
 	ModeMultiplier = "multiplier"
 	ModeFixed      = "fixed"
@@ -174,16 +170,6 @@ func (s *Snapshot) CredentialModelConfigs(id string) []CredentialModelConfig {
 	return result
 }
 
-func (r Resolver) credentialSubject(subject CostSubject) string {
-	if r.snapshot == nil {
-		return ""
-	}
-	if subject.AuthType == "" && !subject.ObservedIdentity {
-		return r.snapshot.credentialIndexes[subject.IdentityAuthIndex]
-	}
-	return r.snapshot.credentials[credentialIdentity{subject.AuthType, subject.IdentityAuthIndex}]
-}
-
 func (r Resolver) credentialModel(subject CostSubject) (config CredentialModelConfig, by string, selected bool) {
 	id := r.credentialSubject(subject)
 	if config, selected = r.snapshot.CredentialModelPricing(id, subject.Dimensions.Model); selected {
@@ -193,35 +179,4 @@ func (r Resolver) credentialModel(subject CostSubject) (config CredentialModelCo
 		return config, "model_alias", true
 	}
 	return CredentialModelConfig{}, "", false
-}
-func (r Resolver) HasPricingOverrides() bool {
-	return r.snapshot != nil && (len(r.snapshot.credentialDefaults) > 0 || len(r.snapshot.credentialModels) > 0)
-}
-func (r Resolver) UsesPricingOverride(subject CostSubject) bool {
-	if _, _, ok := r.credentialModel(subject); ok {
-		return true
-	}
-	return r.UsesCredentialDefault(subject)
-}
-
-// A conservative retained-evidence guard, not an identity selection.
-func (r Resolver) MayUsePricingOverride(subject CostSubject) bool {
-	if r.snapshot == nil {
-		return false
-	}
-	for key, id := range r.snapshot.credentials {
-		if strings.TrimSpace(key.authIndex) != subject.Dimensions.AuthIndex {
-			continue
-		}
-		if _, ok := r.snapshot.credentialDefaults[id]; ok {
-			return true
-		}
-		if _, ok := r.snapshot.CredentialModelPricing(id, subject.Dimensions.Model); ok {
-			return true
-		}
-		if _, ok := r.snapshot.CredentialModelPricing(id, subject.Dimensions.ModelAlias); ok {
-			return true
-		}
-	}
-	return false
 }

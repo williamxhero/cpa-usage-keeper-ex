@@ -59,6 +59,10 @@ type UsageEventFilterOptions struct {
 
 // UsageEventRecord 是单条 usage event 的服务层结果。
 type UsageEventRecord struct {
+	ChannelID           string
+	ChannelName         string
+	AttributionWarning  string
+	PricingSnapshotID   string
 	ID                  int64
 	Timestamp           time.Time
 	APIGroupKey         string

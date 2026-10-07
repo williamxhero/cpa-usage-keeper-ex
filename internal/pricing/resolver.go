@@ -34,6 +34,9 @@ type CostResult struct {
 	Scope               string
 	Multiplier          *float64
 	UnavailableReason   string
+	ChannelID           string
+	ChannelName         string
+	AttributionWarning  string
 	SelectedModel       string
 	SelectedBy          string
 	Mode                string
@@ -56,8 +59,8 @@ func (r Resolver) ActiveFields() ActiveFields {
 
 func (r Resolver) Calculate(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
+	var result CostResult
 	if config, selectedBy, selected := r.credentialModel(subject); selected {
-		var result CostResult
 		if config.Mode == ModeFixed {
 			style := config.Fixed.PricingStyle
 			if found {
@@ -70,15 +73,18 @@ func (r Resolver) Calculate(subject CostSubject) CostResult {
 		}
 		result.Scope, result.Mode = "credential_model", config.Mode
 		result.SelectedModel, result.SelectedBy = config.Model, selectedBy
-		return withBaselineReference(result, subject, model, found)
+	} else if id, multiplier, selected := r.credentialDefault(subject); selected {
+		result = calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found)
+	} else if _, multiplier, selected := r.channelDefault(subject); selected {
+		result = calculateCredentialDefault(subject, r.credentialSubject(subject), multiplier, model, matchedModel, matchedBy, found)
+		result.Scope = "channel_default"
+	} else {
+		result = r.CalculateLegacy(subject)
 	}
-	if id, multiplier, selected := r.credentialDefault(subject); selected {
-		return withBaselineReference(calculateCredentialDefault(subject, id, multiplier, model, matchedModel, matchedBy, found), subject, model, found)
-	}
-	result := r.CalculateLegacy(subject)
 	if r.HasPricingOverrides() {
 		result = withBaselineReference(result, subject, model, found)
 	}
+	result.ChannelID, result.ChannelName, result.AttributionWarning = r.ChannelAttribution(subject)
 	return result
 }
 

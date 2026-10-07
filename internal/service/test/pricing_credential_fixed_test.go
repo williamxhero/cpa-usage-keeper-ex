@@ -21,7 +21,7 @@ import (
 func syntheticFixed(factor float64, style string) pricing.FixedTariff {
 	return pricing.FixedTariff{PromptPricePer1M: new(factor), CompletionPricePer1M: new(2 * factor), CacheReadPricePer1M: new(3 * factor), CacheWritePricePer1M: new(4 * factor), PricingStyle: style}
 }
-func newCredentialFixedFixture(t *testing.T, baseline bool) (credentialDefaultFixture, string) {
+func newCredentialFixedFixture(t *testing.T, baseline bool, requestAliases ...string) (credentialDefaultFixture, string) {
 	t.Helper()
 	ctx := context.Background()
 	db := openUsageServiceTestDatabase(t)
@@ -42,6 +42,9 @@ func newCredentialFixedFixture(t *testing.T, baseline bool) (credentialDefaultFi
 		if _, err := prices.ReplacePricingRules(ctx, servicedto.ReplacePricingRulesInput{Model: "base", Rules: []servicedto.PricingRuleInput{{Key: "service_tier", Value: "priority", Multiplier: new(2.0)}, {Key: "reasoning_effort", Value: "high", Multiplier: new(3.0)}}}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if len(requestAliases) > 0 {
+		alias = new(requestAliases[0])
 	}
 	subjects := []string{}
 	for _, identity := range identities {
@@ -64,6 +67,204 @@ func newCredentialFixedFixture(t *testing.T, baseline bool) (credentialDefaultFi
 		t.Fatal(err)
 	}
 	return credentialDefaultFixture{db: db, prices: prices, defaults: prices.(service.PricingCredentialDefaultsProvider), catalog: catalog, subjectID: subjects[0], events: events, start: day, end: day.Add(20 * time.Hour), now: now}, subjects[1]
+}
+
+func attachFixedChannels(t *testing.T, base credentialDefaultFixture, second string) channelFixture {
+	t.Helper()
+	f := channelFixture{credentialDefaultFixture: base, channels: base.prices.(service.PricingChannelsProvider), subjects: []string{base.subjectID, second}}
+	for i, id := range f.subjects {
+		name := "Synthetic fixed channel A"
+		if i == 1 {
+			name = "Synthetic fixed channel B"
+		}
+		channel, err := f.channels.CreatePricingChannel(context.Background(), service.PricingChannelInput{Name: name, MemberSubjectIDs: []string{id}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.ids = append(f.ids, channel.ID)
+	}
+	f.set(t, f.ids[0], ".2")
+	f.set(t, f.ids[1], ".5")
+	return f
+}
+
+func TestCredentialFixedChannelComposedPersistedPrecedenceClearAllCostFamilies(t *testing.T) {
+	base, second := newCredentialFixedFixture(t, true)
+	f := attachFixedChannels(t, base, second)
+	ctx := context.Background()
+	fixed := f.prices.(service.PricingCredentialFixedProvider)
+	models := f.prices.(service.PricingCredentialModelsProvider)
+	if _, err := f.defaults.SetCredentialDefault(ctx, f.subjectID, ".3"); err != nil {
+		t.Fatal(err)
+	}
+	for model, factor := range map[string]float64{"observed-model": 1, "base": 3} {
+		if _, err := fixed.SetCredentialFixed(ctx, f.subjectID, model, syntheticFixed(factor, "openai")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fixed.SetCredentialFixed(ctx, second, "observed-model", syntheticFixed(2, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	assertStage := func(scope, mode, selected, by string, first, other float64) {
+		t.Helper()
+		f.assertCostFamilies(t, first+other, true)
+		f.assertChannels(t, map[string]float64{f.ids[0]: first, f.ids[1]: other})
+		page, err := service.NewUsageService(f.db, f.catalog).ListUsageEvents(ctx, servicedto.UsageFilter{StartTime: &f.start, EndTime: &f.end, EndExclusive: true})
+		if err != nil || len(page.Events) != 2 {
+			t.Fatalf("composed details %+v %v", page, err)
+		}
+		for _, event := range page.Events {
+			if event.AuthIndex != "synthetic-a" {
+				continue
+			}
+			if !event.CostAvailable || event.ChannelID != f.ids[0] || event.ChannelName != "Synthetic fixed channel A" || event.AttributionWarning != "" {
+				t.Fatalf("lost exact channel evidence %+v", event)
+			}
+			closeCost(t, event.CostUSD, first)
+			if scope != "" {
+				selection := event.PricingSelection
+				if selection == nil || selection.Scope != scope || selection.Mode != mode || selection.SelectedModel != selected || selection.SelectedBy != by || selection.BaselineModel != "base" || selection.BaselineBy != "model_alias" || !selection.BaselineAvailable || selection.BaselineCostUSD == nil {
+					t.Fatalf("mixed scoped/baseline selection %+v", selection)
+				}
+				closeCost(t, *selection.BaselineCostUSD, 36)
+				if mode == "fixed" && (selection.Fixed == nil || selection.Multiplier != nil || selection.PricingStyle != "claude") {
+					t.Fatalf("stacked fixed/style %+v", selection)
+				}
+			}
+		}
+	}
+	assertStage("credential_model", "fixed", "observed-model", "model", 10, 20)
+	// Recover fixed rows, defaults, channel membership and tariffs together.
+	f.prices, f.catalog = newCatalogPricingService(t, f.db)
+	f.channels = f.prices.(service.PricingChannelsProvider)
+	f.defaults = f.prices.(service.PricingCredentialDefaultsProvider)
+	models = f.prices.(service.PricingCredentialModelsProvider)
+	assertStage("credential_model", "fixed", "observed-model", "model", 10, 20)
+	if _, err := models.ClearCredentialModel(ctx, f.subjectID, "observed-model"); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("credential_model", "fixed", "base", "model_alias", 30, 20)
+	if _, err := models.ClearCredentialModel(ctx, f.subjectID, "base"); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("credential_default", "multiplier", "", "", 10.8, 20)
+	if _, err := f.defaults.ClearCredentialDefault(ctx, f.subjectID); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("channel_default", "multiplier", "", "", 7.2, 20)
+	if _, err := f.channels.ClearChannelDefault(ctx, f.ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("legacy", "legacy", "", "", 108, 20)
+	if _, err := models.ClearCredentialModel(ctx, second, "observed-model"); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("legacy", "legacy", "", "", 108, 18)
+	if _, err := f.channels.ClearChannelDefault(ctx, f.ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	assertStage("", "", "", "", 108, 108)
+}
+
+func TestCredentialFixedChannelNoBaselineHighestMultiplierNeverDowngrades(t *testing.T) {
+	base, second := newCredentialFixedFixture(t, false, "unpriced-alias")
+	f := attachFixedChannels(t, base, second)
+	ctx := context.Background()
+	fixed := f.prices.(service.PricingCredentialFixedProvider)
+	models := f.prices.(service.PricingCredentialModelsProvider)
+	if _, err := f.defaults.SetCredentialDefault(ctx, f.subjectID, ".3"); err != nil {
+		t.Fatal(err)
+	}
+	for model, factor := range map[string]float64{"observed-model": 1, "unpriced-alias": 3} {
+		if _, err := fixed.SetCredentialFixed(ctx, f.subjectID, model, syntheticFixed(factor, "openai")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fixed.SetCredentialFixed(ctx, second, "observed-model", syntheticFixed(2, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	f.assertCostFamilies(t, 30, true)
+	f.assertChannels(t, map[string]float64{f.ids[0]: 10, f.ids[1]: 20})
+	assertPartial := func(scope string) {
+		t.Helper()
+		usage := service.NewUsageService(f.db, f.catalog)
+		for _, unit := range []string{"hour", "day"} {
+			end := f.end
+			if unit == "day" {
+				end = f.start.AddDate(0, 0, 1)
+			}
+			filter := servicedto.UsageFilter{Range: "custom", CustomUnit: unit, StartTime: &f.start, EndTime: &end, EndExclusive: true}
+			overview, err := usage.GetUsageOverview(ctx, filter)
+			if err != nil || overview.Summary.CostAvailable {
+				t.Fatalf("partial overview %+v %v", overview, err)
+			}
+			closeCost(t, overview.Summary.TotalCost, 20)
+			analysis, err := usage.GetAnalysis(ctx, filter)
+			if err != nil || analysis.CostBreakdown.CostAvailable {
+				t.Fatalf("partial analysis %+v %v", analysis, err)
+			}
+			closeCost(t, analysis.CostBreakdown.TotalCostUSD, 20)
+			comp, err := usage.(service.UsageComparisonProvider).GetUsageOverviewComparisons(ctx, filter)
+			if err != nil || len(comp.Comparisons.Channels) != 2 {
+				t.Fatalf("partial channel comparison %+v %v", comp, err)
+			}
+			a, b := comp.Comparisons.Channels[f.ids[0]], comp.Comparisons.Channels[f.ids[1]]
+			if a == nil || b == nil || a.CostAvailable || !b.CostAvailable {
+				t.Fatalf("mixed channel availability %+v %+v", a, b)
+			}
+			closeCost(t, a.CostUSD, 0)
+			closeCost(t, b.CostUSD, 20)
+		}
+		page, err := usage.ListUsageEvents(ctx, servicedto.UsageFilter{StartTime: &f.start, EndTime: &f.end, EndExclusive: true})
+		if err != nil || len(page.Events) != 2 {
+			t.Fatalf("partial details %+v %v", page, err)
+		}
+		for _, event := range page.Events {
+			if event.AuthIndex != "synthetic-a" {
+				continue
+			}
+			selection := event.PricingSelection
+			if event.CostAvailable || event.CostUSD != 0 || event.ChannelID != f.ids[0] || selection == nil || selection.Scope != scope || selection.Mode != "multiplier" || selection.BaselineAvailable || selection.BaselineCostUSD != nil || selection.UnavailableReason != "missing_baseline" {
+				t.Fatalf("downgraded missing baseline %+v %+v", event, selection)
+			}
+		}
+		window, err := repository.SumUsageWindowStatsByAuthIndex(ctx, f.db, "synthetic-a", f.start, &f.end, f.catalog.NewResolver())
+		if err != nil || window.CostAvailable || window.Cost != 0 {
+			t.Fatalf("downgraded window %+v %v", window, err)
+		}
+	}
+	for _, text := range []string{".4", "0"} {
+		if _, err := models.SetCredentialModel(ctx, f.subjectID, "observed-model", text); err != nil {
+			t.Fatal(err)
+		}
+		assertPartial("credential_model")
+	}
+	if _, err := models.ClearCredentialModel(ctx, f.subjectID, "observed-model"); err != nil {
+		t.Fatal(err)
+	}
+	f.assertCostFamilies(t, 50, true)
+	f.assertChannels(t, map[string]float64{f.ids[0]: 30, f.ids[1]: 20})
+	if _, err := models.ClearCredentialModel(ctx, f.subjectID, "unpriced-alias"); err != nil {
+		t.Fatal(err)
+	}
+	assertPartial("credential_default")
+	if _, err := f.defaults.ClearCredentialDefault(ctx, f.subjectID); err != nil {
+		t.Fatal(err)
+	}
+	assertPartial("channel_default")
+	if _, err := fixed.SetCredentialFixed(ctx, f.subjectID, "observed-model", syntheticFixed(0, "openai")); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range f.ids {
+		if _, err := f.channels.ClearChannelDefault(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.prices, f.catalog = newCatalogPricingService(t, f.db)
+	// Fixed-only configurations remain known despite missing baseline and cleared
+	// lower defaults; the relocated evidence guards must include fixed mode.
+	f.assertCostFamilies(t, 20, true)
+	f.assertChannels(t, map[string]float64{f.ids[0]: 0, f.ids[1]: 20})
 }
 
 func TestCredentialFixedTwoCredentialsAllCostFamiliesRestartModesClear(t *testing.T) {

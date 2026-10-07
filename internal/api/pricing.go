@@ -128,6 +128,7 @@ func registerPricingRoutes(router gin.IRoutes, pricingProvider service.PricingPr
 	registerPricingRuleRoutes(router, pricingProvider)
 	registerPricingCredentialRoutes(router, pricingProvider)
 	registerPricingCredentialDefaultRoutes(router, pricingProvider)
+	registerPricingChannelRoutes(router, pricingProvider)
 	registerPricingCredentialModelRoutes(router, pricingProvider)
 
 	router.PUT("/pricing", func(c *gin.Context) {
