@@ -6,6 +6,8 @@ const readSource = (url: URL) => readFileSync(url, 'utf8').replace(/\r\n/g, '\n'
 const usagePageStyles = readSource(new URL('../UsagePage.module.scss', import.meta.url))
 const keyOverviewPageStyles = readSource(new URL('../../features/key-viewer/KeyViewerShell.module.scss', import.meta.url))
 const priceRulesStyles = readSource(new URL('../../components/usage/pricing/PriceRulesModal.module.scss', import.meta.url))
+const credentialDefaultsStyles = readSource(new URL('../../components/usage/pricing/PricingCredentialDefaultsCard.module.scss', import.meta.url))
+const channelStyles = readSource(new URL('../../components/usage/pricing/PricingChannelsCard.module.scss', import.meta.url))
 const credentialStyles = readSource(new URL('../../components/usage/credentials/CredentialSections.module.scss', import.meta.url))
 const analysisPanelStyles = readSource(new URL('../../components/usage/analysis/AnalysisPanel.module.scss', import.meta.url))
 const timeRangeControlStyles = readSource(new URL('../../components/usage/TimeRangeControl.module.scss', import.meta.url))
@@ -35,6 +37,82 @@ const relativeLuminance = (hex: string) => {
 }
 
 describe('UsagePage responsive layout and accessibility', () => {
+  it('wraps both long cost labels, independent reasons and expandable safe pricing evidence on mobile', () => {
+    const styles = readSource(new URL('../../components/usage/DualCosts.module.scss', import.meta.url));
+    expect(styles).toMatch(/\.costs\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/);
+    expect(styles).toMatch(/\.explanation\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/);
+    expect(styles).toContain('@media (max-width: 600px)');
+    expect(styles).toContain('white-space: normal; overflow: visible; overflow-wrap: anywhere;');
+  });
+  it('mounts separate identity migration/correction with safe wrapping and mobile actions', () => {
+    const card = readSource(new URL('../../components/usage/pricing/PricingIdentityMigrationCard.tsx', import.meta.url))
+    const styles = readSource(new URL('../../components/usage/pricing/PricingIdentityMigrationCard.module.scss', import.meta.url))
+    expect(readSource(new URL('../UsagePage.tsx', import.meta.url))).toContain('<PricingIdentityMigrationCard onChanged={handlePricingChanged} />')
+    expect(card).toContain('pricing_identity_migration.migrate_title')
+    expect(card).toContain('pricing_identity_migration.correction_title')
+    expect(styles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(styles).toMatch(/\.selector\s*\{[^}]*width:\s*100%;/)
+    expect(styles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(styles).toContain('@media (max-width: 600px)')
+    expect(styles).toContain('.actions :global(.btn) { flex: 1 1 auto; }')
+  })
+
+  it('mounts model exceptions as a distinct card reusing narrow-screen wrapping styles', () => {
+    const card = readSource(new URL('../../components/usage/pricing/PricingCredentialModelsCard.tsx', import.meta.url))
+    const page = readSource(new URL('../UsagePage.tsx', import.meta.url))
+    expect(page).toContain('<PricingCredentialModelsCard onChanged={handlePricingChanged} />')
+    expect(card).toContain("import styles from './PricingCredentialDefaultsCard.module.scss'")
+    expect(card).toContain('dropdownClassName={styles.options}')
+    expect(card).toContain('className={styles.readback}')
+    expect(card).toMatch(/className=\{styles.actions\}><div className=\{styles.selector\}>/)
+  })
+
+  it('mounts channel model exceptions only in the existing admin settings surface with shared mobile styles', () => {
+    const card = readSource(new URL('../../components/usage/pricing/PricingChannelModelsCard.tsx', import.meta.url))
+    const page = readSource(new URL('../UsagePage.tsx', import.meta.url))
+    const app = readSource(new URL('../../App.tsx', import.meta.url))
+    const settingsStart = page.indexOf("{activeTab === 'settings' && (\n              <div className={styles.settingsSections}>")
+    expect(settingsStart).toBeGreaterThan(0)
+    expect(page.indexOf('<PricingChannelModelsCard onChanged={handlePricingChanged} />')).toBeGreaterThan(settingsStart)
+    expect(app).toMatch(/else if \(authRole === 'api_key_viewer'\)[\s\S]*KeyOverviewPage[\s\S]*else\s*\{\s*page = <UsagePage/)
+    expect(card).toContain("import styles from './PricingCredentialDefaultsCard.module.scss'")
+    expect(card).toContain('dropdownClassName={styles.options}')
+    expect(card).toContain('className={styles.readback}'); expect(card).toContain('className={styles.fixedRates}')
+    expect(card).toContain('inputMode="decimal"')
+    expect(card).toContain('count: choice.member_subject_ids.length')
+    expect(card).not.toContain('fetchCredentialPricingSubjects')
+    expect(card).not.toContain('updatePricing(')
+    expect(credentialDefaultsStyles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(credentialDefaultsStyles).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*\.fixedRates\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+  })
+
+  it('keeps fixed tariff fields responsive with four labeled decimal inputs', () => {
+    const card = readSource(new URL('../../components/usage/pricing/PricingCredentialModelsCard.tsx', import.meta.url))
+    expect(card).toContain('className={styles.fixedRates}')
+    expect(card).toContain('inputMode="decimal"')
+    expect(credentialDefaultsStyles).toMatch(/\.fixedRates\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
+    expect(credentialDefaultsStyles).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*\.fixedRates\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+  })
+
+  it('wraps credential default metadata, options, errors and actions on narrow screens', () => {
+    expect(credentialDefaultsStyles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(credentialDefaultsStyles).toMatch(/\.actions\s*\{[^}]*flex-wrap:\s*wrap;/)
+    expect(credentialDefaultsStyles).toMatch(/\.readback\s*\{[^}]*flex-wrap:\s*wrap;/)
+    expect(credentialDefaultsStyles).toMatch(/\.options\s*\[role='option'\]\s*\{[^}]*height:\s*auto;/)
+    expect(credentialDefaultsStyles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(credentialDefaultsStyles).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{\s*\.selector\s*\{[^}]*flex-basis:\s*100%;/)
+  })
+
+  it('wraps channel names, member labels, readback, errors and actions on narrow screens', () => {
+    expect(channelStyles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(channelStyles).toMatch(/\.actions\s*\{[^}]*flex-wrap:\s*wrap;/)
+    expect(channelStyles).toMatch(/\.readback\s*\{[^}]*flex-wrap:\s*wrap;/)
+    expect(channelStyles).toMatch(/\.members\s*\{[\s\S]*?li\s*\{[^}]*flex-wrap:\s*wrap;/)
+    expect(channelStyles).toMatch(/\.options\s*\[role='option'\]\s*\{[^}]*height:\s*auto;/)
+    expect(channelStyles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
+    expect(channelStyles).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{\s*\.selector\s*\{[^}]*flex-basis:\s*100%;/)
+  })
+
   it('lets dashboard page frames consume the mode-specific width cap', () => {
     for (const source of [usagePageStyles, keyOverviewPageStyles]) {
       expect(styleRuleBlock(source, '.pageFrame')).toContain('width: min(var(--keeper-page-max-width, 1245px), 100%);')

@@ -4,6 +4,7 @@ import { IconDiamond, IconDollarSign, IconSatellite } from '@/components/ui/icon
 import { formatCompactNumber, formatUsd } from '@/utils/usage';
 import type { UsageOverviewPayload } from './hooks/useUsageData';
 import styles from '@/pages/UsagePage.module.scss';
+import { DualCostsDisplay } from './DualCosts';
 
 interface DailyAverageMetrics {
   requests: number;
@@ -89,7 +90,7 @@ export function DailyAverageCard({ usage, loading }: DailyAverageCardProps) {
       value: loading || !metrics ? '-' : formatUsd(metrics.cost),
       icon: <IconDollarSign size={14} />,
       accent: '#f59e0b',
-      hint: metrics && !metrics.costAvailable ? t('usage_stats.cost_need_price') : undefined,
+      hint: metrics && !usage?.summary?.daily_average_dual_costs && !metrics.costAvailable ? t('usage_stats.cost_need_price') : undefined,
     },
   ];
 
@@ -115,7 +116,7 @@ export function DailyAverageCard({ usage, loading }: DailyAverageCardProps) {
               <span className={styles.dailyAverageMetricLabel}>{item.label}</span>
               {item.hint && <span className={styles.dailyAverageCostHint}>{item.hint}</span>}
             </span>
-            <strong className={styles.dailyAverageMetricValue}>{item.value}</strong>
+            {item.key === 'cost' && !loading && metrics ? <DualCostsDisplay costs={usage?.summary?.daily_average_dual_costs} configuredFallback={metrics.cost} valueClassName={styles.dailyAverageMetricValue} /> : <strong className={styles.dailyAverageMetricValue}>{item.value}</strong>}
           </div>
         ))}
       </div>

@@ -4,7 +4,7 @@ import '@/lib/chartjs';
 import { Interaction, Tooltip } from 'chart.js';
 import type { Chart, ChartData, ChartOptions, InteractionItem, InteractionModeFunction, Plugin, ScriptableContext, TooltipModel, TooltipPositionerFunction } from 'chart.js';
 import { Bar, Doughnut, Scatter } from 'react-chartjs-2';
-import type { AnalysisCompositionItem, AnalysisCostBreakdown, AnalysisHeatmapCell, AnalysisLatencyDiagnostics, AnalysisModelEfficiencyItem, AnalysisModelUsagePayload, AnalysisResponse, AnalysisTokenUsageBucket } from '@/lib/types';
+import type { AnalysisCompositionItem, AnalysisCostBreakdown, AnalysisHeatmapCell, AnalysisLatencyDiagnostics, AnalysisModelEfficiencyItem, AnalysisModelUsagePayload, AnalysisResponse, AnalysisTokenUsageBucket, DualCosts } from '@/lib/types';
 import { calculateDisplayInputTokens, calculateDisplayOutputTokens, formatCompactNumber, formatDurationMs, formatUsd } from '@/utils/usage';
 import { buildUsageChartTooltipStyle, getUsageChartTheme, toUsageChartGradientFill as toGradientFill, USAGE_CHART_REQUESTS_LINE_COLOR, USAGE_CHART_COMPOSITION_COLORS as CHART_COLORS, USAGE_CHART_TOKEN_COLORS as TOKEN_COLORS, type UsageChartGradientColor, type UsageChartTheme } from '@/utils/usage/chartConfig';
 import { createCompositionLabelsPlugin } from './compositionLabels';
@@ -13,6 +13,7 @@ import { AnalysisRankingList, getAnalysisRankingColor, useAnalysisHighlight, typ
 import { useTopModelsTooltip } from './topModelsTooltip';
 import styles from './AnalysisPanel.module.scss';
 import { LatencyScatterChart } from '../LatencyScatterChart';
+import { DualCostsDisplay, dualCostLines, estimateAmount } from '../DualCosts';
 
 interface AnalysisPanelProps {
   analysis: AnalysisResponse | null;
@@ -42,6 +43,7 @@ type ChartRow = {
   requests: number;
   cost: number;
   costAvailable: boolean;
+  dualCosts?: DualCosts;
 };
 
 type ChartTheme = UsageChartTheme;
@@ -537,6 +539,7 @@ function buildTopModelsViewModel(
       share: rangeTotal > 0 ? (item.total / rangeTotal) * 100 : 0,
       requests: details ? toNumber(details.requests) : requestsByModel.get(item.model) ?? 0,
       cost: details && details.cost_available !== false ? toNumber(details.cost_usd) : null,
+      dualCosts: details?.dual_costs,
       inputTokens: details ? toNumber(details.input_tokens) : null,
       cacheReadTokens: details ? toNumber(details.cache_read_tokens) : null,
       color: getAnalysisRankingColor(`model:${item.model}`, index, TOP_MODEL_COLORS),
@@ -685,6 +688,7 @@ function buildTokenUsageRows(buckets: AnalysisTokenUsageBucket[], granularity: A
     requests: toNumber(bucket.requests),
     cost: toNumber(bucket.cost_usd),
     costAvailable: bucket.cost_available !== false,
+    dualCosts: bucket.dual_costs,
   }));
 }
 
@@ -713,7 +717,7 @@ function buildTokenLegendItems(labels: TokenLabels, averageTokenTotal: number, a
   ];
 }
 
-function buildAnalysisTokenChartOptions({ chartTheme, isMobile, totalTokens, totalLabel, averageTokenTotal }: { chartTheme: ChartTheme; isMobile: boolean; totalTokens: number[]; totalLabel: string; averageTokenTotal: number }): TokenChartOptions {
+function buildAnalysisTokenChartOptions({ chartTheme, isMobile, totalTokens, totalLabel, averageTokenTotal, costTooltipLines }: { chartTheme: ChartTheme; isMobile: boolean; totalTokens: number[]; totalLabel: string; averageTokenTotal: number; costTooltipLines: string[][] }): TokenChartOptions {
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -729,7 +733,9 @@ function buildAnalysisTokenChartOptions({ chartTheme, isMobile, totalTokens, tot
             const axisID = context.dataset && typeof context.dataset === 'object'
               ? (context.dataset as { yAxisID?: unknown }).yAxisID
               : undefined;
-            return `${label}${axisID === 'cost' ? formatUsd(value) : formatCompactNumber(value)}`;
+            return axisID === 'cost'
+              ? costTooltipLines[context.dataIndex] ?? []
+              : `${label}${formatCompactNumber(value)}`;
           },
           footer: (items) => {
             const dataIndex = items[0]?.dataIndex ?? -1;
@@ -937,7 +943,7 @@ function TokenUsageChart({ rows, breakdown, loading, isDark, isMobile }: { rows:
     total: t('usage_stats.total_tokens'),
     average: t('usage_stats.analysis_token_average'),
     requests: t('usage_stats.requests_count'),
-    cost: t('usage_stats.total_cost'),
+    cost: t('cost_estimates.configured'),
   }), [t]);
   const chartTheme = useMemo(() => getChartTheme(isDark), [isDark]);
   const averageTokenTotal = useMemo(() => calculateAverageTotalTokens(rows), [rows]);
@@ -948,7 +954,8 @@ function TokenUsageChart({ rows, breakdown, loading, isDark, isMobile }: { rows:
     totalTokens: rows.map((row) => row.total),
     totalLabel: tokenLabels.total,
     averageTokenTotal,
-  }), [averageTokenTotal, chartTheme, isMobile, rows, tokenLabels.total]);
+    costTooltipLines: rows.map((row) => dualCostLines(row.dualCosts, t, row.cost)),
+  }), [averageTokenTotal, chartTheme, isMobile, rows, tokenLabels.total, t]);
   const legendItems = useMemo(() => buildTokenLegendItems(tokenLabels, averageTokenTotal, chartTheme.averageLine), [averageTokenTotal, chartTheme.averageLine, tokenLabels]);
   const hasUnavailableCost = breakdown?.cost_available === false || rows.some((row) => !row.costAvailable);
   const totalTokens = rows.reduce((sum, row) => sum + row.total, 0);
@@ -969,10 +976,10 @@ function TokenUsageChart({ rows, breakdown, loading, isDark, isMobile }: { rows:
           </div>
           <div>
             <dt>{t('usage_stats.total_cost')}</dt>
-            <dd>{formatUsd(totalCost)}</dd>
+            <dd><DualCostsDisplay costs={breakdown?.dual_costs} configuredFallback={totalCost} /></dd>
           </div>
           <div>
-            <dt>{t('usage_stats.analysis_cost_per_million_tokens')}</dt>
+            <dt>{t('cost_estimates.configured')} · {t('usage_stats.analysis_cost_per_million_tokens')}</dt>
             <dd title={t('usage_stats.analysis_blended_rate')}>{formatUsd(getCostRatePerMillion(totalCost, totalTokens))}</dd>
           </div>
         </dl>
@@ -1125,6 +1132,7 @@ function CompositionPanel({ tabs, loading, isDark, windowMinutes }: { tabs: Comp
   const rankingItems = useMemo<AnalysisRankingItem[]>(() => items.map((item, index) => ({
     key: item.key, label: item.label, total: toNumber(item.total_tokens), share: toNumber(item.percent),
     requests: toNumber(item.requests), cost: item.cost_available === false ? null : toNumber(item.cost_usd),
+    dualCosts: item.dual_costs,
     inputTokens: toNumber(item.input_tokens), cacheReadTokens: toNumber(item.cache_read_tokens),
     color: getAnalysisRankingColor(`${activeTab?.id}:${item.key}`, index, CHART_COLORS),
   })), [activeTab?.id, items]);
@@ -1276,9 +1284,11 @@ function appendModelEfficiencyTooltipMetric(group: HTMLDivElement, label: string
 function createModelEfficiencyTooltipHandler({
   rows,
   labels,
+  costTooltipLines,
 }: {
   rows: AnalysisModelEfficiencyItem[];
   labels: ModelEfficiencyTooltipLabels;
+  costTooltipLines: string[][];
 }): (args: { chart: Chart; tooltip: TooltipModel<'scatter'> }) => void {
   return ({ chart, tooltip }) => {
     if (typeof document === 'undefined') return;
@@ -1313,6 +1323,12 @@ function createModelEfficiencyTooltipHandler({
       appendModelEfficiencyTooltipMetric(group, labels.totalTokens, formatCompactNumber(toNumber(row.total_tokens)));
       appendModelEfficiencyTooltipMetric(group, labels.costPerMillion, formatUsd(getModelEfficiencyRate(row)));
       appendModelEfficiencyTooltipMetric(group, labels.requests, formatCompactNumber(toNumber(row.requests)));
+      for (const line of costTooltipLines[dataPoint.dataIndex] ?? []) {
+        const metric = document.createElement('div');
+        metric.className = styles.modelEfficiencyTooltipMetric;
+        metric.textContent = line;
+        group.appendChild(metric);
+      }
       tooltipEl.appendChild(group);
     }
 
@@ -1346,7 +1362,7 @@ function ModelEfficiencyCard({ rows, loading, isDark, isMobile }: { rows: Analys
   const pricedRows = useMemo(() => rows.filter((row) => row.cost_available !== false && toNumber(row.total_tokens) > 0 && getModelEfficiencyRate(row) > 0), [rows]);
   const tooltipLabels = useMemo(() => ({
     totalTokens: t('usage_stats.total_tokens'),
-    costPerMillion: t('usage_stats.analysis_cost_per_million_tokens'),
+    costPerMillion: `${t('cost_estimates.configured')} · ${t('usage_stats.analysis_cost_per_million_tokens')}`,
     requests: t('usage_stats.requests_count'),
   }), [t]);
   const pointRadii = useMemo(() => buildModelEfficiencyRadii(pricedRows.map((row) => toNumber(row.total_tokens))), [pricedRows]);
@@ -1379,7 +1395,7 @@ function ModelEfficiencyCard({ rows, loading, isDark, isMobile }: { rows: Analys
       legend: { display: false },
       tooltip: {
         enabled: false,
-        external: createModelEfficiencyTooltipHandler({ rows: pricedRows, labels: tooltipLabels }),
+        external: createModelEfficiencyTooltipHandler({ rows: pricedRows, labels: tooltipLabels, costTooltipLines: pricedRows.map((row) => dualCostLines(row.dual_costs, t, row.cost_usd)) }),
         backgroundColor: chartTheme.tooltipBg,
         titleColor: chartTheme.textPrimary,
         bodyColor: chartTheme.tooltipBody,
@@ -1393,8 +1409,9 @@ function ModelEfficiencyCard({ rows, loading, isDark, isMobile }: { rows: Analys
             return [
               row.model,
               `${t('usage_stats.total_tokens')}: ${formatCompactNumber(row.total_tokens)}`,
-              `${t('usage_stats.analysis_cost_per_million_tokens')}: ${formatUsd(getModelEfficiencyRate(row))}`,
+              `${tooltipLabels.costPerMillion}: ${formatUsd(getModelEfficiencyRate(row))}`,
               `${t('usage_stats.requests_count')}: ${formatCompactNumber(row.requests)}`,
+              ...dualCostLines(row.dual_costs, t, row.cost_usd),
             ];
           },
         },
@@ -1453,7 +1470,7 @@ function ModelEfficiencyCard({ rows, loading, isDark, isMobile }: { rows: Analys
   );
 }
 
-function Heatmap({ cells, apiKeys, apiKeyLabels, models, loading, isDark }: { cells: AnalysisHeatmapCell[]; apiKeys: string[]; apiKeyLabels: Record<string, string>; models: string[]; loading: boolean; isDark: boolean }) {
+function Heatmap({ cells, apiKeys, apiKeyLabels, models, rowDualCosts, columnDualCosts, loading, isDark }: { cells: AnalysisHeatmapCell[]; apiKeys: string[]; apiKeyLabels: Record<string, string>; models: string[]; rowDualCosts?: Record<string, DualCosts>; columnDualCosts?: Record<string, DualCosts>; loading: boolean; isDark: boolean }) {
   const { t } = useTranslation();
   const [tooltip, setTooltip] = useState<FloatingTooltipState | null>(null);
   const cellMap = useMemo(() => new Map(cells.map((cell) => [`${cell.api_key}\0${cell.model}`, cell])), [cells]);
@@ -1491,7 +1508,7 @@ function Heatmap({ cells, apiKeys, apiKeyLabels, models, loading, isDark }: { ce
     const cacheRead = toNumber(cell?.cache_read_tokens);
     const cacheWrite = toNumber(cell?.cache_creation_tokens);
     const total = toNumber(cell?.total_tokens);
-    const cost = toNumber(cell?.cost_usd);
+    const cost = cell ? toNumber(cell.cost_usd) : undefined;
     return [
       `${getAPIKeyLabel(apiKey)} / ${model}`,
       `${t('usage_stats.requests_count')}: ${formatCompactNumber(requests)}`,
@@ -1501,7 +1518,7 @@ function Heatmap({ cells, apiKeys, apiKeyLabels, models, loading, isDark }: { ce
       `${t('usage_stats.cache_read_tokens')}: ${formatCompactNumber(cacheRead)}`,
       `${t('usage_stats.cache_creation_tokens')}: ${formatCompactNumber(cacheWrite)}`,
       `${t('usage_stats.total_tokens')}: ${formatCompactNumber(total)}`,
-      `${t('usage_stats.total_cost')}: ${formatUsd(cost)}`,
+      ...dualCostLines(cell?.dual_costs, t, cost),
     ];
   };
   const showTooltip = (
@@ -1552,11 +1569,11 @@ function Heatmap({ cells, apiKeys, apiKeyLabels, models, loading, isDark }: { ce
                     className={`${styles.heatmapHeaderCell} ${styles.heatmapModelHeaderCell}`}
                     data-full-name={model}
                     tabIndex={0}
-                    aria-label={model}
-                    onMouseEnter={(event) => showTooltip([model], event)}
-                    onMouseMove={(event) => showTooltip([model], event)}
+                    aria-label={[model, ...dualCostLines(columnDualCosts?.[model], t)].join(', ')}
+                    onMouseEnter={(event) => showTooltip([model, ...dualCostLines(columnDualCosts?.[model], t)], event)}
+                    onMouseMove={(event) => showTooltip([model, ...dualCostLines(columnDualCosts?.[model], t)], event)}
                     onMouseLeave={hideTooltip}
-                    onFocus={(event) => showTooltip([model], event)}
+                    onFocus={(event) => showTooltip([model, ...dualCostLines(columnDualCosts?.[model], t)], event)}
                     onBlur={hideTooltip}
                   >
                     <span className={`${styles.heatmapTruncatedLabel} ${styles.heatmapModelLabel}`}>{model}</span>
@@ -1566,22 +1583,22 @@ function Heatmap({ cells, apiKeys, apiKeyLabels, models, loading, isDark }: { ce
                   {t('usage_stats.total_tokens')}
                 </div>
                 <div className={`${styles.heatmapHeaderCell} ${styles.heatmapSummaryHeaderCell} ${styles.heatmapTotalCostColumn}`}>
-                  {t('usage_stats.total_cost')}
+                  {t('cost_estimates.configured')}
                 </div>
                 {apiKeys.map((apiKey) => {
                   const apiKeyLabel = getAPIKeyLabel(apiKey);
                   const rowTotal = rowTotals.get(apiKey) ?? { totalTokens: 0, totalCost: 0, costAvailable: true };
                   const formattedTotalTokens = formatCompactNumber(rowTotal.totalTokens);
-                  const formattedTotalCost = formatUsd(rowTotal.totalCost);
+                  const totalCostLines = dualCostLines(rowDualCosts?.[apiKey], t, rowTotal.totalCost);
                   const apiKeyColumnLabel = t('usage_stats.analysis_heatmap_api_key');
                   const summaryTooltipLines = [
                     apiKeyLabel,
                     `${t('usage_stats.total_tokens')}: ${formattedTotalTokens}`,
-                    `${t('usage_stats.total_cost')}: ${formattedTotalCost}`,
+                    ...totalCostLines,
                   ];
                   const apiKeyAriaLabel = `${apiKeyColumnLabel}: ${apiKeyLabel}, ${summaryTooltipLines.slice(1).join(', ')}`;
                   const totalTokensAriaLabel = `${t('usage_stats.total_tokens')}: ${formattedTotalTokens}, ${apiKeyColumnLabel}: ${apiKeyLabel}`;
-                  const totalCostAriaLabel = `${t('usage_stats.total_cost')}: ${formattedTotalCost}, ${apiKeyColumnLabel}: ${apiKeyLabel}`;
+                  const totalCostAriaLabel = `${totalCostLines.join(', ')}, ${apiKeyColumnLabel}: ${apiKeyLabel}`;
                   return (
                     <div key={apiKey} className={styles.heatmapRowContents}>
                       <div
@@ -1648,7 +1665,7 @@ function Heatmap({ cells, apiKeys, apiKeyLabels, models, loading, isDark }: { ce
                         onFocus={(event) => showTooltip(summaryTooltipLines, event)}
                         onBlur={hideTooltip}
                       >
-                        <span className={styles.heatmapTotalCostValue}>{formattedTotalCost}</span>
+                        <span className={styles.heatmapTotalCostValue}>{estimateAmount(rowDualCosts?.[apiKey]?.configured, rowTotal.totalCost)}</span>
                       </div>
                     </div>
                   );
@@ -1729,7 +1746,7 @@ export function AnalysisPanel({
         <LatencyDiagnosticsCard diagnostics={latencyDiagnostics} loading={latencyLoading} error={latencyError} isDark={isDark} isMobile={isMobile} />
         <ModelEfficiencyCard rows={analysis?.model_efficiency ?? []} loading={loading} isDark={isDark} isMobile={isMobile} />
       </div>
-      <Heatmap cells={analysis?.heatmap?.cells ?? []} apiKeys={analysis?.heatmap?.api_keys ?? []} apiKeyLabels={analysis?.heatmap?.api_key_labels ?? {}} models={analysis?.heatmap?.models ?? []} loading={loading} isDark={isDark} />
+      <Heatmap cells={analysis?.heatmap?.cells ?? []} apiKeys={analysis?.heatmap?.api_keys ?? []} apiKeyLabels={analysis?.heatmap?.api_key_labels ?? {}} models={analysis?.heatmap?.models ?? []} rowDualCosts={analysis?.heatmap?.row_dual_costs} columnDualCosts={analysis?.heatmap?.column_dual_costs} loading={loading} isDark={isDark} />
     </div>
   );
 }

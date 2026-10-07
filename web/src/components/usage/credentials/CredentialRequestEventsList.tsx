@@ -30,6 +30,7 @@ import {
   getUsageModelTooltip,
   type UsageModelTooltip,
 } from '@/utils/usage/modelDisplay'
+import { DualCostsDisplay, PricingExplanation } from '../DualCosts'
 import { RequestEventResultBadge } from '@/components/usage/RequestEventResultBadge'
 import styles from './CredentialRequestEventsList.module.scss'
 
@@ -807,8 +808,9 @@ export function CredentialRequestEventsList({
             {renderLabeledOverflowText(t('usage_stats.speed'), row.speed)}
           </td>
           <td className={`${styles.stackedCell} ${styles.cost}`.trim()}>
-            {renderOverflowText('strong', row.cost)}
+            <DualCostsDisplay costs={row.event.dual_costs} configuredFallback={row.event.cost_available === true ? row.event.cost_usd : null} />
             {renderOverflowText('small', row.pricingStyle)}
+            <PricingExplanation selection={row.event.pricing_selection} />
           </td>
         </tr>
         {expanded ? (

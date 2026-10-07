@@ -80,7 +80,55 @@ export interface UsageOverviewUsageSnapshot {
   total_tokens: number
 }
 
+// Additive authoritative estimates. Older servers may omit these fields; clients must not infer a reference.
+export interface PriceEstimate {
+  total_cost_usd: number | null
+  uncached_input_cost_usd: number
+  output_cost_usd: number
+  cache_read_cost_usd: number
+  cache_write_cost_usd: number
+  complete: boolean
+  has_known: boolean
+  status: 'complete' | 'partial' | 'unavailable'
+  unavailable_reason?: string
+}
+
+export interface DualCosts {
+  configured: PriceEstimate
+  reference: PriceEstimate
+}
+
+export interface PricingSelection {
+  snapshot_id: string
+  scope: string
+  mode: string
+  subject_id?: string
+  subject_name?: string
+  channel_id?: string
+  channel_name?: string
+  selected_model?: string
+  selected_by?: string
+  baseline_model?: string
+  baseline_by?: string
+  multiplier?: number
+  fixed?: PricingCredentialFixed
+  pricing_style?: PricingStyle
+  unavailable_reason?: string
+  baseline_unavailable_reason?: string
+  attribution_warning?: string
+  legacy?: boolean
+  legacy_adjustments_replaced?: boolean
+  legacy_model_multiplier?: number
+  legacy_rule_multiplier?: number
+  final_multiplier?: number
+  matched_rules?: Array<{ key: string; multiplier: number }>
+  dual_costs?: DualCosts
+}
+
 export interface UsageOverviewSummary {
+  dual_costs?: DualCosts
+  daily_average_dual_costs?: DualCosts
+  pricing_snapshot_id?: string
   rpm: number
   tpm: number
   total_cost: number
@@ -96,6 +144,7 @@ export interface UsageOverviewSummary {
 }
 
 export interface UsageOverviewSeries {
+  dual_costs?: DualCosts[]
   buckets: string[]
   requests: number[]
   tokens: number[]
@@ -145,6 +194,7 @@ export interface UsageActivityResponse {
 export type OverviewRealtimeWindow = '15m' | '30m' | '60m'
 
 export interface RealtimeTokenVelocityPoint {
+  dual_costs?: DualCosts
   bucket: string
   tokens_per_minute: number
   tokens: number
@@ -161,6 +211,7 @@ export interface RealtimeLatencyScatter {
 }
 
 export interface RealtimeUsageTopItem {
+  dual_costs?: DualCosts
   key: string
   label: string
   tokens: number
@@ -191,6 +242,7 @@ export interface RealtimeCacheLevelPoint {
 }
 
 export interface RealtimeWindowSummary {
+  dual_costs?: DualCosts
   requests: number
   failures: number
   token_requests: number
@@ -210,6 +262,7 @@ export interface RealtimeInsights {
 }
 
 export interface OverviewRealtimeBlock {
+  pricing_snapshot_id?: string
   insights?: RealtimeInsights
   window: OverviewRealtimeWindow
   timezone?: string
@@ -224,6 +277,7 @@ export interface OverviewRealtimeBlock {
 }
 
 export interface UsageComparisonItem {
+  dual_costs?: DualCosts
   token_series?: number[]
   key: string
   label: string
@@ -246,9 +300,12 @@ export interface UsageOverviewComparisons {
   api_keys?: UsageComparisonItem[]
   auth_files?: UsageComparisonItem[]
   ai_providers?: UsageComparisonItem[]
+  channels?: UsageComparisonItem[]
+  pricing_snapshot_id?: string
 }
 
 export interface UsageOverviewResponse {
+  pricing_snapshot_id?: string
   comparisons?: UsageOverviewComparisons
   usage: UsageOverviewUsageSnapshot
   summary?: UsageOverviewSummary
@@ -266,6 +323,8 @@ export interface UsageEventTokens {
 }
 
 export interface UsageEvent {
+  dual_costs?: DualCosts
+  pricing_selection?: PricingSelection
   id?: string
   request_id?: string
   timestamp: string
@@ -295,6 +354,10 @@ export interface UsageEvent {
   tokens: UsageEventTokens
   cost_usd?: number
   cost_available?: boolean
+  channel_id?: string
+  channel_name?: string
+  attribution_warning?: 'unknown_identity' | 'unresolved_identity' | 'unbound_channel'
+  pricing_snapshot_id?: string
   pricing_style?: PricingStyle
 }
 
@@ -305,6 +368,7 @@ export interface UsageSourceFilterOption {
 }
 
 export interface UsageEventsResponse {
+  pricing_snapshot_id?: string
   events: UsageEvent[]
   total_count: number
   page: number
@@ -679,6 +743,7 @@ export interface UsageQuotaRefreshResponse {
 }
 
 export interface AnalysisTokenUsageBucket {
+  dual_costs?: DualCosts
 	bucket: string
 	input_tokens: number
 	output_tokens: number
@@ -703,6 +768,7 @@ export interface AnalysisModelUsagePayload {
 }
 
 export interface AnalysisCompositionItem {
+  dual_costs?: DualCosts
   key: string
   label: string
   total_tokens: number
@@ -718,6 +784,7 @@ export interface AnalysisCompositionItem {
 }
 
 export interface AnalysisHeatmapCell {
+  dual_costs?: DualCosts
   api_key: string
   model: string
 	input_tokens: number
@@ -733,6 +800,8 @@ export interface AnalysisHeatmapCell {
 }
 
 export interface AnalysisHeatmapPayload {
+  row_dual_costs?: Record<string, DualCosts>
+  column_dual_costs?: Record<string, DualCosts>
   api_keys: string[]
   api_key_labels: Record<string, string>
   models: string[]
@@ -740,6 +809,8 @@ export interface AnalysisHeatmapPayload {
 }
 
 export interface AnalysisCostBreakdown {
+  pricing_snapshot_id?: string
+  dual_costs?: DualCosts
 	uncached_input_cost_usd: number
 	cache_read_cost_usd: number
 	cache_write_cost_usd: number
@@ -749,6 +820,7 @@ export interface AnalysisCostBreakdown {
 }
 
 export interface AnalysisModelEfficiencyItem {
+  dual_costs?: DualCosts
   model: string
   requests: number
 	input_tokens: number
@@ -792,6 +864,7 @@ export interface AnalysisLatencyDiagnostics {
 }
 
 export interface AnalysisResponse {
+  pricing_snapshot_id?: string
   granularity: 'hourly' | 'daily'
   timezone: string
   range_start?: string
@@ -874,6 +947,125 @@ export interface UsedModelsResponse {
 
 export interface PricingResponse {
   pricing: PricingEntry[]
+}
+
+// Directory references select an observed row; only subject_id is Keeper-owned and stable.
+export interface PricingCredential {
+  directory_id: number
+  subject_id?: string
+  name: string
+  alias?: string
+  provider_type: string
+  auth_type: string
+  endpoint?: string
+  status: 'active' | 'disabled' | 'stale' | 'unknown'
+  binding_status: 'unbound' | 'bound' | 'stale' | 'unknown' | 'ambiguous'
+}
+
+export interface PricingCredentialsResponse {
+  credentials: PricingCredential[]
+}
+
+export interface PricingIdentityBinding {
+  ref: string
+  subject_id: string
+  enabled: boolean
+  credential: PricingCredential
+}
+
+export interface PricingIdentityState {
+  snapshot_id: string
+  subjects: PricingCredential[]
+  directory: { ref: string; credential: PricingCredential }[]
+  bindings: PricingIdentityBinding[]
+}
+
+export interface PricingIdentityMigrationInput {
+  subject_id: string
+  directory_ref: string
+  snapshot_id: string
+  confirmed: boolean
+}
+
+export interface PricingIdentityCorrectionInput {
+  expected_subject_id: string
+  target_subject_id?: string
+  action: 'unbind' | 'rebind'
+  snapshot_id: string
+  confirmed: boolean
+}
+
+export interface PricingIdentityMutationResult {
+  binding_ref: string
+  subject_id: string
+  enabled: boolean
+  snapshot_id: string
+}
+
+export interface PricingCredentialDefault {
+  subject_id: string
+  // null inherits legacy pricing; explicit 0 and 1 are active overrides.
+  multiplier: number | null
+  snapshot_id: string
+}
+
+export interface PricingCredentialFixed {
+  prompt_price_per_1m: number
+  completion_price_per_1m: number
+  cache_read_price_per_1m: number
+  cache_write_price_per_1m: number
+  pricing_style?: PricingStyle
+}
+
+export type PricingCredentialFixedInput = {
+  [K in keyof Omit<PricingCredentialFixed, 'pricing_style'>]: string
+} & { pricing_style?: PricingStyle }
+
+export interface PricingChannel {
+  id: string
+  name: string
+  member_subject_ids: string[]
+  // null inherits legacy pricing; credential defaults always take precedence.
+  multiplier: number | null
+  snapshot_id: string
+}
+
+export interface PricingChannelInput {
+  name: string
+  member_subject_ids: string[]
+}
+
+export interface PricingChannelsResponse {
+  channels: PricingChannel[]
+}
+
+export interface PricingCredentialModel extends PricingCredentialDefault {
+  model: string
+  // Optional for compatibility with existing multiplier-only API responses.
+  mode?: 'inherit' | 'multiplier' | 'fixed'
+  fixed?: PricingCredentialFixed
+}
+
+export interface PricingCredentialModelsResponse {
+  subject_id: string
+  models: PricingCredentialModel[]
+  snapshot_id: string
+}
+
+export interface PricingChannelModel {
+  channel_id: string
+  model: string
+  // Fixed tariffs are active despite a null multiplier; only inherit clears an override.
+  multiplier: number | null
+  mode: 'inherit' | 'multiplier' | 'fixed'
+  fixed?: PricingCredentialFixed
+  snapshot_id: string
+}
+
+export interface PricingChannelModelsResponse {
+  channel_id: string
+  models: PricingChannelModel[]
+  snapshot_id: string
 }
 
 export interface PricingRule {

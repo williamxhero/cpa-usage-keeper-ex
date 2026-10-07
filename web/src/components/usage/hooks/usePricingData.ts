@@ -6,6 +6,7 @@ import { useNotificationStore } from '@/stores';
 
 export interface UsePricingDataOptions {
   onAuthRequired?: () => void;
+  onChanged?: () => void;
   enabled?: boolean;
 }
 
@@ -77,7 +78,7 @@ export async function persistModelPriceEntries(
 }
 
 export function usePricingData(options: UsePricingDataOptions = {}): UsePricingDataReturn {
-  const { onAuthRequired, enabled = true } = options;
+  const { onAuthRequired, onChanged, enabled = true } = options;
   const { t } = useTranslation();
   const { showNotification } = useNotificationStore();
   const [modelNames, setModelNames] = useState<string[]>([]);
@@ -89,6 +90,25 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
   const pricingRulesWriteRequestRef = useRef<{ id: number; controller: AbortController } | null>(null);
   const pricingRulesRequestIDRef = useRef(0);
   const onAuthRequiredRef = useRef(onAuthRequired);
+  const onChangedRef = useRef(onChanged);
+  const notificationsActiveRef = useRef(enabled);
+
+  useEffect(() => {
+    onChangedRef.current = onChanged;
+  }, [onChanged]);
+
+  useEffect(() => {
+    notificationsActiveRef.current = enabled;
+    return () => { notificationsActiveRef.current = false; };
+  }, [enabled]);
+
+  const notifyChanged = useCallback(() => {
+    // Legacy writes cannot be aborted, but must not refresh a departed view.
+    if (!notificationsActiveRef.current) return;
+    // A parent refresh is fire-and-forget, not part of the committed mutation.
+    try { void Promise.resolve(onChangedRef.current?.()).catch(() => {}); }
+    catch { /* Refresh errors must not become mutation errors. */ }
+  }, []);
 
   useEffect(() => {
     onAuthRequiredRef.current = onAuthRequired;
@@ -161,6 +181,7 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
   const saveModelPrice = useCallback(async (model: string, price: ModelPrice) => {
     try {
       await updatePricing(model, modelPriceToPricingEntry(price));
+      notifyChanged();
       setModelPricesState((current) => ({
         ...current,
         [model]: price,
@@ -177,11 +198,12 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
       );
       throw error;
     }
-  }, [showNotification, t]);
+  }, [notifyChanged, showNotification, t]);
 
   const deleteModelPrice = useCallback(async (model: string) => {
     try {
       await deletePricing(model);
+      notifyChanged();
       setModelPricesState((current) => {
         const nextPrices = { ...current };
         delete nextPrices[model];
@@ -199,7 +221,7 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
       );
       throw error;
     }
-  }, [showNotification, t]);
+  }, [notifyChanged, showNotification, t]);
 
   const loadPricingRules = useCallback(async (model: string): Promise<PricingRule[] | null> => {
     pricingRulesReadRequestRef.current?.controller.abort();
@@ -237,9 +259,10 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
     pricingRulesWriteRequestRef.current = request;
     try {
       const response = await replacePricingRules({ model, rules }, controller.signal);
-      if (pricingRulesWriteRequestRef.current?.id !== request.id || response.model !== model) {
+      if (controller.signal.aborted || pricingRulesWriteRequestRef.current?.id !== request.id || response.model !== model) {
         return null;
       }
+      notifyChanged();
       return response.rules ?? [];
     } catch (error) {
       if (controller.signal.aborted || pricingRulesWriteRequestRef.current?.id !== request.id) {
@@ -254,11 +277,12 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
         pricingRulesWriteRequestRef.current = null;
       }
     }
-  }, []);
+  }, [notifyChanged]);
 
   const syncModelPrices = useCallback(async (prices: Record<string, ModelPrice>) => {
     const result = await persistModelPriceEntries(prices);
     if (result.successModels.length > 0) {
+      notifyChanged();
       setModelPricesState((current) => {
         const nextPrices = { ...current };
         for (const model of result.successModels) {
@@ -271,7 +295,7 @@ export function usePricingData(options: UsePricingDataOptions = {}): UsePricingD
       onAuthRequiredRef.current?.();
     }
     return result;
-  }, []);
+  }, [notifyChanged]);
 
   const previewPricingSync = useCallback(async (source: PricingSyncSource, signal?: AbortSignal) => {
     try {

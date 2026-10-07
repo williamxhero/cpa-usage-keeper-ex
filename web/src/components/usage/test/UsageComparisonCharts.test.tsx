@@ -69,7 +69,8 @@ it('toggles a series without changing range totals and resets visibility on dime
 it('preserves detailed metrics on focus and updates summaries on polling',async()=>{
   await render(comparisons([item('model-a',{cost:null})]));
   await act(async()=>container.querySelector<HTMLButtonElement>('[data-comparison-entry]')!.focus());
-  expect(document.querySelector('[role="tooltip"]:not([hidden])')?.textContent).toContain('Cost: —');
+  expect(document.querySelector('[role="tooltip"]:not([hidden])')?.textContent).toContain('Configured-price estimated cost: — · Not provided by this server');
+  expect(document.querySelector('[role="tooltip"]:not([hidden])')?.textContent).toContain('Baseline reference cost: — · Not provided by this server');
   expect(document.querySelector('[role="tooltip"]:not([hidden])')?.textContent).toContain('Requests: 10');
   await render(comparisons([item('model-b',{cost:0})]),false,true);
   expect(container.textContent).toContain('model-b');

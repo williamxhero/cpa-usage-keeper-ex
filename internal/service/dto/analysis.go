@@ -1,6 +1,10 @@
 package dto
 
-import "time"
+import (
+	"time"
+
+	"cpa-usage-keeper/internal/pricing"
+)
 
 type AnalysisGranularity string
 
@@ -10,6 +14,7 @@ const (
 )
 
 type AnalysisTokenUsageBucket struct {
+	DualCosts           pricing.DualCosts
 	Bucket              time.Time
 	InputTokens         int64
 	OutputTokens        int64
@@ -30,6 +35,7 @@ type AnalysisModelUsage struct {
 }
 
 type AnalysisCompositionItem struct {
+	DualCosts           pricing.DualCosts
 	Key                 string
 	Label               string
 	TotalTokens         int64
@@ -44,6 +50,7 @@ type AnalysisCompositionItem struct {
 }
 
 type AnalysisHeatmapCell struct {
+	DualCosts           pricing.DualCosts
 	APIKey              string
 	Model               string
 	InputTokens         int64
@@ -58,6 +65,9 @@ type AnalysisHeatmapCell struct {
 }
 
 type AnalysisCostBreakdown struct {
+	DualCosts            pricing.DualCosts
+	UnavailableReason    string
+	PricingSnapshotID    string
 	UncachedInputCostUSD float64
 	CacheReadCostUSD     float64
 	CacheWriteCostUSD    float64
@@ -67,6 +77,7 @@ type AnalysisCostBreakdown struct {
 }
 
 type AnalysisModelEfficiencyItem struct {
+	DualCosts              pricing.DualCosts
 	Model                  string
 	Requests               int64
 	InputTokens            int64
@@ -108,6 +119,7 @@ type AnalysisLatencyDiagnostics struct {
 }
 
 type AnalysisSnapshot struct {
+	PricingSnapshotID     string
 	Granularity           AnalysisGranularity
 	RangeStart            *time.Time
 	RangeEnd              *time.Time

@@ -3,11 +3,12 @@ import { useTranslation } from 'react-i18next';
 import '@/lib/chartjs';
 import { Line } from 'react-chartjs-2';
 import type { Chart as ChartJS, ChartData, ChartOptions, TooltipModel } from 'chart.js';
+import { dualCostLines } from './DualCosts';
 import type { UsageComparisonItem, UsageOverviewComparisons } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { PortalTooltip, usePortalTooltip } from '@/components/ui/PortalTooltip';
-import { formatCompactNumber, formatUsd } from '@/utils/usage';
+import { formatCompactNumber } from '@/utils/usage';
 import { getUsageChartTheme } from '@/utils/usage/chartConfig';
 import { buildComparisonView, formatComparisonBucket, type ComparisonRow } from './usageComparisonData';
 import styles from './UsageComparisonCharts.module.scss';
@@ -20,7 +21,6 @@ type UsageDimension = 'models' | 'api_keys' | 'auth_files' | 'ai_providers';
 const DIMENSIONS: readonly UsageDimension[] = ['models', 'api_keys', 'auth_files', 'ai_providers'];
 const colorFor = (row: ComparisonRow, index: number) => COLORS[row.other ? 5 : index];
 const formatShare = (value: number | null) => value === null ? '—' : `${value.toFixed(1)}%`;
-const formatCost = (value: number | null) => value === null ? '—' : formatUsd(value);
 
 interface ChartProps {
   comparisons?: UsageOverviewComparisons;
@@ -154,7 +154,7 @@ function ComparisonArea({ dimension, comparisons, loading, isDark, isMobile }: C
     `${t('usage_stats.comparison_cache_read')}: ${formatCompactNumber(row.cache_read_tokens)} · ${t('usage_stats.comparison_cache_write')}: ${formatCompactNumber(row.cache_creation_tokens)}`,
     `${t('usage_stats.comparison_reasoning')}: ${formatCompactNumber(row.reasoning_tokens)}`,
     `${t('usage_stats.comparison_cache')}: ${formatShare(row.input_tokens > 0 ? row.cache_read_tokens / row.input_tokens * 100 : null)}`,
-    `${t('usage_stats.comparison_cost')}: ${formatCost(row.cost)}`,
+    ...dualCostLines(row.dual_costs, t, row.other ? undefined : row.cost),
   ];
   const selectBucket = (index: number) => {
     const chart = chartRef.current;

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"cpa-usage-keeper/internal/entities"
+	"cpa-usage-keeper/internal/helper"
 	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository/dto"
 	"cpa-usage-keeper/internal/timeutil"
@@ -94,8 +95,46 @@ func loadAnalysisOverviewStatProjection(query *gorm.DB, filter dto.UsageQueryFil
 	return rows, nil
 }
 
-func calculateAnalysisOverviewProjectionCost(costResolver pricing.Resolver, row analysisOverviewStatProjection) pricing.CostResult {
-	return costResolver.Calculate(newUsagePricingCostSubject(
+// analysisReferenceCohorts reconciles the complete membership of each narrow
+// projection coordinate. Inactive dimensions may produce several physical rows;
+// their reference is emitted once without regrouping any configured legacy fee.
+func analysisReferenceCohorts(resolver pricing.Resolver, rows []analysisOverviewStatProjection, grain string, evidence usagePricingEvidenceMap) map[usagePricingEvidenceKey]pricing.PriceEstimate {
+	totals := make(map[usagePricingEvidenceKey]analysisOverviewStatProjection)
+	for _, row := range rows {
+		key := analysisReferenceKey(row, grain)
+		total := totals[key]
+		total.RequestCount += row.RequestCount
+		total.InputTokens += row.InputTokens
+		total.OutputTokens += row.OutputTokens
+		total.CacheReadTokens += row.CacheReadTokens
+		total.CacheCreationTokens += row.CacheCreationTokens
+		total.TotalTokens += row.TotalTokens
+		totals[key] = total
+	}
+	result := make(map[usagePricingEvidenceKey]pricing.PriceEstimate, len(totals))
+	for key, row := range totals {
+		retained, exists := evidence[key]
+		subject := pricing.CostSubject{Dimensions: key.Dimensions}
+		result[key] = referenceForUsageCohort(resolver, subject, retained, exists, row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens})
+	}
+	return result
+}
+
+func analysisReferenceKey(row analysisOverviewStatProjection, grain string) usagePricingEvidenceKey {
+	subject := newUsagePricingCostSubject(row.APIGroupKey, row.Model, row.AuthIndex, row.ModelAlias, row.ServiceTier, row.ResponseServiceTier, row.ReasoningEffort, row.Endpoint, row.ExecutorType, 0, 0, 0, 0)
+	return usagePricingEvidenceKey{Bucket: pricingEvidenceBucket(row.BucketStart, grain), Dimensions: subject.Dimensions}
+}
+
+func analysisRowDualCosts(result pricing.CostResult, row analysisOverviewStatProjection, grain string, references map[usagePricingEvidenceKey]pricing.PriceEstimate) pricing.DualCosts {
+	dual := result.DualCosts()
+	key := analysisReferenceKey(row, grain)
+	dual.Reference = references[key]
+	delete(references, key)
+	return dual
+}
+
+func calculateAnalysisOverviewProjectionCost(costResolver pricing.Resolver, row analysisOverviewStatProjection, grain string, evidence usagePricingEvidenceMap) pricing.CostResult {
+	subject := newUsagePricingCostSubject(
 		row.APIGroupKey,
 		row.Model,
 		row.AuthIndex,
@@ -109,5 +148,6 @@ func calculateAnalysisOverviewProjectionCost(costResolver pricing.Resolver, row 
 		row.OutputTokens,
 		row.CacheReadTokens,
 		row.CacheCreationTokens,
-	))
+	)
+	return calculateUsageRollupCost(costResolver, subject, row.BucketStart, grain, row.RequestCount, row.TotalTokens, helper.UsageTokenCostInput{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheReadTokens: row.CacheReadTokens, CacheCreationTokens: row.CacheCreationTokens}, evidence)
 }

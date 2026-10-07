@@ -95,7 +95,7 @@ describe('RequestEventsDetailsCard compact columns', () => {
     expect(cells[9]).toBe('30.0 t/s')
     expect(cells[10]).toBe('2001006020')
     expect(cells[11]).toBe('20.00%205')
-    expect(cells[12]).toBe('$0.1234Claude Style')
+    expect(cells[12]).toBe('Configured-price estimated cost$0.1234Not provided by this serverBaseline reference cost—Not provided by this serverClaude Style')
     expect(cells[13]).toBe('OpenAIResponsesExecutor')
     expect(cells.slice(14)).toEqual([
       '192.0.2.10',

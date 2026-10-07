@@ -105,7 +105,7 @@ const (
 	UsageIdentityPageSortLastUsedAt    = "last_used_at"
 )
 
-const usageIdentityReadColumns = "id, name, alias, auth_type, auth_type_name, identity, type, provider, lookup_key, prefix, base_url, file_name, file_path, priority, disabled, note, account_id, project_id, xai_user_id, active_start, active_until, plan_type, total_requests, success_count, failure_count, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_read_tokens, total_tokens, last_aggregated_usage_event_id, first_used_at, last_used_at, stats_updated_at, is_deleted, created_at, updated_at, deleted_at, stats_reset_at, reset_total_requests, reset_success_count, reset_failure_count, reset_input_tokens, reset_cache_read_tokens, reset_total_tokens"
+const usageIdentityReadColumns = "id, name, alias, auth_type, auth_type_name, identity, binding_identity_status, type, provider, lookup_key, prefix, base_url, file_name, file_path, priority, disabled, note, account_id, project_id, xai_user_id, active_start, active_until, plan_type, total_requests, success_count, failure_count, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_read_tokens, total_tokens, last_aggregated_usage_event_id, first_used_at, last_used_at, stats_updated_at, is_deleted, created_at, updated_at, deleted_at, stats_reset_at, reset_total_requests, reset_success_count, reset_failure_count, reset_input_tokens, reset_cache_read_tokens, reset_total_tokens"
 
 const usageIdentityAggregationColumns = "id, auth_type, identity, total_requests, success_count, failure_count, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_read_tokens, total_tokens, last_aggregated_usage_event_id, first_used_at, last_used_at"
 
@@ -625,18 +625,22 @@ func usageIdentityEventsQuery(query *gorm.DB, identity entities.UsageIdentity) (
 func normalizeUsageIdentities(identities []entities.UsageIdentity, authType entities.UsageIdentityAuthType) ([]entities.UsageIdentity, []string) {
 	normalized := make([]entities.UsageIdentity, 0, len(identities))
 	incomingIdentities := make([]string, 0, len(identities))
-	seen := make(map[string]struct{}, len(identities))
+	seen := make(map[string]int, len(identities))
 
 	for _, identity := range identities {
 		authIndex := strings.TrimSpace(identity.Identity)
 		if authIndex == "" {
 			continue
 		}
-		if _, ok := seen[authIndex]; ok {
+		if previous, ok := seen[authIndex]; ok {
+			normalized[previous].BindingIdentityStatus = "ambiguous"
 			continue
 		}
-		seen[authIndex] = struct{}{}
+		seen[authIndex] = len(normalized)
 		incomingIdentities = append(incomingIdentities, authIndex)
+		if identity.BindingIdentityStatus == "" {
+			identity.BindingIdentityStatus = "unique"
+		}
 
 		identity.ID = 0
 		// alias 是 Keeper-only 展示覆盖，不参与 CPA 同步输入。
@@ -726,7 +730,7 @@ func normalizeUsageIdentityTypes(identityTypes []string) []string {
 	return types
 }
 
-const usageIdentitySyncColumns = "id, name, auth_type_name, identity, type, provider, lookup_key, prefix, base_url, file_name, file_path, priority, disabled, note, account_id, project_id, xai_user_id, active_start, active_until, plan_type, is_deleted, deleted_at"
+const usageIdentitySyncColumns = "id, name, auth_type_name, identity, binding_identity_status, type, provider, lookup_key, prefix, base_url, file_name, file_path, priority, disabled, note, account_id, project_id, xai_user_id, active_start, active_until, plan_type, is_deleted, deleted_at"
 
 type usageIdentityUpdate struct {
 	id          int64
@@ -847,6 +851,9 @@ func markStaleUsageIdentityRowsDeleted(tx *gorm.DB, staleIDs []int64, now time.T
 // usageIdentityMetadataDiff 只比较 CPA 负责的字段，保留本地 alias、统计、游标和创建时间。
 func usageIdentityMetadataDiff(existing, incoming entities.UsageIdentity) map[string]any {
 	fields := make(map[string]any)
+	if existing.BindingIdentityStatus != incoming.BindingIdentityStatus {
+		fields["binding_identity_status"] = incoming.BindingIdentityStatus
+	}
 	if existing.Name != incoming.Name {
 		fields["name"] = incoming.Name
 	}

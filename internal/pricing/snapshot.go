@@ -1,6 +1,8 @@
 package pricing
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sort"
@@ -35,9 +37,19 @@ type compiledModel struct {
 
 // Snapshot 是编译后只读的完整价格目录。内部集合在发布后不再修改。
 type Snapshot struct {
-	modelsByName map[string]compiledModel
-	modelConfigs []ModelConfig
-	activeFields ActiveFields
+	modelsByName       map[string]compiledModel
+	modelConfigs       []ModelConfig
+	activeFields       ActiveFields
+	legacyActiveFields ActiveFields
+	id                 string
+	credentials        map[credentialIdentity]string
+	credentialIndexes  map[string]string
+	credentialSubjects map[string]string
+	credentialDefaults map[string]float64
+	credentialModels   map[credentialModelKey]CredentialModelConfig
+	channels           map[string]ChannelConfig
+	subjectChannels    map[string]string
+	channelModels      map[channelModelKey]ChannelModelConfig
 }
 
 // CompileSnapshot 规范化并校验完整价格集合，只有整个候选集合安全时才返回快照。
@@ -62,6 +74,11 @@ func CompileSnapshot(configs []ModelConfig) (*Snapshot, error) {
 	sort.Slice(snapshot.modelConfigs, func(i, j int) bool {
 		return snapshot.modelConfigs[i].Pricing.Model < snapshot.modelConfigs[j].Pricing.Model
 	})
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
+		return nil, err
+	}
+	snapshot.id = hex.EncodeToString(id)
 	return snapshot, nil
 }
 

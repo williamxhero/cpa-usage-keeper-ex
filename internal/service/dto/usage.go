@@ -3,6 +3,7 @@ package dto
 import (
 	"time"
 
+	"cpa-usage-keeper/internal/pricing"
 	repodto "cpa-usage-keeper/internal/repository/dto"
 )
 
@@ -43,12 +44,13 @@ type UsageFilter struct {
 
 // UsageEventsPage 是 usage events 列表的服务层结果。
 type UsageEventsPage struct {
-	Events     []UsageEventRecord
-	TotalCount int64
-	HasMore    bool
-	Page       int
-	PageSize   int
-	TotalPages int
+	PricingSnapshotID string
+	Events            []UsageEventRecord
+	TotalCount        int64
+	HasMore           bool
+	Page              int
+	PageSize          int
+	TotalPages        int
 }
 
 // UsageEventFilterOptions 是 usage events 筛选项的服务层结果。
@@ -58,6 +60,11 @@ type UsageEventFilterOptions struct {
 
 // UsageEventRecord 是单条 usage event 的服务层结果。
 type UsageEventRecord struct {
+	DualCosts           pricing.DualCosts
+	ChannelID           string
+	ChannelName         string
+	AttributionWarning  string
+	PricingSnapshotID   string
 	ID                  int64
 	Timestamp           time.Time
 	APIGroupKey         string
@@ -91,10 +98,14 @@ type UsageEventRecord struct {
 	CostUSD             float64
 	CostAvailable       bool
 	PricingStyle        string
+	PricingSelection    *pricing.CostSelection
 }
 
 // UsageOverviewSummary 是 overview summary 的服务层结果。
 type UsageOverviewSummary struct {
+	DualCosts             pricing.DualCosts
+	UnavailableReason     string
+	PricingSnapshotID     string
 	RPM                   float64
 	TPM                   float64
 	TotalCost             float64
@@ -105,12 +116,14 @@ type UsageOverviewSummary struct {
 	ReasoningTokens       int64
 	DailyAverageRequests  *float64
 	DailyAverageTokens    *float64
+	DailyAverageDualCosts *pricing.DualCosts
 	DailyAverageCost      *float64
 	DailyAverageRangeDays *float64
 }
 
 // UsageOverviewSeries 是 overview series 的服务层结果。
 type UsageOverviewSeries struct {
+	DualCosts     []pricing.DualCosts
 	Buckets       []string
 	Requests      []int64
 	Tokens        []int64
@@ -122,6 +135,7 @@ type UsageOverviewSeries struct {
 
 // RealtimeTokenVelocityPoint 是 Overview token 速度图的单个短窗口桶。
 type RealtimeTokenVelocityPoint struct {
+	DualCosts       pricing.DualCosts
 	Bucket          string
 	TokensPerMinute float64
 	Tokens          int64
@@ -144,12 +158,13 @@ type RealtimeLatencyScatterPoint struct {
 
 // RealtimeUsageTopItem 是 Overview 当前使用 Top5+Other 列表项。
 type RealtimeUsageTopItem struct {
-	Key      string
-	Label    string
-	Tokens   int64
-	Requests int64
-	CostUSD  *float64
-	Share    float64
+	DualCosts pricing.DualCosts
+	Key       string
+	Label     string
+	Tokens    int64
+	Requests  int64
+	CostUSD   *float64
+	Share     float64
 }
 
 // RealtimeCurrentUsage 是 Overview 当前使用按维度聚合的 Top5+Other 列表。
@@ -178,22 +193,24 @@ type RealtimeCacheLevelPoint struct {
 
 // UsageOverviewRealtime 是 Overview 页面实时图表区使用的数据块。
 type UsageOverviewRealtime struct {
-	Insights       *repodto.RealtimeInsightsRecord
-	Window         string
-	BucketSeconds  int64
-	WindowStart    time.Time
-	WindowEnd      time.Time
-	TokenVelocity  []RealtimeTokenVelocityPoint
-	LatencyScatter RealtimeLatencyScatter
-	CurrentUsage   RealtimeCurrentUsage
-	RequestLevel   []RealtimeRequestLevelPoint
-	CacheLevel     []RealtimeCacheLevelPoint
+	PricingSnapshotID string
+	Insights          *repodto.RealtimeInsightsRecord
+	Window            string
+	BucketSeconds     int64
+	WindowStart       time.Time
+	WindowEnd         time.Time
+	TokenVelocity     []RealtimeTokenVelocityPoint
+	LatencyScatter    RealtimeLatencyScatter
+	CurrentUsage      RealtimeCurrentUsage
+	RequestLevel      []RealtimeRequestLevelPoint
+	CacheLevel        []RealtimeCacheLevelPoint
 }
 
 // UsageOverviewSnapshot 是 overview 的服务层结果。
 type UsageOverviewSnapshot struct {
-	Comparisons *repodto.UsageOverviewComparisonsRecord
-	Usage       *repodto.StatisticsSnapshot
-	Summary     UsageOverviewSummary
-	Series      UsageOverviewSeries
+	PricingSnapshotID string
+	Comparisons       *repodto.UsageOverviewComparisonsRecord
+	Usage             *repodto.StatisticsSnapshot
+	Summary           UsageOverviewSummary
+	Series            UsageOverviewSeries
 }

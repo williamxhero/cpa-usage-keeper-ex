@@ -20,7 +20,7 @@ import (
 const usageEventProjectionColumns = "id, api_group_key, provider, auth_type, request_id, client_ip, x_forwarded_for, user_agent, model, model_alias, response_model, reasoning_effort, service_tier, response_service_tier, executor_type, endpoint, timestamp, source, auth_index, failed, status_code, stream, latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
 
 // usageOverviewBoundaryEventProjectionColumns 只包含非 Custom Overview 边界卡片计算需要的字段。
-const usageOverviewBoundaryEventProjectionColumns = "api_group_key, model, model_alias, timestamp, failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, auth_index"
+const usageOverviewBoundaryEventProjectionColumns = "api_group_key, model, model_alias, timestamp, failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, auth_index, auth_type"
 
 // usageOverviewRealtimeEventProjectionColumns 保持 Realtime 散点与身份字段完整。
 const usageOverviewRealtimeEventProjectionColumns = "api_group_key, provider, auth_type, model, model_alias, timestamp, source, auth_index, failed, generate, latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
@@ -128,7 +128,7 @@ func ListUsageEventsWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costRes
 	if totalCount > 0 {
 		totalPages = int((totalCount + int64(pageSize) - 1) / int64(pageSize))
 	}
-	return &dto.UsageEventsPageRecord{Events: rows, TotalCount: totalCount, Page: page, PageSize: pageSize, TotalPages: totalPages, HasMore: hasMore}, nil
+	return &dto.UsageEventsPageRecord{PricingSnapshotID: costResolver.SnapshotID(), Events: rows, TotalCount: totalCount, Page: page, PageSize: pageSize, TotalPages: totalPages, HasMore: hasMore}, nil
 }
 
 // ExportUsageEventsWithFilter 使用 Request Event Log 相同筛选，但不应用分页。
@@ -232,7 +232,12 @@ func streamUsageEventRecordsForQuery(db *gorm.DB, query *gorm.DB, emit func(dto.
 		}
 		record := usageEventProjectionToRecord(event)
 		// Request Events cost 只在响应阶段按当前价格配置计算，不回写 usage_events。
-		record.CostUSD, record.CostAvailable, record.PricingStyle = usageEventRecordCost(record, costResolver)
+		cost := costResolver.Calculate(UsageEventRecordCostSubject(record))
+		record.CostUSD, record.CostAvailable, record.PricingStyle = cost.Cost.TotalCostUSD, cost.Available, cost.PricingStyle
+		record.ChannelID, record.ChannelName, record.AttributionWarning = cost.ChannelID, cost.ChannelName, cost.AttributionWarning
+		record.PricingSnapshotID = costResolver.SnapshotID()
+		record.DualCosts = cost.DualCosts()
+		record.PricingSelection = costResolver.Selection(cost)
 		if err := emit(record); err != nil {
 			return err
 		}
@@ -257,37 +262,35 @@ func usageEventProjectionToRecord(event usageEventProjection) dto.UsageEventReco
 			}
 			return strings.TrimSpace(*event.ModelAlias)
 		}(),
-		ResponseModel:       strings.TrimSpace(event.ResponseModel),
-		ReasoningEffort:     strings.TrimSpace(event.ReasoningEffort),
-		ServiceTier:         strings.TrimSpace(event.ServiceTier),
-		ResponseServiceTier: strings.TrimSpace(event.ResponseServiceTier),
-		ClientIP:            event.ClientIP,
-		XForwardedFor:       event.XForwardedFor,
-		UserAgent:           event.UserAgent,
-		ExecutorType:        strings.TrimSpace(event.ExecutorType),
-		Endpoint:            strings.TrimSpace(event.Endpoint),
-		AuthType:            strings.TrimSpace(event.AuthType),
-		RequestID:           strings.TrimSpace(event.RequestID),
-		Provider:            strings.TrimSpace(event.Provider),
-		Source:              strings.TrimSpace(event.Source),
-		AuthIndex:           strings.TrimSpace(event.AuthIndex),
-		Failed:              event.Failed,
-		StatusCode:          event.StatusCode,
-		Stream:              event.Stream,
-		LatencyMS:           event.LatencyMS,
-		TTFTMS:              event.TTFTMS,
-		InputTokens:         event.InputTokens,
-		OutputTokens:        event.OutputTokens,
-		ReasoningTokens:     event.ReasoningTokens,
-		CacheReadTokens:     event.CacheReadTokens,
-		CacheCreationTokens: event.CacheCreationTokens,
-		TotalTokens:         event.TotalTokens,
+		ResponseModel:           strings.TrimSpace(event.ResponseModel),
+		ReasoningEffort:         strings.TrimSpace(event.ReasoningEffort),
+		ServiceTier:             strings.TrimSpace(event.ServiceTier),
+		ResponseServiceTier:     strings.TrimSpace(event.ResponseServiceTier),
+		ClientIP:                event.ClientIP,
+		XForwardedFor:           event.XForwardedFor,
+		UserAgent:               event.UserAgent,
+		ExecutorType:            strings.TrimSpace(event.ExecutorType),
+		Endpoint:                strings.TrimSpace(event.Endpoint),
+		AuthType:                strings.TrimSpace(event.AuthType),
+		PricingAuthType:         event.AuthType,
+		PricingAuthIndex:        event.AuthIndex,
+		PricingIdentityObserved: true,
+		RequestID:               strings.TrimSpace(event.RequestID),
+		Provider:                strings.TrimSpace(event.Provider),
+		Source:                  strings.TrimSpace(event.Source),
+		AuthIndex:               strings.TrimSpace(event.AuthIndex),
+		Failed:                  event.Failed,
+		StatusCode:              event.StatusCode,
+		Stream:                  event.Stream,
+		LatencyMS:               event.LatencyMS,
+		TTFTMS:                  event.TTFTMS,
+		InputTokens:             event.InputTokens,
+		OutputTokens:            event.OutputTokens,
+		ReasoningTokens:         event.ReasoningTokens,
+		CacheReadTokens:         event.CacheReadTokens,
+		CacheCreationTokens:     event.CacheCreationTokens,
+		TotalTokens:             event.TotalTokens,
 	}
-}
-
-func usageEventRecordCost(record dto.UsageEventRecord, costResolver pricing.Resolver) (float64, bool, string) {
-	result := costResolver.Calculate(UsageEventRecordCostSubject(record))
-	return result.Cost.TotalCostUSD, result.Available, result.PricingStyle
 }
 
 // usageEventProjectionToEntity 把轻量投影转回实体，供内存聚合复用原有事件处理逻辑。
@@ -388,6 +391,27 @@ func applyUsageEventListQuery(query *gorm.DB, filter dto.UsageQueryFilter) *gorm
 }
 
 func BuildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResolver pricing.Resolver) (*dto.AnalysisRecord, error) {
+	if db != nil {
+		var result *dto.AnalysisRecord
+		err := db.Clauses(dbresolver.Read).Transaction(func(tx *gorm.DB) error {
+			var err error
+			result, err = buildAnalysisWithFilter(tx, filter, costResolver)
+			if result != nil {
+				result.PricingSnapshotID = costResolver.SnapshotID()
+				result.CostBreakdown.PricingSnapshotID = costResolver.SnapshotID()
+				result.CostBreakdown.DualCosts = result.CostBreakdown.DualCosts.Normalized()
+				for i := range result.TokenUsage {
+					result.TokenUsage[i].DualCosts = result.TokenUsage[i].DualCosts.Normalized()
+				}
+			}
+			return err
+		})
+		return result, err
+	}
+	return buildAnalysisWithFilter(db, filter, costResolver)
+}
+
+func buildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResolver pricing.Resolver) (*dto.AnalysisRecord, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database is nil")
 	}
@@ -439,7 +463,15 @@ func BuildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResol
 		if err != nil {
 			return nil, err
 		}
-		applyAnalysisDailyRows(record, dailyRows, dailyIdentityLookup, costResolver)
+		evidence, err := loadUsagePricingEvidence(db, filter, dailyStart, dailyEnd, "daily", costResolver, strings.Split(analysisOverviewProjectionColumns(activeFields), ", "))
+		if err != nil {
+			return nil, err
+		}
+		dailyIdentityLookup, err = extendPricingIdentityLookup(db, dailyIdentityLookup, evidence)
+		if err != nil {
+			return nil, err
+		}
+		applyAnalysisDailyRows(record, dailyRows, dailyIdentityLookup, costResolver, evidence)
 		return record, nil
 	}
 
@@ -456,7 +488,15 @@ func BuildAnalysisWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, costResol
 	if err != nil {
 		return nil, err
 	}
-	applyAnalysisHourlyRows(record, rows, identityLookup, costResolver)
+	evidence, err := loadUsagePricingEvidence(db, filter, fullStart, fullEnd, "hourly", costResolver, strings.Split(analysisOverviewProjectionColumns(activeFields), ", "))
+	if err != nil {
+		return nil, err
+	}
+	identityLookup, err = extendPricingIdentityLookup(db, identityLookup, evidence)
+	if err != nil {
+		return nil, err
+	}
+	applyAnalysisHourlyRows(record, rows, identityLookup, costResolver, evidence)
 	fillAnalysisFullDayHourlyBuckets(record, filter)
 	return record, nil
 }
@@ -559,7 +599,7 @@ func loadAnalysisIdentityLookup(db *gorm.DB, authIndexes []string) (analysisIden
 	return lookup, nil
 }
 
-func applyAnalysisHourlyRows(record *dto.AnalysisRecord, rows []analysisOverviewStatProjection, identityLookup analysisIdentityLookup, costResolver pricing.Resolver) {
+func applyAnalysisHourlyRows(record *dto.AnalysisRecord, rows []analysisOverviewStatProjection, identityLookup analysisIdentityLookup, costResolver pricing.Resolver, evidence usagePricingEvidenceMap) {
 	bucketTotals := map[time.Time]*dto.AnalysisTokenUsageBucketRecord{}
 	modelUsageTotals := map[analysisModelUsageKey]*dto.AnalysisModelUsageRecord{}
 	apiTotals := map[string]*dto.AnalysisCompositionRecord{}
@@ -567,17 +607,22 @@ func applyAnalysisHourlyRows(record *dto.AnalysisRecord, rows []analysisOverview
 	authFileTotals := map[string]*dto.AnalysisCompositionRecord{}
 	aiProviderTotals := map[string]*dto.AnalysisCompositionRecord{}
 	heatmapTotals := map[analysisHeatmapKey]*dto.AnalysisHeatmapRecord{}
+	references := analysisReferenceCohorts(costResolver, rows, string(record.Granularity), evidence)
 	for _, row := range rows {
 		bucket := timeutil.NormalizeStorageTime(row.BucketStart).Truncate(time.Hour)
-		costResult := calculateAnalysisOverviewProjectionCost(costResolver, row)
+		costResult := calculateAnalysisOverviewProjectionCost(costResolver, row, string(record.Granularity), evidence)
 		cost, costAvailable := costResult.Cost, costResult.Available
-		applyAnalysisRow(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, heatmapTotals, bucket, row.APIGroupKey, row.Model, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable)
-		applyAnalysisIdentityComposition(identityLookup, authFileTotals, aiProviderTotals, row.AuthIndex, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable)
+		dual := analysisRowDualCosts(costResult, row, string(record.Granularity), references)
+		if costResult.UnavailableReason != "" {
+			record.CostBreakdown.UnavailableReason = costResult.UnavailableReason
+		}
+		applyAnalysisRow(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, heatmapTotals, bucket, row.APIGroupKey, row.Model, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable, dual)
+		applyAnalysisPricingIdentityComposition(identityLookup, authFileTotals, aiProviderTotals, row, string(record.Granularity), costResult, evidence, dual)
 	}
 	finalizeAnalysisRecord(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, authFileTotals, aiProviderTotals, heatmapTotals)
 }
 
-func applyAnalysisDailyRows(record *dto.AnalysisRecord, dailyRows []analysisOverviewStatProjection, dailyIdentityLookup analysisIdentityLookup, costResolver pricing.Resolver) {
+func applyAnalysisDailyRows(record *dto.AnalysisRecord, dailyRows []analysisOverviewStatProjection, dailyIdentityLookup analysisIdentityLookup, costResolver pricing.Resolver, evidence usagePricingEvidenceMap) {
 	bucketTotals := map[time.Time]*dto.AnalysisTokenUsageBucketRecord{}
 	modelUsageTotals := map[analysisModelUsageKey]*dto.AnalysisModelUsageRecord{}
 	apiTotals := map[string]*dto.AnalysisCompositionRecord{}
@@ -585,17 +630,22 @@ func applyAnalysisDailyRows(record *dto.AnalysisRecord, dailyRows []analysisOver
 	authFileTotals := map[string]*dto.AnalysisCompositionRecord{}
 	aiProviderTotals := map[string]*dto.AnalysisCompositionRecord{}
 	heatmapTotals := map[analysisHeatmapKey]*dto.AnalysisHeatmapRecord{}
+	references := analysisReferenceCohorts(costResolver, dailyRows, string(record.Granularity), evidence)
 	for _, row := range dailyRows {
 		bucket := timeutil.NormalizeStorageTime(row.BucketStart)
-		costResult := calculateAnalysisOverviewProjectionCost(costResolver, row)
+		costResult := calculateAnalysisOverviewProjectionCost(costResolver, row, string(record.Granularity), evidence)
 		cost, costAvailable := costResult.Cost, costResult.Available
-		applyAnalysisRow(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, heatmapTotals, bucket, row.APIGroupKey, row.Model, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable)
-		applyAnalysisIdentityComposition(dailyIdentityLookup, authFileTotals, aiProviderTotals, row.AuthIndex, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable)
+		dual := analysisRowDualCosts(costResult, row, string(record.Granularity), references)
+		if costResult.UnavailableReason != "" {
+			record.CostBreakdown.UnavailableReason = costResult.UnavailableReason
+		}
+		applyAnalysisRow(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, heatmapTotals, bucket, row.APIGroupKey, row.Model, row.RequestCount, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.ReasoningTokens, row.TotalTokens, cost, costAvailable, dual)
+		applyAnalysisPricingIdentityComposition(dailyIdentityLookup, authFileTotals, aiProviderTotals, row, string(record.Granularity), costResult, evidence, dual)
 	}
 	finalizeAnalysisRecord(record, bucketTotals, modelUsageTotals, apiTotals, modelTotals, authFileTotals, aiProviderTotals, heatmapTotals)
 }
 
-func applyAnalysisRow(record *dto.AnalysisRecord, bucketTotals map[time.Time]*dto.AnalysisTokenUsageBucketRecord, modelUsageTotals map[analysisModelUsageKey]*dto.AnalysisModelUsageRecord, apiTotals, modelTotals map[string]*dto.AnalysisCompositionRecord, heatmapTotals map[analysisHeatmapKey]*dto.AnalysisHeatmapRecord, bucket time.Time, apiGroupKey, model string, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens int64, cost helper.UsageTokenCostBreakdown, costAvailable bool) {
+func applyAnalysisRow(record *dto.AnalysisRecord, bucketTotals map[time.Time]*dto.AnalysisTokenUsageBucketRecord, modelUsageTotals map[analysisModelUsageKey]*dto.AnalysisModelUsageRecord, apiTotals, modelTotals map[string]*dto.AnalysisCompositionRecord, heatmapTotals map[analysisHeatmapKey]*dto.AnalysisHeatmapRecord, bucket time.Time, apiGroupKey, model string, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens int64, cost helper.UsageTokenCostBreakdown, costAvailable bool, dual ...pricing.DualCosts) {
 	apiKey := normalizeUsageOverviewDimension(apiGroupKey)
 	modelName := normalizeUsageOverviewDimension(model)
 	bucketTotal := bucketTotals[bucket]
@@ -610,6 +660,9 @@ func applyAnalysisRow(record *dto.AnalysisRecord, bucketTotals map[time.Time]*dt
 	bucketTotal.CacheCreationTokens += cacheCreationTokens
 	bucketTotal.ReasoningTokens += reasoningTokens
 	bucketTotal.TotalTokens += totalTokens
+	if len(dual) > 0 {
+		bucketTotal.DualCosts.Merge(dual[0])
+	}
 	bucketTotal.CostUSD += cost.TotalCostUSD
 	if !costAvailable {
 		bucketTotal.CostAvailable = false
@@ -630,14 +683,14 @@ func applyAnalysisRow(record *dto.AnalysisRecord, bucketTotals map[time.Time]*dt
 		apiTotal = &dto.AnalysisCompositionRecord{Key: apiKey, CostAvailable: true}
 		apiTotals[apiKey] = apiTotal
 	}
-	applyAnalysisCompositionTotals(apiTotal, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, cost.TotalCostUSD, costAvailable)
+	applyAnalysisCompositionTotals(apiTotal, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, cost.TotalCostUSD, costAvailable, dual...)
 
 	modelTotal := modelTotals[modelName]
 	if modelTotal == nil {
 		modelTotal = &dto.AnalysisCompositionRecord{Key: modelName, CostAvailable: true}
 		modelTotals[modelName] = modelTotal
 	}
-	applyAnalysisCompositionTotals(modelTotal, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, cost.TotalCostUSD, costAvailable)
+	applyAnalysisCompositionTotals(modelTotal, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, cost.TotalCostUSD, costAvailable, dual...)
 
 	heatmapKey := analysisHeatmapKey{apiKey: apiKey, model: modelName}
 	heatmapTotal := heatmapTotals[heatmapKey]
@@ -652,11 +705,17 @@ func applyAnalysisRow(record *dto.AnalysisRecord, bucketTotals map[time.Time]*dt
 	heatmapTotal.CacheCreationTokens += cacheCreationTokens
 	heatmapTotal.ReasoningTokens += reasoningTokens
 	heatmapTotal.TotalTokens += totalTokens
+	if len(dual) > 0 {
+		heatmapTotal.DualCosts.Merge(dual[0])
+	}
 	heatmapTotal.CostUSD += cost.TotalCostUSD
 	if !costAvailable {
 		heatmapTotal.CostAvailable = false
 	}
 
+	if len(dual) > 0 {
+		record.CostBreakdown.DualCosts.Merge(dual[0])
+	}
 	record.CostBreakdown.UncachedInputCostUSD += cost.UncachedInputCostUSD
 	record.CostBreakdown.CacheReadCostUSD += cost.CacheReadCostUSD
 	record.CostBreakdown.CacheWriteCostUSD += cost.CacheWriteCostUSD
@@ -667,7 +726,7 @@ func applyAnalysisRow(record *dto.AnalysisRecord, bucketTotals map[time.Time]*dt
 	}
 }
 
-func applyAnalysisCompositionTotals(item *dto.AnalysisCompositionRecord, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens int64, costUSD float64, costAvailable bool) {
+func applyAnalysisCompositionTotals(item *dto.AnalysisCompositionRecord, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens int64, costUSD float64, costAvailable bool, dual ...pricing.DualCosts) {
 	item.Requests += requests
 	item.InputTokens += inputTokens
 	item.OutputTokens += outputTokens
@@ -675,32 +734,35 @@ func applyAnalysisCompositionTotals(item *dto.AnalysisCompositionRecord, request
 	item.CacheCreationTokens += cacheCreationTokens
 	item.ReasoningTokens += reasoningTokens
 	item.TotalTokens += totalTokens
+	if len(dual) > 0 {
+		item.DualCosts.Merge(dual[0])
+	}
 	item.CostUSD += costUSD
 	if !costAvailable {
 		item.CostAvailable = false
 	}
 }
 
-func applyAnalysisIdentityComposition(identityLookup analysisIdentityLookup, authFileTotals, aiProviderTotals map[string]*dto.AnalysisCompositionRecord, authIndex string, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens int64, cost helper.UsageTokenCostBreakdown, costAvailable bool) {
+func applyAnalysisIdentityComposition(identityLookup analysisIdentityLookup, authFileTotals, aiProviderTotals map[string]*dto.AnalysisCompositionRecord, authIndex string, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens int64, cost helper.UsageTokenCostBreakdown, costAvailable bool, dual ...pricing.DualCosts) {
 	authIndex = strings.TrimSpace(authIndex)
 	if authIndex == "" {
 		return
 	}
 	if identity, ok := identityLookup.find(entities.UsageIdentityAuthTypeAuthFile, authIndex); ok {
-		applyAnalysisIdentityCompositionTotal(authFileTotals, identity, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, cost.TotalCostUSD, costAvailable)
+		applyAnalysisIdentityCompositionTotal(authFileTotals, identity, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, cost.TotalCostUSD, costAvailable, dual...)
 	}
 	if identity, ok := identityLookup.find(entities.UsageIdentityAuthTypeAIProvider, authIndex); ok {
-		applyAnalysisIdentityCompositionTotal(aiProviderTotals, identity, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, cost.TotalCostUSD, costAvailable)
+		applyAnalysisIdentityCompositionTotal(aiProviderTotals, identity, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, cost.TotalCostUSD, costAvailable, dual...)
 	}
 }
 
-func applyAnalysisIdentityCompositionTotal(totals map[string]*dto.AnalysisCompositionRecord, identity analysisIdentityInfo, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens int64, costUSD float64, costAvailable bool) {
+func applyAnalysisIdentityCompositionTotal(totals map[string]*dto.AnalysisCompositionRecord, identity analysisIdentityInfo, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens int64, costUSD float64, costAvailable bool, dual ...pricing.DualCosts) {
 	item := totals[identity.identity]
 	if item == nil {
 		item = &dto.AnalysisCompositionRecord{Key: identity.identity, Label: identity.label, CostAvailable: true}
 		totals[identity.identity] = item
 	}
-	applyAnalysisCompositionTotals(item, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, costUSD, costAvailable)
+	applyAnalysisCompositionTotals(item, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, costUSD, costAvailable, dual...)
 }
 
 func (lookup analysisIdentityLookup) find(authType entities.UsageIdentityAuthType, identity string) (analysisIdentityInfo, bool) {
@@ -788,6 +850,7 @@ func finalizeAnalysisRecord(record *dto.AnalysisRecord, bucketTotals map[time.Ti
 
 func buildAnalysisModelEfficiencyRecord(item dto.AnalysisCompositionRecord) dto.AnalysisModelEfficiencyRecord {
 	result := dto.AnalysisModelEfficiencyRecord{
+		DualCosts:           item.DualCosts,
 		Model:               item.Key,
 		Requests:            item.Requests,
 		InputTokens:         item.InputTokens,
@@ -824,6 +887,27 @@ func BuildUsageOverviewWithFilter(db *gorm.DB, filter dto.UsageQueryFilter, cost
 }
 
 func BuildUsageOverviewWithFilterAndRecentCache(db *gorm.DB, filter dto.UsageQueryFilter, recentCache *UsageRecentEventCache, costResolver pricing.Resolver) (*dto.UsageOverviewRecord, error) {
+	if db != nil {
+		var result *dto.UsageOverviewRecord
+		err := db.Clauses(dbresolver.Read).Transaction(func(tx *gorm.DB) error {
+			var err error
+			result, err = buildUsageOverviewWithFilterAndRecentCache(tx, filter, recentCache, costResolver)
+			if result != nil {
+				result.PricingSnapshotID = costResolver.SnapshotID()
+				result.Summary.PricingSnapshotID = costResolver.SnapshotID()
+				result.Summary.DualCosts = result.Summary.DualCosts.Normalized()
+				if result.Comparisons != nil {
+					result.Comparisons.PricingSnapshotID = costResolver.SnapshotID()
+				}
+			}
+			return err
+		})
+		return result, err
+	}
+	return buildUsageOverviewWithFilterAndRecentCache(db, filter, recentCache, costResolver)
+}
+
+func buildUsageOverviewWithFilterAndRecentCache(db *gorm.DB, filter dto.UsageQueryFilter, recentCache *UsageRecentEventCache, costResolver pricing.Resolver) (*dto.UsageOverviewRecord, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database is nil")
 	}
@@ -835,13 +919,7 @@ func BuildUsageOverviewWithFilterAndRecentCache(db *gorm.DB, filter dto.UsageQue
 
 	// 独立比较查询使用同一个数据库快照，避免增量写入夹在边界与 rollup 读取之间。
 	if filter.ComparisonOnly {
-		var overview *dto.UsageOverviewRecord
-		err := db.Clauses(dbresolver.Read).Transaction(func(tx *gorm.DB) error {
-			var err error
-			overview, err = buildUsageOverviewFromStats(tx, filter, costResolver, recentCache)
-			return err
-		})
-		return overview, err
+		return buildUsageOverviewFromStats(db, filter, costResolver, recentCache)
 	}
 	// stats 表不保存价格，所有 cost 都使用调用方固定的请求级 resolver 动态计算。
 	overview, err := buildUsageOverviewFromStats(db, filter, costResolver, recentCache)
@@ -930,7 +1008,11 @@ func buildUsageOverviewFromStats(db *gorm.DB, filter dto.UsageQueryFilter, costR
 		authIndexes := make([]string, 0, len(boundaryEvents))
 		seen := make(map[string]struct{}, len(boundaryEvents))
 		for _, event := range boundaryEvents {
-			if authIndex := strings.TrimSpace(event.AuthIndex); authIndex != "" {
+			authIndex := strings.TrimSpace(event.AuthIndex)
+			if costResolver.HasPricingOverrides() {
+				authIndex = event.AuthIndex
+			}
+			if authIndex != "" {
 				if _, ok := seen[authIndex]; !ok {
 					authIndexes = append(authIndexes, authIndex)
 					seen[authIndex] = struct{}{}
@@ -1352,6 +1434,7 @@ type usageOverviewRealtimeBucket struct {
 	cacheCreationTokens int64
 	costUSD             float64
 	costAvailable       bool
+	dualCosts           pricing.DualCosts
 	latencyPairs        []usageOverviewRealtimeLatencyPair
 }
 
@@ -1368,12 +1451,14 @@ type usageOverviewRealtimeTopAccumulator struct {
 	requests      int64
 	costUSD       float64
 	costAvailable bool
+	dualCosts     pricing.DualCosts
 }
 
 type usageOverviewRealtimeEvent struct {
 	event                 entities.UsageEvent
 	identityFallbackKind  RecentUsageIdentityKind
 	identityFallbackLabel string
+	exactPricingIdentity  bool
 }
 
 // buildUsageOverviewRealtime 从最近事件缓存聚合 Overview 下方实时图表；缓存对象不可用时回退到 usage_events 窄窗查询。
@@ -1402,6 +1487,14 @@ func buildUsageOverviewRealtime(db *gorm.DB, filter dto.UsageQueryFilter, costRe
 			return dto.UsageOverviewRealtimeRecord{}, err
 		}
 		events = dbEvents
+	}
+
+	if costResolver.HasPricingOverrides() {
+		// Exact observed identity controls credential bins as well as their fees.
+		// Keep the legacy fallback policy unchanged when defaults are absent.
+		for index := range events {
+			events[index].exactPricingIdentity = true
+		}
 	}
 
 	// 无论数据来源是缓存还是 DB，都先创建完整 bucket 骨架，前端渲染结构保持一致。
@@ -1465,17 +1558,20 @@ func buildUsageOverviewRealtime(db *gorm.DB, filter dto.UsageQueryFilter, costRe
 		bucket.cacheReadTokens += event.CacheReadTokens
 		bucket.cacheCreationTokens += event.CacheCreationTokens
 		bucket.costUSD += cost
+		bucket.dualCosts.Add(costResult)
 		if !costResult.Available {
 			bucket.costAvailable = false
 		}
 		if visibleEvent {
 			// current usage 的 token 占比只统计有 token 的成功请求。
-			applyUsageOverviewRealtimeTokenUsage(realtimeEvent, cost, costResult.Available, modelUsage, apiKeyUsage, authFileUsage, aiProviderUsage, identityLookup)
+			applyUsageOverviewRealtimeTokenUsage(realtimeEvent, cost, costResult.Available, modelUsage, apiKeyUsage, authFileUsage, aiProviderUsage, identityLookup, costResult.DualCosts())
 		}
 	}
 
 	// 最后统一把 bucket、percentile 和当前用量 accumulator 映射成 API DTO。
-	return finalizeUsageOverviewRealtime(window, span, start, end, buckets, warmupBucketCount, modelUsage, apiKeyUsage, authFileUsage, aiProviderUsage), nil
+	result := finalizeUsageOverviewRealtime(window, span, start, end, buckets, warmupBucketCount, modelUsage, apiKeyUsage, authFileUsage, aiProviderUsage)
+	result.PricingSnapshotID = costResolver.SnapshotID()
+	return result, nil
 }
 
 func usageEventGenerateEnabled(generate *bool) bool {
@@ -1625,6 +1721,9 @@ func collectRealtimeAuthIndexes(events []usageOverviewRealtimeEvent, visibleStar
 		}
 		// 空 auth_index 无法关联身份表，后续走 fallback。
 		authIndex := strings.TrimSpace(realtimeEvent.event.AuthIndex)
+		if realtimeEvent.exactPricingIdentity {
+			authIndex = realtimeEvent.event.AuthIndex
+		}
 		if authIndex == "" {
 			continue
 		}
@@ -1654,21 +1753,24 @@ func applyUsageOverviewRealtimeRequestToTotals(totals map[string]*usageOverviewR
 	item.requests++
 }
 
-func applyUsageOverviewRealtimeTokenUsage(realtimeEvent usageOverviewRealtimeEvent, cost float64, costAvailable bool, modelUsage, apiKeyUsage, authFileUsage, aiProviderUsage map[string]*usageOverviewRealtimeTopAccumulator, identityLookup analysisIdentityLookup) {
+func applyUsageOverviewRealtimeTokenUsage(realtimeEvent usageOverviewRealtimeEvent, cost float64, costAvailable bool, modelUsage, apiKeyUsage, authFileUsage, aiProviderUsage map[string]*usageOverviewRealtimeTopAccumulator, identityLookup analysisIdentityLookup, dual ...pricing.DualCosts) {
 	event := realtimeEvent.event
 	// token share 的模型维度只统计成功且有 token 的请求。
-	applyUsageOverviewRealtimeTokenUsageToTotals(modelUsage, normalizeUsageOverviewDimension(event.Model), normalizeUsageOverviewDimension(event.Model), event.TotalTokens, cost, costAvailable)
+	applyUsageOverviewRealtimeTokenUsageToTotals(modelUsage, normalizeUsageOverviewDimension(event.Model), normalizeUsageOverviewDimension(event.Model), event.TotalTokens, cost, costAvailable, dual...)
 	// token share 的 API Key 维度同样按 api_group_key 聚合。
-	applyUsageOverviewRealtimeTokenUsageToTotals(apiKeyUsage, normalizeUsageOverviewDimension(event.APIGroupKey), normalizeUsageOverviewDimension(event.APIGroupKey), event.TotalTokens, cost, costAvailable)
+	applyUsageOverviewRealtimeTokenUsageToTotals(apiKeyUsage, normalizeUsageOverviewDimension(event.APIGroupKey), normalizeUsageOverviewDimension(event.APIGroupKey), event.TotalTokens, cost, costAvailable, dual...)
 	// 身份维度 token 聚合保持和请求数相同的身份解析策略。
-	applyUsageOverviewRealtimeIdentityTokenUsage(realtimeEvent, authFileUsage, aiProviderUsage, identityLookup, cost, costAvailable)
+	applyUsageOverviewRealtimeIdentityTokenUsage(realtimeEvent, authFileUsage, aiProviderUsage, identityLookup, cost, costAvailable, dual...)
 }
 
-func applyUsageOverviewRealtimeTokenUsageToTotals(totals map[string]*usageOverviewRealtimeTopAccumulator, key, label string, tokens int64, cost float64, costAvailable bool) {
+func applyUsageOverviewRealtimeTokenUsageToTotals(totals map[string]*usageOverviewRealtimeTopAccumulator, key, label string, tokens int64, cost float64, costAvailable bool, dual ...pricing.DualCosts) {
 	// 同一个 key 的 token/cost 累加到同一当前用量 accumulator。
 	item := usageOverviewRealtimeTopItem(totals, key, label)
 	item.tokens += tokens
 	item.costUSD += cost
+	if len(dual) > 0 {
+		item.dualCosts.Merge(dual[0])
+	}
 	if !costAvailable {
 		item.costAvailable = false
 	}
@@ -1696,20 +1798,30 @@ func applyUsageOverviewRealtimeIdentityRequest(realtimeEvent usageOverviewRealti
 	}
 }
 
-func applyUsageOverviewRealtimeIdentityTokenUsage(realtimeEvent usageOverviewRealtimeEvent, authFileUsage, aiProviderUsage map[string]*usageOverviewRealtimeTopAccumulator, identityLookup analysisIdentityLookup, cost float64, costAvailable bool) {
+func applyUsageOverviewRealtimeIdentityTokenUsage(realtimeEvent usageOverviewRealtimeEvent, authFileUsage, aiProviderUsage map[string]*usageOverviewRealtimeTopAccumulator, identityLookup analysisIdentityLookup, cost float64, costAvailable bool, dual ...pricing.DualCosts) {
 	event := realtimeEvent.event
 	// token 累计使用和 request 累计相同的身份解析结果，避免两类统计对不上。
 	authFile, aiProvider := usageOverviewRealtimeIdentityTargets(realtimeEvent, identityLookup)
 	if authFile != nil {
-		applyUsageOverviewRealtimeTokenUsageToTotals(authFileUsage, authFile.identity, authFile.label, event.TotalTokens, cost, costAvailable)
+		applyUsageOverviewRealtimeTokenUsageToTotals(authFileUsage, authFile.identity, authFile.label, event.TotalTokens, cost, costAvailable, dual...)
 	}
 	if aiProvider != nil {
-		applyUsageOverviewRealtimeTokenUsageToTotals(aiProviderUsage, aiProvider.identity, aiProvider.label, event.TotalTokens, cost, costAvailable)
+		applyUsageOverviewRealtimeTokenUsageToTotals(aiProviderUsage, aiProvider.identity, aiProvider.label, event.TotalTokens, cost, costAvailable, dual...)
 	}
 }
 
 func usageOverviewRealtimeIdentityTargets(realtimeEvent usageOverviewRealtimeEvent, identityLookup analysisIdentityLookup) (*analysisIdentityInfo, *analysisIdentityInfo) {
 	event := realtimeEvent.event
+	if realtimeEvent.exactPricingIdentity {
+		identity, found := pricingExactIdentity(identityLookup, usagePricingIdentity{event.AuthType, event.AuthIndex})
+		if !found {
+			return nil, nil // Unknown evidence must not select a normalized fallback.
+		}
+		if identity.authType == entities.UsageIdentityAuthTypeAIProvider {
+			return nil, &identity
+		}
+		return &identity, nil
+	}
 	// 优先用 auth_index 查 usage_identities，保证展示名和凭证页面一致。
 	authIndex := strings.TrimSpace(event.AuthIndex)
 	if authIndex != "" {
@@ -1765,6 +1877,7 @@ func aggregateUsageOverviewRealtimeBucket(buckets []usageOverviewRealtimeBucket,
 		aggregated.cacheReadTokens += bucket.cacheReadTokens
 		aggregated.cacheCreationTokens += bucket.cacheCreationTokens
 		aggregated.costUSD += bucket.costUSD
+		aggregated.dualCosts.Merge(bucket.dualCosts)
 		if !bucket.costAvailable {
 			aggregated.costAvailable = false
 		}
@@ -1788,6 +1901,7 @@ func finalizeUsageOverviewRealtime(window, span time.Duration, windowStart, wind
 			TokensPerMinute: float64(rollingBucket.tokens) / aggregationMinutes,
 			Tokens:          rollingBucket.tokens,
 			CostUSD:         usageOverviewRealtimeCostPtr(rollingBucket.costUSD, rollingBucket.costAvailable),
+			DualCosts:       rollingBucket.dualCosts.Normalized(),
 		})
 		requestLevel = append(requestLevel, dto.RealtimeRequestLevelPointRecord{
 			Bucket:            bucketKey,
@@ -1931,6 +2045,7 @@ func finalizeUsageOverviewRealtimeTopItems(totals map[string]*usageOverviewRealt
 			other.tokens += item.tokens
 			other.requests += item.requests
 			other.costUSD += item.costUSD
+			other.dualCosts.Merge(item.dualCosts)
 			if !item.costAvailable {
 				other.costAvailable = false
 			}
@@ -1944,12 +2059,13 @@ func finalizeUsageOverviewRealtimeTopItems(totals map[string]*usageOverviewRealt
 			share = (float64(item.tokens) / float64(totalTokens)) * 100
 		}
 		result = append(result, dto.RealtimeUsageTopItemRecord{
-			Key:      item.key,
-			Label:    item.label,
-			Tokens:   item.tokens,
-			Requests: item.requests,
-			CostUSD:  usageOverviewRealtimeCostPtr(item.costUSD, item.costAvailable),
-			Share:    share,
+			Key:       item.key,
+			Label:     item.label,
+			Tokens:    item.tokens,
+			Requests:  item.requests,
+			CostUSD:   usageOverviewRealtimeCostPtr(item.costUSD, item.costAvailable),
+			DualCosts: item.dualCosts.Normalized(),
+			Share:     share,
 		})
 	}
 	return result
@@ -1969,6 +2085,7 @@ func applyUsageEventToOverviewSnapshot(snapshot *dto.StatisticsSnapshot, event e
 // newUsageOverviewSeriesRecord 初始化 Overview 趋势序列中的所有指标 map。
 func newUsageOverviewSeriesRecord() dto.UsageOverviewSeriesRecord {
 	return dto.UsageOverviewSeriesRecord{
+		DualCosts:                map[string]pricing.DualCosts{},
 		Requests:                 map[string]int64{},
 		Tokens:                   map[string]int64{},
 		RPM:                      map[string]float64{},
@@ -1999,8 +2116,12 @@ func applyUsageEventToOverview(overview *dto.UsageOverviewRecord, event entities
 	result := costResolver.Calculate(UsageEventCostSubject(event))
 	if !result.Available {
 		overview.Summary.CostAvailable = false
+		if result.UnavailableReason != "" {
+			overview.Summary.UnavailableReason = result.UnavailableReason
+		}
 	}
 	cost := result.Cost.TotalCostUSD
+	overview.Summary.DualCosts.Add(result)
 	overview.Summary.TotalCost += cost
 
 	if overview.Comparisons != nil {
@@ -2011,13 +2132,13 @@ func applyUsageEventToOverview(overview *dto.UsageOverviewRecord, event entities
 		applyUsageOverviewComparison(overview.Comparisons, event.Model, event.APIGroupKey, dto.UsageComparisonItemRecord{
 			Requests: 1, Failures: failures, InputTokens: event.InputTokens, OutputTokens: event.OutputTokens,
 			CacheReadTokens: event.CacheReadTokens, CacheCreationTokens: event.CacheCreationTokens, ReasoningTokens: event.ReasoningTokens,
-			TotalTokens: event.TotalTokens, CostUSD: cost, CostAvailable: result.Available,
+			TotalTokens: event.TotalTokens, CostUSD: cost, CostAvailable: result.Available, DualCosts: result.DualCosts(),
 		})
 		if len(identityLookups) > 0 {
 			applyUsageOverviewIdentityComparison(overview.Comparisons, identityLookups[0], event.AuthIndex, dto.UsageComparisonItemRecord{
 				Requests: 1, Failures: failures, InputTokens: event.InputTokens, OutputTokens: event.OutputTokens,
 				CacheReadTokens: event.CacheReadTokens, CacheCreationTokens: event.CacheCreationTokens, ReasoningTokens: event.ReasoningTokens,
-				TotalTokens: event.TotalTokens, CostUSD: cost, CostAvailable: result.Available,
+				TotalTokens: event.TotalTokens, CostUSD: cost, CostAvailable: result.Available, DualCosts: result.DualCosts(),
 			})
 		}
 	}
@@ -2025,6 +2146,7 @@ func applyUsageEventToOverview(overview *dto.UsageOverviewRecord, event entities
 	// 主序列使用页面当前粒度，缓存率同桶累计后即时刷新。
 	bucketKey, bucketMinutes := usageOverviewBucket(timeutil.NormalizeStorageTime(event.Timestamp), bucketByDay)
 	applyUsageEventToOverviewSeries(&overview.Series, event, cost, bucketKey, bucketMinutes)
+	addUsageSeriesDualCosts(&overview.Series, bucketKey, result.DualCosts())
 }
 
 func updateUsageOverviewSeriesCacheReadRate(series *dto.UsageOverviewSeriesRecord, bucketKey string, inputTokens, cacheReadTokens int64) {
@@ -2047,6 +2169,8 @@ func finalizeUsageOverview(overview *dto.UsageOverviewRecord) {
 		overview.Summary.DailyAverageTokens = usageOverviewFloat64Ptr(float64(overview.Summary.TokenCount) / days)
 		overview.Summary.DailyAverageCost = usageOverviewFloat64Ptr(overview.Summary.TotalCost / days)
 		overview.Summary.DailyAverageRangeDays = usageOverviewFloat64Ptr(days)
+		dual := overview.Summary.DualCosts.Scale(1 / days)
+		overview.Summary.DailyAverageDualCosts = &dual
 	}
 }
 

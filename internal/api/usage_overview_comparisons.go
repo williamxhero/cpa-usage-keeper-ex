@@ -6,39 +6,50 @@ import (
 	"sort"
 	"time"
 
+	"cpa-usage-keeper/internal/pricing"
 	repodto "cpa-usage-keeper/internal/repository/dto"
 	servicedto "cpa-usage-keeper/internal/service/dto"
 )
 
 type usageOverviewComparisonItem struct {
-	TokenSeries         []int64  `json:"token_series"`
-	Key                 string   `json:"key"`
-	Label               string   `json:"label"`
-	Requests            int64    `json:"requests"`
-	Failures            int64    `json:"failures"`
-	InputTokens         int64    `json:"input_tokens"`
-	OutputTokens        int64    `json:"output_tokens"`
-	CacheReadTokens     int64    `json:"cache_read_tokens"`
-	CacheCreationTokens int64    `json:"cache_creation_tokens"`
-	ReasoningTokens     int64    `json:"reasoning_tokens"`
-	TotalTokens         int64    `json:"total_tokens"`
-	Cost                *float64 `json:"cost"`
+	DualCosts           pricing.DualCosts `json:"dual_costs"`
+	TokenSeries         []int64           `json:"token_series"`
+	Key                 string            `json:"key"`
+	Label               string            `json:"label"`
+	Requests            int64             `json:"requests"`
+	Failures            int64             `json:"failures"`
+	InputTokens         int64             `json:"input_tokens"`
+	OutputTokens        int64             `json:"output_tokens"`
+	CacheReadTokens     int64             `json:"cache_read_tokens"`
+	CacheCreationTokens int64             `json:"cache_creation_tokens"`
+	ReasoningTokens     int64             `json:"reasoning_tokens"`
+	TotalTokens         int64             `json:"total_tokens"`
+	Cost                *float64          `json:"cost"`
 }
 
 type usageOverviewComparisons struct {
-	Buckets     []string                      `json:"buckets"`
-	Granularity string                        `json:"granularity"`
-	Timezone    string                        `json:"timezone"`
-	Models      []usageOverviewComparisonItem `json:"models"`
-	APIKeys     []usageOverviewComparisonItem `json:"api_keys,omitempty"`
-	AuthFiles   []usageOverviewComparisonItem `json:"auth_files,omitempty"`
-	AIProviders []usageOverviewComparisonItem `json:"ai_providers,omitempty"`
+	PricingSnapshotID string                        `json:"pricing_snapshot_id"`
+	Channels          []usageOverviewComparisonItem `json:"channels,omitempty"`
+	Buckets           []string                      `json:"buckets"`
+	Granularity       string                        `json:"granularity"`
+	Timezone          string                        `json:"timezone"`
+	Models            []usageOverviewComparisonItem `json:"models"`
+	APIKeys           []usageOverviewComparisonItem `json:"api_keys,omitempty"`
+	AuthFiles         []usageOverviewComparisonItem `json:"auth_files,omitempty"`
+	AIProviders       []usageOverviewComparisonItem `json:"ai_providers,omitempty"`
 }
 
 func buildUsageOverviewComparisons(overview *servicedto.UsageOverviewSnapshot, infos map[string]analysisAPIKeyInfo) *usageOverviewComparisons {
 	result := &usageOverviewComparisons{Buckets: []string{}, Granularity: "hourly", Timezone: time.Local.String(), Models: []usageOverviewComparisonItem{}, APIKeys: []usageOverviewComparisonItem{}, AuthFiles: []usageOverviewComparisonItem{}, AIProviders: []usageOverviewComparisonItem{}}
+	if overview != nil {
+		result.PricingSnapshotID = overview.PricingSnapshotID
+	}
 	if overview == nil || overview.Comparisons == nil {
 		return result
+	}
+	result.Channels = mapUsageOverviewComparison(overview.Comparisons.Channels, nil, false, overview.Comparisons.Buckets)
+	if result.PricingSnapshotID == "" {
+		result.PricingSnapshotID = overview.Comparisons.PricingSnapshotID
 	}
 	result.Buckets = overview.Comparisons.Buckets
 	result.Granularity = overview.Comparisons.Granularity
@@ -75,6 +86,7 @@ func mapUsageOverviewComparison(items map[string]*repodto.UsageComparisonItemRec
 			series[index] = item.TokenBuckets[bucket]
 		}
 		result = append(result, usageOverviewComparisonItem{
+			DualCosts:   item.DualCosts.Normalized(),
 			TokenSeries: series,
 			Key:         key, Label: label, Requests: item.Requests, Failures: item.Failures,
 			InputTokens: item.InputTokens, OutputTokens: item.OutputTokens,

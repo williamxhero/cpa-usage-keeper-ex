@@ -13,6 +13,9 @@ import {
   type StoredUsageRangeState,
 } from '@/utils/usage/customRange';
 import { buildUsageRangeQuery } from '@/utils/usage/rangeQuery';
+import { buildUsageStatsQueryKey } from '@/stores/useUsageStatsStore';
+import { getAnalysisPricingSnapshot } from '@/utils/usage/pricingSnapshot';
+import { Button } from '@/components/ui/Button';
 import { loadKeyViewerTimeRange, persistKeyViewerTimeRange } from '@/features/key-viewer/timeRange';
 import styles from '@/features/key-viewer/KeyViewerShell.module.scss';
 
@@ -34,6 +37,7 @@ export function KeyAnalysisPage({ apiKey, onNavigate, onAuthRequired }: KeyAnaly
   const [timeRangeState, setTimeRangeState] = useState<StoredUsageRangeState>(loadTimeRange);
   const { range: timeRange, customRange } = timeRangeState;
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [loadedAnalysisQueryKey, setLoadedAnalysisQueryKey] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState('');
   const [latency, setLatency] = useState<AnalysisLatencyDiagnostics | null>(null);
@@ -48,6 +52,9 @@ export function KeyAnalysisPage({ apiKey, onNavigate, onAuthRequired }: KeyAnaly
     customStart: customRange?.start,
     customEnd: customRange?.end,
   }), [customRange?.end, customRange?.start, customRange?.unit, timeRange]);
+  const analysisQueryKey = usageRangeQuery.valid ? buildUsageStatsQueryKey(usageRangeQuery) : null;
+  const currentAnalysis = analysisQueryKey !== null && loadedAnalysisQueryKey === analysisQueryKey ? analysis : null;
+  const snapshotMismatch = !analysisLoading && getAnalysisPricingSnapshot(currentAnalysis).mixed;
   const rangeTimeZone = analysis?.timezone ?? timeRangeState.timeZone;
 
   const recoverRangeBoundsConflict = useCallback((error: unknown) => {
@@ -89,10 +96,11 @@ export function KeyAnalysisPage({ apiKey, onNavigate, onAuthRequired }: KeyAnaly
 
     // 主 Analysis 与 Latency 同时加载，但分别更新状态，避免一个慢请求阻塞另一块内容。
     const coreRequest = fetchKeyAnalysis(usageRangeQuery, controller.signal).then((response) => {
-      if (requestControllerRef.current !== controller) return;
+      if (controller.signal.aborted || requestControllerRef.current !== controller) return;
       // 项目时区只作为后续 409 恢复依据，不参与当前请求 callback 身份，避免响应触发重复加载。
       analysisTimeZoneRef.current = response.timezone;
       setAnalysis(response);
+      setLoadedAnalysisQueryKey(analysisQueryKey);
       setAnalysisLoading(false);
     }, (error: unknown) => {
       if (controller.signal.aborted || requestControllerRef.current !== controller) return;
@@ -122,7 +130,7 @@ export function KeyAnalysisPage({ apiKey, onNavigate, onAuthRequired }: KeyAnaly
     if (requestControllerRef.current === controller) {
       requestControllerRef.current = null;
     }
-  }, [onAuthRequired, recoverRangeBoundsConflict, usageRangeQuery]);
+  }, [analysisQueryKey, onAuthRequired, recoverRangeBoundsConflict, usageRangeQuery]);
 
   useEffect(() => {
     void loadAnalysis();
@@ -168,6 +176,12 @@ export function KeyAnalysisPage({ apiKey, onNavigate, onAuthRequired }: KeyAnaly
           </button>
         </div>
       )}
+      {snapshotMismatch && <div className={styles.errorBox} role="status" data-pricing-snapshot-notice>
+        {t('cost_estimates.snapshot_mismatch')}
+        <Button type="button" variant="secondary" size="sm" disabled={manualRefreshLoading || analysisLoading} onClick={() => void handleManualRefresh()}>
+          {t('cost_estimates.refresh')}
+        </Button>
+      </div>}
       <AnalysisPanel
         analysis={analysis}
         loading={analysisLoading}

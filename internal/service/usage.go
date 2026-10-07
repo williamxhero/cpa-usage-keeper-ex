@@ -87,13 +87,18 @@ func (s *usageService) GetUsageOverview(ctx context.Context, filter servicedto.U
 		return nil, err
 	}
 	return &servicedto.UsageOverviewSnapshot{
-		Usage:       overview.Usage,
-		Comparisons: overview.Comparisons,
+		PricingSnapshotID: overview.PricingSnapshotID,
+		Usage:             overview.Usage,
+		Comparisons:       overview.Comparisons,
 		Summary: servicedto.UsageOverviewSummary{
+			DualCosts:             overview.Summary.DualCosts,
+			DailyAverageDualCosts: overview.Summary.DailyAverageDualCosts,
 			RPM:                   overview.Summary.RPM,
 			TPM:                   overview.Summary.TPM,
 			TotalCost:             overview.Summary.TotalCost,
 			CostAvailable:         overview.Summary.CostAvailable,
+			UnavailableReason:     overview.Summary.UnavailableReason,
+			PricingSnapshotID:     overview.Summary.PricingSnapshotID,
 			InputTokens:           overview.Summary.InputTokens,
 			CacheReadTokens:       overview.Summary.CacheReadTokens,
 			CacheCreationTokens:   overview.Summary.CacheCreationTokens,
@@ -127,7 +132,7 @@ func (s *usageService) GetUsageOverviewComparisons(ctx context.Context, filter s
 	if err != nil {
 		return nil, err
 	}
-	return &servicedto.UsageOverviewSnapshot{Comparisons: overview.Comparisons}, nil
+	return &servicedto.UsageOverviewSnapshot{PricingSnapshotID: overview.PricingSnapshotID, Comparisons: overview.Comparisons}, nil
 }
 
 // GetUsageActivity 用统一时间条件选择档位；today/yesterday 额外保留本地自然日边界。
@@ -299,10 +304,12 @@ func mapUsageOverviewSeries(series repodto.UsageOverviewSeriesRecord, filter ser
 		bucket := group[0]
 		var requests, tokens, inputTokens, cacheReadTokens int64
 		var cost float64
+		var dualCosts pricing.DualCosts
 		for _, label := range group {
 			requests += series.Requests[label]
 			tokens += series.Tokens[label]
 			cost += series.Cost[label]
+			dualCosts.Merge(series.DualCosts[label])
 			inputTokens += series.CacheReadRateInputTokens[label]
 			cacheReadTokens += series.CacheReadRateReadTokens[label]
 		}
@@ -313,6 +320,7 @@ func mapUsageOverviewSeries(series repodto.UsageOverviewSeriesRecord, filter ser
 		result.RPM = append(result.RPM, float64(requests)/minutes)
 		result.TPM = append(result.TPM, float64(tokens)/minutes)
 		result.Cost = append(result.Cost, cost)
+		result.DualCosts = append(result.DualCosts, dualCosts.Normalized())
 		result.CacheReadRate = append(result.CacheReadRate, usageOverviewSeriesCacheRate(inputTokens, cacheReadTokens))
 	}
 	return result
@@ -345,6 +353,7 @@ func mapUsageOverviewSeriesLabels(series repodto.UsageOverviewSeriesRecord, labe
 		result.RPM = append(result.RPM, series.RPM[label])
 		result.TPM = append(result.TPM, series.TPM[label])
 		result.Cost = append(result.Cost, series.Cost[label])
+		result.DualCosts = append(result.DualCosts, series.DualCosts[label].Normalized())
 		result.CacheReadRate = append(result.CacheReadRate, series.CacheReadRate[label])
 	}
 	return result
@@ -355,6 +364,7 @@ func emptyUsageOverviewServiceSeries(capacity int) servicedto.UsageOverviewSerie
 		Buckets: make([]string, 0, capacity), Requests: make([]int64, 0, capacity), Tokens: make([]int64, 0, capacity),
 		RPM: make([]float64, 0, capacity), TPM: make([]float64, 0, capacity), Cost: make([]float64, 0, capacity),
 		CacheReadRate: make([]*float64, 0, capacity),
+		DualCosts:     make([]pricing.DualCosts, 0, capacity),
 	}
 }
 
@@ -368,16 +378,17 @@ func usageOverviewSeriesCacheRate(inputTokens, cacheReadTokens int64) *float64 {
 
 func mapUsageOverviewRealtime(realtime repodto.UsageOverviewRealtimeRecord) servicedto.UsageOverviewRealtime {
 	return servicedto.UsageOverviewRealtime{
-		Insights:       &realtime.Insights,
-		Window:         realtime.Window,
-		BucketSeconds:  realtime.BucketSeconds,
-		WindowStart:    realtime.WindowStart,
-		WindowEnd:      realtime.WindowEnd,
-		TokenVelocity:  mapRealtimeTokenVelocity(realtime.TokenVelocity),
-		LatencyScatter: mapRealtimeLatencyScatter(realtime.LatencyScatter),
-		CurrentUsage:   mapRealtimeCurrentUsage(realtime.CurrentUsage),
-		RequestLevel:   mapRealtimeRequestLevel(realtime.RequestLevel),
-		CacheLevel:     mapRealtimeCacheLevel(realtime.CacheLevel),
+		PricingSnapshotID: realtime.PricingSnapshotID,
+		Insights:          &realtime.Insights,
+		Window:            realtime.Window,
+		BucketSeconds:     realtime.BucketSeconds,
+		WindowStart:       realtime.WindowStart,
+		WindowEnd:         realtime.WindowEnd,
+		TokenVelocity:     mapRealtimeTokenVelocity(realtime.TokenVelocity),
+		LatencyScatter:    mapRealtimeLatencyScatter(realtime.LatencyScatter),
+		CurrentUsage:      mapRealtimeCurrentUsage(realtime.CurrentUsage),
+		RequestLevel:      mapRealtimeRequestLevel(realtime.RequestLevel),
+		CacheLevel:        mapRealtimeCacheLevel(realtime.CacheLevel),
 	}
 }
 
@@ -401,6 +412,7 @@ func mapRealtimeTokenVelocity(points []repodto.RealtimeTokenVelocityPointRecord)
 			TokensPerMinute: point.TokensPerMinute,
 			Tokens:          point.Tokens,
 			CostUSD:         point.CostUSD,
+			DualCosts:       point.DualCosts,
 		})
 	}
 	return result
@@ -419,12 +431,13 @@ func mapRealtimeUsageTopItems(items []repodto.RealtimeUsageTopItemRecord) []serv
 	result := make([]servicedto.RealtimeUsageTopItem, 0, len(items))
 	for _, item := range items {
 		result = append(result, servicedto.RealtimeUsageTopItem{
-			Key:      item.Key,
-			Label:    item.Label,
-			Tokens:   item.Tokens,
-			Requests: item.Requests,
-			CostUSD:  item.CostUSD,
-			Share:    item.Share,
+			Key:       item.Key,
+			Label:     item.Label,
+			Tokens:    item.Tokens,
+			Requests:  item.Requests,
+			CostUSD:   item.CostUSD,
+			DualCosts: item.DualCosts,
+			Share:     item.Share,
 		})
 	}
 	return result
@@ -514,6 +527,7 @@ func mapAnalysisRecord(record *repodto.AnalysisRecord) *servicedto.AnalysisSnaps
 			Requests:            bucket.Requests,
 			CostUSD:             bucket.CostUSD,
 			CostAvailable:       bucket.CostAvailable,
+			DualCosts:           bucket.DualCosts,
 		})
 	}
 	modelUsage := make([]servicedto.AnalysisModelUsage, 0, len(record.ModelUsage))
@@ -555,6 +569,7 @@ func mapAnalysisRecord(record *repodto.AnalysisRecord) *servicedto.AnalysisSnaps
 			Requests:            cell.Requests,
 			CostUSD:             cell.CostUSD,
 			CostAvailable:       cell.CostAvailable,
+			DualCosts:           cell.DualCosts,
 		})
 	}
 	modelEfficiency := make([]servicedto.AnalysisModelEfficiencyItem, 0, len(record.ModelEfficiency))
@@ -570,12 +585,14 @@ func mapAnalysisRecord(record *repodto.AnalysisRecord) *servicedto.AnalysisSnaps
 			TotalTokens:            item.TotalTokens,
 			CostUSD:                item.CostUSD,
 			CostAvailable:          item.CostAvailable,
+			DualCosts:              item.DualCosts,
 			CostPerRequestUSD:      item.CostPerRequestUSD,
 			OutputTokensPerRequest: item.OutputTokensPerRequest,
 			CacheReadRate:          item.CacheReadRate,
 		})
 	}
 	return &servicedto.AnalysisSnapshot{
+		PricingSnapshotID:     record.PricingSnapshotID,
 		Granularity:           servicedto.AnalysisGranularity(record.Granularity),
 		RangeStart:            record.RangeStart,
 		RangeEnd:              record.RangeEnd,
@@ -587,12 +604,15 @@ func mapAnalysisRecord(record *repodto.AnalysisRecord) *servicedto.AnalysisSnaps
 		AIProviderComposition: aiProviders,
 		Heatmap:               heatmap,
 		CostBreakdown: servicedto.AnalysisCostBreakdown{
+			DualCosts:            record.CostBreakdown.DualCosts,
 			UncachedInputCostUSD: record.CostBreakdown.UncachedInputCostUSD,
 			CacheReadCostUSD:     record.CostBreakdown.CacheReadCostUSD,
 			CacheWriteCostUSD:    record.CostBreakdown.CacheWriteCostUSD,
 			OutputCostUSD:        record.CostBreakdown.OutputCostUSD,
 			TotalCostUSD:         record.CostBreakdown.TotalCostUSD,
 			CostAvailable:        record.CostBreakdown.CostAvailable,
+			UnavailableReason:    record.CostBreakdown.UnavailableReason,
+			PricingSnapshotID:    record.CostBreakdown.PricingSnapshotID,
 		},
 		ModelEfficiency: modelEfficiency,
 	}
@@ -642,6 +662,7 @@ func mapAnalysisCompositionRecord(item repodto.AnalysisCompositionRecord) servic
 		ReasoningTokens:     item.ReasoningTokens,
 		CostUSD:             item.CostUSD,
 		CostAvailable:       item.CostAvailable,
+		DualCosts:           item.DualCosts,
 	}
 }
 
@@ -710,10 +731,13 @@ func (s *usageService) ListUsageEvents(ctx context.Context, filter servicedto.Us
 			TotalTokens:         row.TotalTokens,
 			CostUSD:             row.CostUSD,
 			CostAvailable:       row.CostAvailable,
+			DualCosts:           row.DualCosts,
 			PricingStyle:        row.PricingStyle,
+			ChannelID:           row.ChannelID, ChannelName: row.ChannelName, AttributionWarning: row.AttributionWarning, PricingSnapshotID: row.PricingSnapshotID,
+			PricingSelection: row.PricingSelection,
 		})
 	}
-	return &servicedto.UsageEventsPage{Events: result, TotalCount: page.TotalCount, Page: page.Page, PageSize: page.PageSize, TotalPages: page.TotalPages, HasMore: page.HasMore}, nil
+	return &servicedto.UsageEventsPage{PricingSnapshotID: page.PricingSnapshotID, Events: result, TotalCount: page.TotalCount, Page: page.Page, PageSize: page.PageSize, TotalPages: page.TotalPages, HasMore: page.HasMore}, nil
 }
 
 // StreamUsageEvents 使用 Request Event Log 相同筛选条件逐行导出，不应用分页。
@@ -768,7 +792,10 @@ func (s *usageService) StreamUsageEvents(ctx context.Context, filter servicedto.
 			TotalTokens:         row.TotalTokens,
 			CostUSD:             row.CostUSD,
 			CostAvailable:       row.CostAvailable,
+			DualCosts:           row.DualCosts,
 			PricingStyle:        row.PricingStyle,
+			ChannelID:           row.ChannelID, ChannelName: row.ChannelName, AttributionWarning: row.AttributionWarning, PricingSnapshotID: row.PricingSnapshotID,
+			PricingSelection: row.PricingSelection,
 		})
 	}, s.pricing.NewResolver())
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cpa-usage-keeper/internal/entities"
+	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository"
 	repositorydto "cpa-usage-keeper/internal/repository/dto"
 
@@ -28,6 +29,7 @@ type CodexQuotaHistoryRequest struct {
 
 // CodexQuotaHistoryResponse 是额度历史标签一次请求即可复用的完整响应。
 type CodexQuotaHistoryResponse struct {
+	PricingSnapshotID string `json:"pricing_snapshot_id,omitempty"`
 	// GeneratedAt 固定当前周期统计截点和 pricing snapshot 的响应生成时间。
 	GeneratedAt time.Time `json:"generated_at"`
 	// RangeStart 明确已结束周期只回溯最近三十天。
@@ -106,11 +108,13 @@ type CodexQuotaHistoryTransition struct {
 	// CostPerPoint 是区间动态 Cost 除以真实下降百分点。
 	CostPerPoint float64 `json:"cost_per_point"`
 	// CostPerPointAvailable 为 false 时前端不得把 CostPerPoint 显示成零成本。
-	CostPerPointAvailable bool `json:"cost_per_point_available"`
+	CostPerPointAvailable bool              `json:"cost_per_point_available"`
+	DualCostsPerPoint     pricing.DualCosts `json:"dual_costs_per_point"`
 }
 
 // CodexQuotaHistoryUsage 是前端周期摘要和变化区间列表共享的动态聚合事实。
 type CodexQuotaHistoryUsage struct {
+	PricingSnapshotID string `json:"pricing_snapshot_id,omitempty"`
 	// Requests 是匹配请求总数。
 	Requests int64 `json:"requests"`
 	// SuccessfulRequests 是未失败请求数。
@@ -132,7 +136,8 @@ type CodexQuotaHistoryUsage struct {
 	// TotalCostUSD 是按响应生成时当前定价动态回算的美元成本。
 	TotalCostUSD float64 `json:"total_cost_usd"`
 	// CostAvailable 只有全部有 Token 的定价分组均可计价时才为 true。
-	CostAvailable bool `json:"cost_available"`
+	CostAvailable bool              `json:"cost_available"`
+	DualCosts     pricing.DualCosts `json:"dual_costs"`
 }
 
 // GetCodexQuotaHistory 校验 Auth File 身份后，用单个 pricing snapshot 动态生成额度效率响应。
@@ -188,10 +193,11 @@ func (s *Service) GetCodexQuotaHistory(ctx context.Context, request CodexQuotaHi
 
 func codexQuotaHistoryResponseFromRepository(history repositorydto.CodexQuotaEfficiencyHistory) CodexQuotaHistoryResponse {
 	response := CodexQuotaHistoryResponse{
-		GeneratedAt: history.GeneratedAt,
-		RangeStart:  history.RangeStart,
-		Windows:     make([]CodexQuotaHistoryWindow, 0, len(history.Windows)),
-		Cycles:      make([]CodexQuotaHistoryCycle, 0, len(history.Cycles)),
+		GeneratedAt:       history.GeneratedAt,
+		PricingSnapshotID: history.PricingSnapshotID,
+		RangeStart:        history.RangeStart,
+		Windows:           make([]CodexQuotaHistoryWindow, 0, len(history.Windows)),
+		Cycles:            make([]CodexQuotaHistoryCycle, 0, len(history.Cycles)),
 	}
 	for _, window := range history.Windows {
 		response.Windows = append(response.Windows, codexQuotaHistoryWindowFromRepository(window))
@@ -253,6 +259,7 @@ func codexQuotaHistoryCycleFromRepository(cycle repositorydto.CodexQuotaEfficien
 			TokensPerPoint:        transition.TokensPerPoint,
 			CostPerPoint:          transition.CostPerPoint,
 			CostPerPointAvailable: transition.CostPerPointAvailable,
+			DualCostsPerPoint:     transition.DualCostsPerPoint.Normalized(),
 		})
 	}
 	return response
@@ -269,6 +276,7 @@ func cloneCodexQuotaHistoryInt(value *int) *int {
 func codexQuotaHistoryUsageFromRepository(usage repositorydto.CodexQuotaEfficiencyUsage) CodexQuotaHistoryUsage {
 	return CodexQuotaHistoryUsage{
 		Requests:            usage.Requests,
+		PricingSnapshotID:   usage.PricingSnapshotID,
 		SuccessfulRequests:  usage.SuccessfulRequests,
 		FailedRequests:      usage.FailedRequests,
 		InputTokens:         usage.InputTokens,
@@ -279,5 +287,6 @@ func codexQuotaHistoryUsageFromRepository(usage repositorydto.CodexQuotaEfficien
 		TotalTokens:         usage.TotalTokens,
 		TotalCostUSD:        usage.TotalCostUSD,
 		CostAvailable:       usage.CostAvailable,
+		DualCosts:           usage.DualCosts.Normalized(),
 	}
 }

@@ -1,0 +1,11 @@
+.costs { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+.estimate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.estimate small { flex-basis: 100%; color: var(--text-secondary); }
+.costs .estimate > strong, .costs .estimate > small { max-width: 100%; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; }
+.explanation { min-width: 0; max-width: 100%; overflow-wrap: anywhere; white-space: normal; font-size: 12px; }
+.explanation summary { cursor: pointer; }
+.explanation dl { margin: 8px 0; }
+.explanation dl > div { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.explanation dt { color: var(--text-secondary); }
+.explanation dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .estimate { align-items: flex-start; } .explanation dl > div { flex-direction: column; } }

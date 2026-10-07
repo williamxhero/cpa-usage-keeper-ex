@@ -1,4 +1,4 @@
-import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
+import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingChannel, type PricingChannelInput, type PricingChannelModel, type PricingChannelModelsResponse, type PricingChannelsResponse, type PricingIdentityState, type PricingIdentityMigrationInput, type PricingIdentityCorrectionInput, type PricingIdentityMutationResult, type PricingCredential, type PricingCredentialDefault, type PricingCredentialFixedInput, type PricingCredentialModel, type PricingCredentialModelsResponse, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed'
 import { resolveUsageRequestRange } from '@/utils/usage/rangeQuery'
 
@@ -963,6 +963,202 @@ export async function fetchPricing(signal?: AbortSignal): Promise<PricingRespons
   if (!response.ok) {
     await parseApiError(response, `Failed to load pricing: ${response.status}`)
   }
+  return response.json()
+}
+
+export async function fetchPricingCredentials(signal?: AbortSignal): Promise<PricingCredentialsResponse> {
+  const response = await apiFetch(apiPath('/pricing/credentials'), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load credential directory')
+  return response.json()
+}
+
+export async function fetchCredentialPricingSubjects(signal?: AbortSignal): Promise<PricingCredentialsResponse> {
+  const response = await apiFetch(apiPath('/pricing/credential-subjects'), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load credential subjects')
+  return response.json()
+}
+
+export async function bindPricingCredential(directoryId: number, signal?: AbortSignal): Promise<PricingCredential> {
+  const response = await apiFetch(apiPath('/pricing/credentials'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ directory_id: directoryId }),
+    signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to register credential')
+  return response.json()
+}
+
+export async function fetchPricingIdentityState(signal?: AbortSignal): Promise<PricingIdentityState> {
+  const response = await apiFetch(apiPath('/pricing/identity-bindings'), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load identity associations')
+  return response.json()
+}
+
+export async function migratePricingIdentity(input: PricingIdentityMigrationInput, signal?: AbortSignal): Promise<PricingIdentityMutationResult> {
+  const response = await apiFetch(apiPath('/pricing/identity-bindings/migrate'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject_id: input.subject_id, directory_ref: input.directory_ref, snapshot_id: input.snapshot_id, confirmed: input.confirmed }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to migrate identity association')
+  return response.json()
+}
+
+export async function correctPricingIdentity(bindingRef: string, input: PricingIdentityCorrectionInput, signal?: AbortSignal): Promise<PricingIdentityMutationResult> {
+  const response = await apiFetch(apiPath(`/pricing/identity-bindings/${encodeURIComponent(bindingRef)}/correction`), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expected_subject_id: input.expected_subject_id, target_subject_id: input.target_subject_id, action: input.action, snapshot_id: input.snapshot_id, confirmed: input.confirmed }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to correct identity association')
+  return response.json()
+}
+
+export async function fetchPricingCredentialDefault(subjectId: string, signal?: AbortSignal): Promise<PricingCredentialDefault> {
+  const response = await apiFetch(apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/default`), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load credential default')
+  return response.json()
+}
+
+export async function savePricingCredentialDefault(subjectId: string, multiplier: string, signal?: AbortSignal): Promise<PricingCredentialDefault> {
+  const response = await apiFetch(apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/default`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ multiplier }),
+    signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save credential default')
+  return response.json()
+}
+
+export async function clearPricingCredentialDefault(subjectId: string, signal?: AbortSignal): Promise<PricingCredentialDefault> {
+  const response = await apiFetch(apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/default`), {
+    method: 'DELETE',
+    signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to clear credential default')
+  return response.json()
+}
+
+export async function fetchPricingChannels(signal?: AbortSignal): Promise<PricingChannelsResponse> {
+  const response = await apiFetch(apiPath('/pricing/channels'), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load pricing channels')
+  return response.json()
+}
+
+export async function fetchPricingChannel(channelId: string, signal?: AbortSignal): Promise<PricingChannel> {
+  const response = await apiFetch(apiPath(`/pricing/channels/${encodeURIComponent(channelId)}`), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load pricing channel')
+  return response.json()
+}
+
+export async function savePricingChannel(channelId: string | null, input: PricingChannelInput, signal?: AbortSignal): Promise<PricingChannel> {
+  const path = channelId === null ? '/pricing/channels' : `/pricing/channels/${encodeURIComponent(channelId)}`
+  const response = await apiFetch(apiPath(path), {
+    method: channelId === null ? 'POST' : 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+    signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save pricing channel')
+  return response.json()
+}
+
+export async function deletePricingChannel(channelId: string, confirmDependencies = false, signal?: AbortSignal): Promise<void> {
+  const params = confirmDependencies ? '?confirm_dependencies=true' : ''
+  const response = await apiFetch(apiPath(`/pricing/channels/${encodeURIComponent(channelId)}`) + params, { method: 'DELETE', signal })
+  if (!response.ok) await parseApiError(response, 'Unable to delete pricing channel')
+}
+
+export async function savePricingChannelDefault(channelId: string, multiplier: string, signal?: AbortSignal): Promise<PricingChannel> {
+  const response = await apiFetch(apiPath(`/pricing/channels/${encodeURIComponent(channelId)}/default`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ multiplier }),
+    signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save channel default')
+  return response.json()
+}
+
+export async function clearPricingChannelDefault(channelId: string, signal?: AbortSignal): Promise<PricingChannel> {
+  const response = await apiFetch(apiPath(`/pricing/channels/${encodeURIComponent(channelId)}/default`), { method: 'DELETE', signal })
+  if (!response.ok) await parseApiError(response, 'Unable to clear channel default')
+  return response.json()
+}
+
+export async function fetchPricingChannelModels(channelId: string, signal?: AbortSignal): Promise<PricingChannelModelsResponse> {
+  const response = await apiFetch(apiPath(`/pricing/channels/${encodeURIComponent(channelId)}/models`), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load channel model exceptions')
+  return response.json()
+}
+
+function pricingChannelModelPath(channelId: string, model: string): string {
+  return `${apiPath(`/pricing/channels/${encodeURIComponent(channelId)}/model`)}?${new URLSearchParams({ model })}`
+}
+
+export async function fetchPricingChannelModel(channelId: string, model: string, signal?: AbortSignal): Promise<PricingChannelModel> {
+  const response = await apiFetch(pricingChannelModelPath(channelId, model), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load channel model exception')
+  return response.json()
+}
+
+export async function savePricingChannelModel(channelId: string, model: string, multiplier: string, signal?: AbortSignal): Promise<PricingChannelModel> {
+  const response = await apiFetch(pricingChannelModelPath(channelId, model), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'multiplier', multiplier }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save channel model exception')
+  return response.json()
+}
+
+export async function savePricingChannelFixed(channelId: string, model: string, fixed: PricingCredentialFixedInput, signal?: AbortSignal): Promise<PricingChannelModel> {
+  const response = await apiFetch(pricingChannelModelPath(channelId, model), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'fixed', fixed }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save channel fixed tariff')
+  return response.json()
+}
+
+export async function clearPricingChannelModel(channelId: string, model: string, signal?: AbortSignal): Promise<PricingChannelModel> {
+  const response = await apiFetch(pricingChannelModelPath(channelId, model), { method: 'DELETE', signal })
+  if (!response.ok) await parseApiError(response, 'Unable to clear channel model exception')
+  return response.json()
+}
+
+export async function fetchPricingCredentialModels(subjectId: string, signal?: AbortSignal): Promise<PricingCredentialModelsResponse> {
+  const response = await apiFetch(apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/models`), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load credential model exceptions')
+  return response.json()
+}
+
+function pricingCredentialModelPath(subjectId: string, model: string): string {
+  return `${apiPath(`/pricing/credentials/${encodeURIComponent(subjectId)}/model`)}?${new URLSearchParams({ model })}`
+}
+
+export async function fetchPricingCredentialModel(subjectId: string, model: string, signal?: AbortSignal): Promise<PricingCredentialModel> {
+  const response = await apiFetch(pricingCredentialModelPath(subjectId, model), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load credential model exception')
+  return response.json()
+}
+
+export async function savePricingCredentialModel(subjectId: string, model: string, multiplier: string, signal?: AbortSignal): Promise<PricingCredentialModel> {
+  const response = await apiFetch(pricingCredentialModelPath(subjectId, model), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ multiplier }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save credential model exception')
+  return response.json()
+}
+
+export async function savePricingCredentialFixed(subjectId: string, model: string, fixed: PricingCredentialFixedInput, signal?: AbortSignal): Promise<PricingCredentialModel> {
+  const response = await apiFetch(pricingCredentialModelPath(subjectId, model), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'fixed', fixed }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save credential fixed tariff')
+  return response.json()
+}
+
+export async function clearPricingCredentialModel(subjectId: string, model: string, signal?: AbortSignal): Promise<PricingCredentialModel> {
+  const response = await apiFetch(pricingCredentialModelPath(subjectId, model), { method: 'DELETE', signal })
+  if (!response.ok) await parseApiError(response, 'Unable to clear credential model exception')
   return response.json()
 }
 

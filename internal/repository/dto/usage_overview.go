@@ -1,9 +1,16 @@
 package dto
 
-import "time"
+import (
+	"cpa-usage-keeper/internal/pricing"
+	"time"
+)
 
 // UsageOverviewSummaryRecord 是 overview 的 summary 聚合结果。
 type UsageOverviewSummaryRecord struct {
+	DualCosts             pricing.DualCosts
+	DailyAverageDualCosts *pricing.DualCosts
+	UnavailableReason     string
+	PricingSnapshotID     string
 	RequestCount          int64
 	TokenCount            int64
 	WindowMinutes         int64
@@ -23,6 +30,7 @@ type UsageOverviewSummaryRecord struct {
 
 // UsageOverviewSeriesRecord 是 overview 的 series 聚合结果。
 type UsageOverviewSeriesRecord struct {
+	DualCosts                map[string]pricing.DualCosts
 	Requests                 map[string]int64
 	Tokens                   map[string]int64
 	RPM                      map[string]float64
@@ -35,6 +43,7 @@ type UsageOverviewSeriesRecord struct {
 
 // RealtimeTokenVelocityPointRecord 是 Overview token 速度图的单个短窗口桶。
 type RealtimeTokenVelocityPointRecord struct {
+	DualCosts       pricing.DualCosts
 	Bucket          string
 	TokensPerMinute float64
 	Tokens          int64
@@ -61,12 +70,13 @@ const RealtimeUsageOtherKey = "__realtime_others__"
 
 // RealtimeUsageTopItemRecord 是 Overview 当前使用 Top5+Other 列表项。
 type RealtimeUsageTopItemRecord struct {
-	Key      string
-	Label    string
-	Tokens   int64
-	Requests int64
-	CostUSD  *float64
-	Share    float64
+	DualCosts pricing.DualCosts
+	Key       string
+	Label     string
+	Tokens    int64
+	Requests  int64
+	CostUSD   *float64
+	Share     float64
 }
 
 // RealtimeCurrentUsageRecord 是 Overview 当前使用按维度聚合的 Top5+Other 列表。
@@ -79,16 +89,17 @@ type RealtimeCurrentUsageRecord struct {
 
 // UsageOverviewRealtimeRecord 是 Overview 页面实时图表区使用的数据块。
 type UsageOverviewRealtimeRecord struct {
-	Insights       RealtimeInsightsRecord
-	Window         string
-	BucketSeconds  int64
-	WindowStart    time.Time
-	WindowEnd      time.Time
-	TokenVelocity  []RealtimeTokenVelocityPointRecord
-	LatencyScatter RealtimeLatencyScatterRecord
-	CurrentUsage   RealtimeCurrentUsageRecord
-	RequestLevel   []RealtimeRequestLevelPointRecord
-	CacheLevel     []RealtimeCacheLevelPointRecord
+	PricingSnapshotID string
+	Insights          RealtimeInsightsRecord
+	Window            string
+	BucketSeconds     int64
+	WindowStart       time.Time
+	WindowEnd         time.Time
+	TokenVelocity     []RealtimeTokenVelocityPointRecord
+	LatencyScatter    RealtimeLatencyScatterRecord
+	CurrentUsage      RealtimeCurrentUsageRecord
+	RequestLevel      []RealtimeRequestLevelPointRecord
+	CacheLevel        []RealtimeCacheLevelPointRecord
 }
 
 // RealtimeRequestLevelPointRecord 是 Overview 请求水平图的单个短窗口桶。
@@ -109,14 +120,16 @@ type RealtimeCacheLevelPointRecord struct {
 
 // UsageOverviewRecord 是仓储层的完整 usage overview 结果。
 type UsageOverviewRecord struct {
-	Comparisons *UsageOverviewComparisonsRecord
-	Usage       *StatisticsSnapshot
-	Summary     UsageOverviewSummaryRecord
-	Series      UsageOverviewSeriesRecord
+	PricingSnapshotID string
+	Comparisons       *UsageOverviewComparisonsRecord
+	Usage             *StatisticsSnapshot
+	Summary           UsageOverviewSummaryRecord
+	Series            UsageOverviewSeriesRecord
 }
 
 // UsageComparisonItemRecord 与顶部 Overview 共用请求、Token 和动态计费口径。
 type UsageComparisonItemRecord struct {
+	DualCosts pricing.DualCosts
 	// Bucket 是当前累加行的时间桶，TokenBuckets 保存该分类的时间序列。
 	Bucket              string
 	TokenBuckets        map[string]int64
@@ -136,16 +149,19 @@ type UsageComparisonItemRecord struct {
 
 // UsageOverviewComparisonsRecord 在压缩汇总行与边界事件遍历中按维度累计。
 type UsageOverviewComparisonsRecord struct {
-	Buckets     []string
-	Granularity string
-	Models      map[string]*UsageComparisonItemRecord
-	APIKeys     map[string]*UsageComparisonItemRecord
-	AuthFiles   map[string]*UsageComparisonItemRecord
-	AIProviders map[string]*UsageComparisonItemRecord
+	PricingSnapshotID string
+	Channels          map[string]*UsageComparisonItemRecord
+	Buckets           []string
+	Granularity       string
+	Models            map[string]*UsageComparisonItemRecord
+	APIKeys           map[string]*UsageComparisonItemRecord
+	AuthFiles         map[string]*UsageComparisonItemRecord
+	AIProviders       map[string]*UsageComparisonItemRecord
 }
 
 // RealtimeWindowSummaryRecord 是选定可见短窗的非重叠总量，排除平滑预热段。
 type RealtimeWindowSummaryRecord struct {
+	DualCosts           pricing.DualCosts
 	Requests            int64
 	Failures            int64
 	TokenRequests       int64

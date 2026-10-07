@@ -40,7 +40,7 @@ func Fetch(ctx context.Context, fetcher Fetcher) (Snapshot, error) {
 	// snapshot 只由当前 goroutine 按 registry 顺序写入。
 	snapshot := Snapshot{}
 	// seenAuthIndexes 完全沿用当前 Keeper 的精确 auth-index 首项保留规则。
-	seenAuthIndexes := make(map[string]struct{})
+	seenAuthIndexes := make(map[string]int)
 	// warnings 按 registry 顺序收集，最终使用稳定分隔符连接。
 	warnings := make([]string, 0)
 	// 单线程按 registry 下标读取已完成结果，保持串行 golden 的全部 fold 语义。
@@ -56,11 +56,13 @@ func Fetch(ctx context.Context, fetcher Fetcher) (Snapshot, error) {
 			// source 已完成必填校验，这里只规范化去重键。
 			authIndex := strings.TrimSpace(credential.AuthIndex)
 			// 相同 auth-index 的后续项沿用当前先出现项。
-			if _, ok := seenAuthIndexes[authIndex]; ok {
+			if previous, ok := seenAuthIndexes[authIndex]; ok {
+				// Retain legacy display order without using it as attribution evidence.
+				snapshot.Credentials[previous].Ambiguous = true
 				continue
 			}
 			// 记录首次出现的 auth-index。
-			seenAuthIndexes[authIndex] = struct{}{}
+			seenAuthIndexes[authIndex] = len(snapshot.Credentials)
 			// Credential 按 registry/source 顺序加入最终 snapshot。
 			snapshot.Credentials = append(snapshot.Credentials, credential)
 		}

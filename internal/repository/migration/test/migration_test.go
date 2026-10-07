@@ -94,6 +94,13 @@ func TestOrderedMigrationsPreservesExecutionOrder(t *testing.T) {
 		"20260919_usage_event_stream_status_code",
 		"20260922_normalize_usage_event_parent_session_null",
 		"20260925_limit_latency_sample_points",
+		"20261007_credential_pricing_subjects",
+		"20261007_credential_price_defaults",
+		"20261007_pricing_channels",
+		"20261007_credential_model_multipliers",
+		"20261007_credential_model_fixed",
+		"20261007_channel_model_prices",
+		"20261007_credential_pricing_associations",
 	}
 	assertStringSlicesEqual(t, want, got)
 }
@@ -351,6 +358,38 @@ func TestRunAddsSourceToExistingAuthSessions(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected migration %s to be recorded once, got %d", "20260701_add_auth_session_source", count)
+	}
+}
+
+func TestRunCredentialFixedPreservesExistingModelMultiplier(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(testSQLiteDSN(filepath.Join(t.TempDir(), "credential-fixed.db"))), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeOpenedDatabase(t, db)
+	if err := MarkAllAsApplied(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version = ?", "20261007_credential_model_fixed").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE credential_model_multipliers (subject_id TEXT, model TEXT, multiplier REAL NOT NULL, updated_at TEXT, PRIMARY KEY(subject_id,model))`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO credential_model_multipliers (subject_id,model,multiplier) VALUES ('cred_synthetic','M',0.2)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := Run(db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var row entities.CredentialModelMultiplier
+	if err := db.First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Mode != "multiplier" || row.Multiplier != .2 || row.PromptPricePer1M != nil || row.CompletionPricePer1M != nil || row.CacheReadPricePer1M != nil || row.CacheWritePricePer1M != nil {
+		t.Fatalf("migrated row %+v", row)
 	}
 }
 

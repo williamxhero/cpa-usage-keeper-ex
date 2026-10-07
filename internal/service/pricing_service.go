@@ -41,12 +41,12 @@ type pricingService struct {
 	db             *gorm.DB
 	modelsFetcher  ModelsFetcher
 	catalog        *pricing.Catalog
-	mutationMu     sync.Mutex
+	mutationMu     *sync.Mutex
 	metadataClient *pricingmetadata.Client
 }
 
 func NewPricingService(db *gorm.DB, catalog *pricing.Catalog, modelsFetcher ...ModelsFetcher) PricingProvider {
-	service := &pricingService{db: db, catalog: requirePricingCatalog(catalog), metadataClient: pricingmetadata.NewClient(nil)}
+	service := &pricingService{db: db, catalog: requirePricingCatalog(catalog), mutationMu: catalog.MutationMutex(), metadataClient: pricingmetadata.NewClient(nil)}
 	if len(modelsFetcher) > 0 {
 		service.modelsFetcher = modelsFetcher[0]
 	}

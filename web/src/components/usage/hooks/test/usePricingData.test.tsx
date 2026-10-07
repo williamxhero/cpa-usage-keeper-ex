@@ -13,11 +13,14 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchUsedModels: vi.fn(),
   updatePricing: vi.fn(),
   deletePricing: vi.fn(),
+  updatePricingBatch: vi.fn(),
+  fetchPricingSyncPreview: vi.fn(),
   fetchPricingRules: vi.fn(),
   replacePricingRules: vi.fn(),
 }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('@/stores', () => ({ useNotificationStore: () => ({ showNotification: vi.fn() }) }));
+const { t, showNotification } = vi.hoisted(() => ({ t: (key: string) => key, showNotification: vi.fn() }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t }) }));
+vi.mock('@/stores', () => ({ useNotificationStore: () => ({ showNotification }) }));
 
 const openAIPrice = {
   style: 'openai' as const,
@@ -39,8 +42,8 @@ const pricingEntry: PricingEntry = {
 };
 
 let latest: ReturnType<typeof usePricingData> | null = null;
-function Harness({ onAuthRequired }: { onAuthRequired?: () => void }) {
-  const result = usePricingData({ onAuthRequired });
+function Harness({ onAuthRequired, onChanged, enabled }: { onAuthRequired?: () => void; onChanged?: () => void; enabled?: boolean }) {
+  const result = usePricingData({ onAuthRequired, onChanged, enabled });
   useEffect(() => { latest = result; }, [result]);
   return null;
 }
@@ -99,6 +102,99 @@ describe('usePricingData', () => {
       await expect(latest!.deleteModelPrice('new')).rejects.toBe(error);
     });
     expect(latest!.modelPrices).toEqual({ new: openAIPrice });
+  });
+
+  it('notifies once per committed save, delete, rules replacement or nonempty sync, never on reads or failures', async () => {
+    const onChanged = vi.fn();
+    vi.mocked(api.replacePricingRules).mockResolvedValue({ model: 'existing', rules: [] });
+    vi.mocked(api.fetchPricingRules).mockResolvedValue({ model: 'existing', rules: [] });
+    await act(async () => root.render(<Harness onChanged={onChanged} />));
+    await act(async () => {
+      await latest!.loadPricing();
+      await latest!.loadPricingRules('existing');
+      await latest!.previewPricingSync('models-dev');
+      await latest!.syncModelPrices({});
+    });
+    expect(onChanged).not.toHaveBeenCalled();
+    await act(async () => latest!.saveModelPrice('new', openAIPrice));
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    await act(async () => latest!.deleteModelPrice('new'));
+    expect(onChanged).toHaveBeenCalledTimes(2);
+    await act(async () => latest!.savePricingRules('existing', []));
+    expect(onChanged).toHaveBeenCalledTimes(3);
+    await act(async () => latest!.syncModelPrices({ a: openAIPrice, b: openAIPrice }));
+    expect(onChanged).toHaveBeenCalledTimes(4);
+    const failure = new api.ApiError('failure', 500);
+    vi.mocked(api.updatePricing).mockRejectedValueOnce(failure);
+    vi.mocked(api.deletePricing).mockRejectedValueOnce(failure);
+    vi.mocked(api.replacePricingRules).mockRejectedValueOnce(failure);
+    vi.mocked(api.updatePricingBatch).mockRejectedValueOnce(failure);
+    await act(async () => {
+      await expect(latest!.saveModelPrice('a', openAIPrice)).rejects.toBe(failure);
+      await expect(latest!.deleteModelPrice('a')).rejects.toBe(failure);
+      await expect(latest!.savePricingRules('existing', [])).rejects.toBe(failure);
+      expect((await latest!.syncModelPrices({ a: openAIPrice })).successModels).toEqual([]);
+    });
+    expect(onChanged).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps mutation functions stable and uses the latest callback for an in-flight commit', async () => {
+    const original = vi.fn();
+    const replacement = vi.fn();
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof api.updatePricing>>>();
+    vi.mocked(api.updatePricing).mockReturnValueOnce(pending.promise);
+    await act(async () => root.render(<Harness onChanged={original} />));
+    const save = latest!.saveModelPrice;
+    const mutation = save('new', openAIPrice);
+    await act(async () => root.render(<Harness onChanged={replacement} />));
+    expect(latest!.saveModelPrice).toBe(save);
+    expect(api.fetchPricing).toHaveBeenCalledOnce();
+    await act(async () => { pending.resolve({ ...pricingEntry, model: 'new' }); await mutation; });
+    expect(original).not.toHaveBeenCalled();
+    expect(replacement).toHaveBeenCalledOnce();
+  });
+
+  it.each(['throw', 'reject', 'pending'] as const)('does not turn callback %s into a mutation failure or await refresh', async mode => {
+    const onChanged = vi.fn(() => {
+      if (mode === 'throw') throw new Error('refresh failed');
+      return mode === 'reject' ? Promise.reject(new Error('refresh failed')) : new Promise<void>(() => {});
+    });
+    await act(async () => root.render(<Harness onChanged={onChanged} />));
+    await act(async () => latest!.saveModelPrice('new', openAIPrice));
+    expect(latest!.modelPrices.new).toEqual(openAIPrice);
+    expect(onChanged).toHaveBeenCalledOnce();
+  });
+
+  it.each(['save', 'delete', 'sync'] as const)('does not notify for a late legacy %s after disable or unmount', async kind => {
+    const onChanged = vi.fn();
+    for (const teardown of ['disable', 'unmount'] as const) {
+      const pending = Promise.withResolvers<void>();
+      vi.mocked(api.updatePricing).mockImplementationOnce(async () => { await pending.promise; return pricingEntry; });
+      vi.mocked(api.deletePricing).mockReturnValueOnce(pending.promise);
+      vi.mocked(api.updatePricingBatch).mockImplementationOnce(async pricing => { await pending.promise; return { pricing }; });
+      await act(async () => root.render(<Harness onChanged={onChanged} />));
+      const mutation = kind === 'save' ? latest!.saveModelPrice('existing', openAIPrice)
+        : kind === 'delete' ? latest!.deleteModelPrice('existing')
+          : latest!.syncModelPrices({ existing: openAIPrice });
+      await act(async () => root.render(teardown === 'disable' ? <Harness enabled={false} onChanged={onChanged} /> : null));
+      await act(async () => { pending.resolve(); await mutation; });
+      expect(onChanged).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not notify for canceled or mismatched rule writes', async () => {
+    const onChanged = vi.fn();
+    const pending = Promise.withResolvers<PricingRulesResponse>();
+    vi.mocked(api.replacePricingRules).mockReturnValueOnce(pending.promise);
+    await act(async () => root.render(<Harness onChanged={onChanged} />));
+    const mutation = latest!.savePricingRules('existing', []);
+    await act(async () => root.render(<Harness onChanged={onChanged} enabled={false} />));
+    expect(vi.mocked(api.replacePricingRules).mock.calls[0][1]?.aborted).toBe(true);
+    pending.resolve({ model: 'existing', rules: [] });
+    await expect(mutation).resolves.toBeNull();
+    vi.mocked(api.replacePricingRules).mockResolvedValueOnce({ model: 'wrong-model', rules: [] });
+    await expect(latest!.savePricingRules('existing', [])).resolves.toBeNull();
+    expect(onChanged).not.toHaveBeenCalled();
   });
 
   it.each(['read', 'write'] as const)('keeps only the latest model-specific rule %s response', async (mode) => {

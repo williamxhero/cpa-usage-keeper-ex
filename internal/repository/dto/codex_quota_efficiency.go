@@ -1,6 +1,10 @@
 package dto
 
-import "time"
+import (
+	"time"
+
+	"cpa-usage-keeper/internal/pricing"
+)
 
 // CodexQuotaEfficiencyQuery 描述一次只读的账号主额度效率回溯，不会把统计结果写回历史表。
 type CodexQuotaEfficiencyQuery struct {
@@ -18,6 +22,7 @@ type CodexQuotaEfficiencyQuery struct {
 
 // CodexQuotaEfficiencyHistory 是图表、周期摘要和完整周期列表共同复用的规范化查询结果。
 type CodexQuotaEfficiencyHistory struct {
+	PricingSnapshotID string
 	// GeneratedAt 是本次 pricing snapshot 与当前周期截点共同绑定的生成时间。
 	GeneratedAt time.Time
 	// RangeStart 是响应实际采用的历史下界，供调用层明确“最近 30 天”口径。
@@ -97,10 +102,12 @@ type CodexQuotaEfficiencyTransition struct {
 	CostPerPoint float64
 	// CostPerPointAvailable 为 false 时调用层必须显示缺失，不能把 CostPerPoint 当作零成本。
 	CostPerPointAvailable bool
+	DualCostsPerPoint     pricing.DualCosts
 }
 
 // CodexQuotaEfficiencyUsage 是周期与变化区间共用的一份动态 UsageEvent 聚合事实。
 type CodexQuotaEfficiencyUsage struct {
+	PricingSnapshotID string
 	// Requests 是范围内所有匹配请求数量。
 	Requests int64
 	// SuccessfulRequests 是 Failed=false 的请求数量。
@@ -123,4 +130,6 @@ type CodexQuotaEfficiencyUsage struct {
 	TotalCostUSD float64
 	// CostAvailable 只有所有需要计价的分组都成功匹配价格时才为 true。
 	CostAvailable bool
+	// DualCosts keeps legacy configured grouping and exact per-event reference costs independent.
+	DualCosts pricing.DualCosts
 }

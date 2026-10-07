@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"cpa-usage-keeper/internal/helper"
+	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/service"
 	servicedto "cpa-usage-keeper/internal/service/dto"
 	"cpa-usage-keeper/internal/timeutil"
@@ -14,6 +15,7 @@ import (
 )
 
 type analysisResponse struct {
+	PricingSnapshotID     string                    `json:"pricing_snapshot_id"`
 	Granularity           string                    `json:"granularity"`
 	Timezone              string                    `json:"timezone"`
 	RangeStart            *time.Time                `json:"range_start,omitempty"`
@@ -30,16 +32,17 @@ type analysisResponse struct {
 }
 
 type analysisTokenUsage struct {
-	Bucket              time.Time `json:"bucket"`
-	InputTokens         int64     `json:"input_tokens"`
-	OutputTokens        int64     `json:"output_tokens"`
-	CacheReadTokens     int64     `json:"cache_read_tokens"`
-	CacheCreationTokens int64     `json:"cache_creation_tokens"`
-	ReasoningTokens     int64     `json:"reasoning_tokens"`
-	TotalTokens         int64     `json:"total_tokens"`
-	Requests            int64     `json:"requests"`
-	CostUSD             float64   `json:"cost_usd"`
-	CostAvailable       bool      `json:"cost_available"`
+	DualCosts           pricing.DualCosts `json:"dual_costs"`
+	Bucket              time.Time         `json:"bucket"`
+	InputTokens         int64             `json:"input_tokens"`
+	OutputTokens        int64             `json:"output_tokens"`
+	CacheReadTokens     int64             `json:"cache_read_tokens"`
+	CacheCreationTokens int64             `json:"cache_creation_tokens"`
+	ReasoningTokens     int64             `json:"reasoning_tokens"`
+	TotalTokens         int64             `json:"total_tokens"`
+	Requests            int64             `json:"requests"`
+	CostUSD             float64           `json:"cost_usd"`
+	CostAvailable       bool              `json:"cost_available"`
 }
 
 type analysisModelUsage struct {
@@ -54,65 +57,73 @@ type analysisModelUsageSeries struct {
 }
 
 type analysisCompositionItem struct {
-	Key                 string  `json:"key"`
-	Label               string  `json:"label"`
-	TotalTokens         int64   `json:"total_tokens"`
-	Requests            int64   `json:"requests"`
-	Percent             float64 `json:"percent"`
-	InputTokens         int64   `json:"input_tokens"`
-	OutputTokens        int64   `json:"output_tokens"`
-	CacheReadTokens     int64   `json:"cache_read_tokens"`
-	CacheCreationTokens int64   `json:"cache_creation_tokens"`
-	ReasoningTokens     int64   `json:"reasoning_tokens"`
-	CostUSD             float64 `json:"cost_usd"`
-	CostAvailable       bool    `json:"cost_available"`
+	DualCosts           pricing.DualCosts `json:"dual_costs"`
+	Key                 string            `json:"key"`
+	Label               string            `json:"label"`
+	TotalTokens         int64             `json:"total_tokens"`
+	Requests            int64             `json:"requests"`
+	Percent             float64           `json:"percent"`
+	InputTokens         int64             `json:"input_tokens"`
+	OutputTokens        int64             `json:"output_tokens"`
+	CacheReadTokens     int64             `json:"cache_read_tokens"`
+	CacheCreationTokens int64             `json:"cache_creation_tokens"`
+	ReasoningTokens     int64             `json:"reasoning_tokens"`
+	CostUSD             float64           `json:"cost_usd"`
+	CostAvailable       bool              `json:"cost_available"`
 }
 
 type analysisHeatmap struct {
-	APIKeys      []string              `json:"api_keys"`
-	APIKeyLabels map[string]string     `json:"api_key_labels"`
-	Models       []string              `json:"models"`
-	Cells        []analysisHeatmapCell `json:"cells"`
+	RowDualCosts    map[string]pricing.DualCosts `json:"row_dual_costs"`
+	ColumnDualCosts map[string]pricing.DualCosts `json:"column_dual_costs"`
+	APIKeys         []string                     `json:"api_keys"`
+	APIKeyLabels    map[string]string            `json:"api_key_labels"`
+	Models          []string                     `json:"models"`
+	Cells           []analysisHeatmapCell        `json:"cells"`
 }
 
 type analysisHeatmapCell struct {
-	APIKey              string  `json:"api_key"`
-	Model               string  `json:"model"`
-	InputTokens         int64   `json:"input_tokens"`
-	OutputTokens        int64   `json:"output_tokens"`
-	CacheReadTokens     int64   `json:"cache_read_tokens"`
-	CacheCreationTokens int64   `json:"cache_creation_tokens"`
-	ReasoningTokens     int64   `json:"reasoning_tokens"`
-	TotalTokens         int64   `json:"total_tokens"`
-	Requests            int64   `json:"requests"`
-	CostUSD             float64 `json:"cost_usd"`
-	CostAvailable       bool    `json:"cost_available"`
-	Intensity           float64 `json:"intensity"`
+	DualCosts           pricing.DualCosts `json:"dual_costs"`
+	APIKey              string            `json:"api_key"`
+	Model               string            `json:"model"`
+	InputTokens         int64             `json:"input_tokens"`
+	OutputTokens        int64             `json:"output_tokens"`
+	CacheReadTokens     int64             `json:"cache_read_tokens"`
+	CacheCreationTokens int64             `json:"cache_creation_tokens"`
+	ReasoningTokens     int64             `json:"reasoning_tokens"`
+	TotalTokens         int64             `json:"total_tokens"`
+	Requests            int64             `json:"requests"`
+	CostUSD             float64           `json:"cost_usd"`
+	CostAvailable       bool              `json:"cost_available"`
+	Intensity           float64           `json:"intensity"`
 }
 
 type analysisCostBreakdown struct {
-	UncachedInputCostUSD float64 `json:"uncached_input_cost_usd"`
-	CacheReadCostUSD     float64 `json:"cache_read_cost_usd"`
-	CacheWriteCostUSD    float64 `json:"cache_write_cost_usd"`
-	OutputCostUSD        float64 `json:"output_cost_usd"`
-	TotalCostUSD         float64 `json:"total_cost_usd"`
-	CostAvailable        bool    `json:"cost_available"`
+	DualCosts            pricing.DualCosts `json:"dual_costs"`
+	UnavailableReason    string            `json:"unavailable_reason,omitempty"`
+	PricingSnapshotID    string            `json:"pricing_snapshot_id"`
+	UncachedInputCostUSD float64           `json:"uncached_input_cost_usd"`
+	CacheReadCostUSD     float64           `json:"cache_read_cost_usd"`
+	CacheWriteCostUSD    float64           `json:"cache_write_cost_usd"`
+	OutputCostUSD        float64           `json:"output_cost_usd"`
+	TotalCostUSD         float64           `json:"total_cost_usd"`
+	CostAvailable        bool              `json:"cost_available"`
 }
 
 type analysisModelEfficiency struct {
-	Model                  string  `json:"model"`
-	Requests               int64   `json:"requests"`
-	InputTokens            int64   `json:"input_tokens"`
-	OutputTokens           int64   `json:"output_tokens"`
-	CacheReadTokens        int64   `json:"cache_read_tokens"`
-	CacheCreationTokens    int64   `json:"cache_creation_tokens"`
-	ReasoningTokens        int64   `json:"reasoning_tokens"`
-	TotalTokens            int64   `json:"total_tokens"`
-	CostUSD                float64 `json:"cost_usd"`
-	CostAvailable          bool    `json:"cost_available"`
-	CostPerRequestUSD      float64 `json:"cost_per_request_usd"`
-	OutputTokensPerRequest float64 `json:"output_tokens_per_request"`
-	CacheReadRate          float64 `json:"cache_read_rate"`
+	DualCosts              pricing.DualCosts `json:"dual_costs"`
+	Model                  string            `json:"model"`
+	Requests               int64             `json:"requests"`
+	InputTokens            int64             `json:"input_tokens"`
+	OutputTokens           int64             `json:"output_tokens"`
+	CacheReadTokens        int64             `json:"cache_read_tokens"`
+	CacheCreationTokens    int64             `json:"cache_creation_tokens"`
+	ReasoningTokens        int64             `json:"reasoning_tokens"`
+	TotalTokens            int64             `json:"total_tokens"`
+	CostUSD                float64           `json:"cost_usd"`
+	CostAvailable          bool              `json:"cost_available"`
+	CostPerRequestUSD      float64           `json:"cost_per_request_usd"`
+	OutputTokensPerRequest float64           `json:"output_tokens_per_request"`
+	CacheReadRate          float64           `json:"cache_read_rate"`
 }
 
 type analysisLatencyPoint struct {
@@ -270,8 +281,8 @@ func emptyAnalysisResponse() analysisResponse {
 		ModelComposition:      []analysisCompositionItem{},
 		AuthFilesComposition:  []analysisCompositionItem{},
 		AIProviderComposition: []analysisCompositionItem{},
-		Heatmap:               analysisHeatmap{APIKeys: []string{}, APIKeyLabels: map[string]string{}, Models: []string{}, Cells: []analysisHeatmapCell{}},
-		CostBreakdown:         analysisCostBreakdown{CostAvailable: true},
+		Heatmap:               buildAnalysisHeatmapPayload(nil, nil),
+		CostBreakdown:         analysisCostBreakdown{CostAvailable: true, DualCosts: (pricing.DualCosts{}).Normalized()},
 		ModelEfficiency:       []analysisModelEfficiency{},
 	}
 }
@@ -316,6 +327,7 @@ func buildAnalysisPayload(snapshot *servicedto.AnalysisSnapshot, apiKeyInfos map
 			Requests:            bucket.Requests,
 			CostUSD:             bucket.CostUSD,
 			CostAvailable:       bucket.CostAvailable,
+			DualCosts:           bucket.DualCosts.Normalized(),
 		})
 	}
 	apiComposition := buildAnalysisCompositionPayload(snapshot.APIKeyComposition, apiKeyInfos)
@@ -323,6 +335,7 @@ func buildAnalysisPayload(snapshot *servicedto.AnalysisSnapshot, apiKeyInfos map
 	authFilesComposition := buildAnalysisCompositionPayload(snapshot.AuthFilesComposition, nil)
 	aiProviderComposition := buildAnalysisCompositionPayload(snapshot.AIProviderComposition, nil)
 	return analysisResponse{
+		PricingSnapshotID:     snapshot.PricingSnapshotID,
 		Granularity:           string(snapshot.Granularity),
 		Timezone:              time.Local.String(),
 		RangeStart:            snapshot.RangeStart,
@@ -335,12 +348,15 @@ func buildAnalysisPayload(snapshot *servicedto.AnalysisSnapshot, apiKeyInfos map
 		AIProviderComposition: aiProviderComposition,
 		Heatmap:               buildAnalysisHeatmapPayload(snapshot.Heatmap, apiKeyInfos),
 		CostBreakdown: analysisCostBreakdown{
+			DualCosts:            snapshot.CostBreakdown.DualCosts.Normalized(),
 			UncachedInputCostUSD: snapshot.CostBreakdown.UncachedInputCostUSD,
 			CacheReadCostUSD:     snapshot.CostBreakdown.CacheReadCostUSD,
 			CacheWriteCostUSD:    snapshot.CostBreakdown.CacheWriteCostUSD,
 			OutputCostUSD:        snapshot.CostBreakdown.OutputCostUSD,
 			TotalCostUSD:         snapshot.CostBreakdown.TotalCostUSD,
 			CostAvailable:        snapshot.CostBreakdown.CostAvailable,
+			UnavailableReason:    snapshot.CostBreakdown.UnavailableReason,
+			PricingSnapshotID:    snapshot.CostBreakdown.PricingSnapshotID,
 		},
 		ModelEfficiency: buildAnalysisModelEfficiencyPayload(snapshot.ModelEfficiency),
 	}
@@ -452,6 +468,7 @@ func buildAnalysisCompositionPayload(items []servicedto.AnalysisCompositionItem,
 			ReasoningTokens:     item.ReasoningTokens,
 			CostUSD:             item.CostUSD,
 			CostAvailable:       item.CostAvailable,
+			DualCosts:           item.DualCosts.Normalized(),
 		})
 	}
 	return payload
@@ -473,6 +490,8 @@ func analysisAPIKeyLabel(apiKey string, apiKeyInfos map[string]analysisAPIKeyInf
 }
 
 func buildAnalysisHeatmapPayload(cells []servicedto.AnalysisHeatmapCell, apiKeyInfos map[string]analysisAPIKeyInfo) analysisHeatmap {
+	rowDualCosts := map[string]pricing.DualCosts{}
+	columnDualCosts := map[string]pricing.DualCosts{}
 	apiRequests := map[string]int64{}
 	apiKeyLabels := map[string]string{}
 	modelRequests := map[string]int64{}
@@ -481,6 +500,12 @@ func buildAnalysisHeatmapPayload(cells []servicedto.AnalysisHeatmapCell, apiKeyI
 		apiKey := analysisAPIKeyResponseKey(cell.APIKey, apiKeyInfos)
 		apiKeyLabels[apiKey] = analysisAPIKeyLabel(cell.APIKey, apiKeyInfos)
 		apiRequests[apiKey] += cell.Requests
+		rowCosts := rowDualCosts[apiKey]
+		rowCosts.Merge(cell.DualCosts)
+		rowDualCosts[apiKey] = rowCosts
+		columnCosts := columnDualCosts[cell.Model]
+		columnCosts.Merge(cell.DualCosts)
+		columnDualCosts[cell.Model] = columnCosts
 		modelRequests[cell.Model] += cell.Requests
 		if cell.TotalTokens > maxTokens {
 			maxTokens = cell.TotalTokens
@@ -507,10 +532,17 @@ func buildAnalysisHeatmapPayload(cells []servicedto.AnalysisHeatmapCell, apiKeyI
 			Requests:            cell.Requests,
 			CostUSD:             cell.CostUSD,
 			CostAvailable:       cell.CostAvailable,
+			DualCosts:           cell.DualCosts.Normalized(),
 			Intensity:           intensity,
 		})
 	}
-	return analysisHeatmap{APIKeys: apiKeys, APIKeyLabels: apiKeyLabels, Models: models, Cells: payloadCells}
+	for key, costs := range rowDualCosts {
+		rowDualCosts[key] = costs.Normalized()
+	}
+	for model, costs := range columnDualCosts {
+		columnDualCosts[model] = costs.Normalized()
+	}
+	return analysisHeatmap{RowDualCosts: rowDualCosts, ColumnDualCosts: columnDualCosts, APIKeys: apiKeys, APIKeyLabels: apiKeyLabels, Models: models, Cells: payloadCells}
 }
 
 func buildAnalysisModelEfficiencyPayload(items []servicedto.AnalysisModelEfficiencyItem) []analysisModelEfficiency {
@@ -527,6 +559,7 @@ func buildAnalysisModelEfficiencyPayload(items []servicedto.AnalysisModelEfficie
 			TotalTokens:            item.TotalTokens,
 			CostUSD:                item.CostUSD,
 			CostAvailable:          item.CostAvailable,
+			DualCosts:              item.DualCosts.Normalized(),
 			CostPerRequestUSD:      item.CostPerRequestUSD,
 			OutputTokensPerRequest: item.OutputTokensPerRequest,
 			CacheReadRate:          item.CacheReadRate,

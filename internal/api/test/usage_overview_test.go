@@ -234,8 +234,18 @@ func TestUsageOverviewRealtimeUsesCPAAPIKeyAliasLabels(t *testing.T) {
 		t.Fatalf("expected status 200, got %d %s", resp.Code, resp.Body.String())
 	}
 	body := resp.Body.String()
-	if !strings.Contains(body, `"api_keys":[{"key":"42","label":"Primary Key","tokens":20,"requests":1,"share":100}]`) {
-		t.Fatalf("expected realtime API key usage to use CPA API key id and alias label, got %s", body)
+	var payload any
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	items := mappingJSONValue(t, payload, "current_usage", "api_keys").([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected exactly one realtime API key usage item, got %s", body)
+	}
+	for field, want := range map[string]any{"key": "42", "label": "Primary Key", "tokens": float64(20), "requests": float64(1), "share": float64(100)} {
+		if got := mappingJSONValue(t, items[0], field); got != want {
+			t.Fatalf("expected API key usage %s=%v, got %v in %s", field, want, got, body)
+		}
 	}
 	if strings.Contains(body, "sk-alpha123456") {
 		t.Fatalf("expected realtime API key usage to avoid raw key output, got %s", body)
@@ -378,15 +388,38 @@ func TestUsageOverviewRealtimeAcceptsWindowAndReturnsRealtimeBlock(t *testing.T)
 	}
 	for _, expected := range []string{
 		`"window":"30m","timezone":"Asia/Shanghai","bucket_seconds":60,"window_start":"2026-04-22T11:00:00+08:00","window_end":"2026-04-22T11:30:00+08:00"`,
-		`"token_velocity":[{"bucket":"2026-04-22T11:00:00Z","tokens_per_minute":120,"tokens":20,"cost":0.123}]`,
 		`"latency_scatter":{"points":[{"ttft_ms":120,"latency_ms":820}],"total_points":1,"p95_ttft_ms":120,"p95_latency_ms":820,"max_ttft_ms":120,"max_latency_ms":820}`,
-		`"current_usage":{"models":[{"key":"gpt-5","label":"gpt-5","tokens":20,"requests":1,"cost":0.123,"share":100}],"api_keys":[{"key":"legacy:`,
 		`"request_level":[{"bucket":"2026-04-22T11:00:00Z","requests_per_minute":6,"requests":1}]`,
 		`"cache_level":[{"bucket":"2026-04-22T11:00:00Z","cache_read_rate":25,"cache_read_tokens":5,"cache_creation_tokens":2,"input_tokens":20}]`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("expected realtime response to contain %s, got %s", expected, body)
 		}
+	}
+	var payload any
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		path   []any
+		fields map[string]any
+	}{
+		{[]any{"token_velocity"}, map[string]any{"bucket": "2026-04-22T11:00:00Z", "tokens_per_minute": float64(120), "tokens": float64(20), "cost": 0.123}},
+		{[]any{"current_usage", "models"}, map[string]any{"key": "gpt-5", "label": "gpt-5", "tokens": float64(20), "requests": float64(1), "cost": 0.123, "share": float64(100)}},
+	} {
+		items := mappingJSONValue(t, payload, item.path...).([]any)
+		if len(items) != 1 {
+			t.Fatalf("expected one item at %v, got %s", item.path, body)
+		}
+		for field, want := range item.fields {
+			if got := mappingJSONValue(t, items[0], field); got != want {
+				t.Fatalf("expected %v %s=%v, got %v", item.path, field, want, got)
+			}
+		}
+	}
+	apiKeys := mappingJSONValue(t, payload, "current_usage", "api_keys").([]any)
+	if len(apiKeys) != 1 || !strings.HasPrefix(mappingJSONValue(t, apiKeys[0], "key").(string), "legacy:") {
+		t.Fatalf("expected one stable legacy API key identifier, got %s", body)
 	}
 	if strings.Contains(body, "sk-alpha123456") {
 		t.Fatalf("expected realtime API key usage to redact raw key, got %s", body)
@@ -507,8 +540,12 @@ func TestUsageOverviewReturnsFilteredSnapshot(t *testing.T) {
 	if !strings.Contains(body, `"usage":`) || !strings.Contains(body, `"total_requests":1`) {
 		t.Fatalf("unexpected response body: %s", body)
 	}
-	if !strings.Contains(body, `"summary":{"rpm":`) {
-		t.Fatalf("expected backend summary in response body: %s", body)
+	var payload any
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := mappingJSONValue(t, payload, "summary", "rpm"); got != 1.0/1440.0 {
+		t.Fatalf("expected backend summary RPM, got %v in %s", got, body)
 	}
 	if !strings.Contains(body, `"cost_available":true`) {
 		t.Fatalf("expected backend cost availability in response body: %s", body)
@@ -516,7 +553,7 @@ func TestUsageOverviewReturnsFilteredSnapshot(t *testing.T) {
 	if !strings.Contains(body, `"input_tokens":11`) {
 		t.Fatalf("expected summary input tokens in response body: %s", body)
 	}
-	if !strings.Contains(body, `"series":{"buckets":["2026-04-22T11:00:00Z"],"requests":[1]`) {
+	if !strings.Contains(body, `"buckets":["2026-04-22T11:00:00Z"],"requests":[1]`) {
 		t.Fatalf("expected backend series in response body: %s", body)
 	}
 	if !strings.Contains(body, `"cache_read_rate":[18.18]`) {
@@ -586,10 +623,10 @@ func TestUsageOverviewNilProviderReturnsPrunedShape(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", resp.Code)
 	}
 	body := resp.Body.String()
-	if !strings.Contains(body, `"summary":{"rpm":0`) || !strings.Contains(body, `"input_tokens":0`) {
+	if !strings.Contains(body, `"rpm":0`) || !strings.Contains(body, `"input_tokens":0`) {
 		t.Fatalf("expected empty overview summary to include input_tokens, got %s", body)
 	}
-	if !strings.Contains(body, `"series":{"buckets":[]`) || !strings.Contains(body, `"cache_read_rate":[]`) {
+	if !strings.Contains(body, `"buckets":[]`) || !strings.Contains(body, `"cache_read_rate":[]`) {
 		t.Fatalf("expected empty overview series to include cache_read_rate, got %s", body)
 	}
 	assertUsageOverviewResponseShape(t, body)
@@ -601,15 +638,15 @@ func assertUsageOverviewResponseShape(t *testing.T, body string) {
 	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
 		t.Fatalf("failed to decode overview response: %v\n%s", err, body)
 	}
-	assertAllowedJSONKeys(t, decoded, "overview response", body, "usage", "summary", "series", "timezone")
+	assertAllowedJSONKeys(t, decoded, "overview response", body, "usage", "summary", "series", "timezone", "pricing_snapshot_id")
 
 	for _, field := range []struct {
 		name string
 		keys []string
 	}{
 		{"usage", []string{"total_requests", "success_count", "failure_count", "total_tokens"}},
-		{"summary", []string{"rpm", "tpm", "total_cost", "cost_available", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "reasoning_tokens", "daily_average_requests", "daily_average_tokens", "daily_average_cost", "daily_average_range_days"}},
-		{"series", []string{"buckets", "requests", "tokens", "rpm", "tpm", "cost", "cache_read_rate"}},
+		{"summary", []string{"rpm", "tpm", "total_cost", "cost_available", "input_tokens", "cache_read_tokens", "cache_creation_tokens", "reasoning_tokens", "daily_average_requests", "daily_average_tokens", "daily_average_cost", "daily_average_range_days", "dual_costs", "daily_average_dual_costs", "pricing_snapshot_id", "unavailable_reason"}},
+		{"series", []string{"buckets", "requests", "tokens", "rpm", "tpm", "cost", "cache_read_rate", "dual_costs"}},
 	} {
 		object, ok := decoded[field.name].(map[string]any)
 		if !ok {

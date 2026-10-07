@@ -27,6 +27,11 @@ func (s *SyncService) SyncMetadata(ctx context.Context) error {
 	apiKeysResult, apiKeysErr := s.metadataFetcher.FetchManagementAPIKeys(ctx)
 	// 八个 provider endpoint 只在纯包内并发，返回按 registry 确定性归并的 snapshot。
 	providerSnapshot, providerFetchErr := providermetadata.Fetch(ctx, s.metadataFetcher)
+	// Fetching does not hold the pricing writer lock. Relevant committed metadata
+	// and pricing publication are serialized with all admin pricing mutations.
+	if s.pricingCatalog != nil {
+		s.pricingCatalog.MutationMutex().Lock()
+	}
 	// Auth Files 先进入自己的 repository 事务，保持原有写入顺序。
 	authSyncErr := syncAuthFiles(ctx, s.db, authFilesResult, authFilesErr, fetchedAt)
 	// 管理 API Keys 第二个串行写入，不与 SQLite provider 写入并发。
@@ -35,6 +40,23 @@ func (s *SyncService) SyncMetadata(ctx context.Context) error {
 	providerSyncErr, providerWarningErr := persistProviderMetadata(ctx, s.db, providerSnapshot, providerFetchErr, fetchedAt)
 	// 三类持久化错误按 Auth Files、管理 key、provider 的既有顺序合并。
 	upsertErr := joinErrors(authSyncErr, apiKeySyncErr, providerSyncErr)
+	if s.pricingCatalog != nil {
+		// Independent metadata transactions may partially succeed. Recompile the
+		// actual committed directory, never publish half a pricing candidate.
+		snapshot, pricingErr := repository.LoadPricingSnapshot(ctx, s.db)
+		if pricingErr == nil {
+			s.pricingCatalog.Replace(snapshot)
+		} else {
+			// Independent directory transactions may already have committed.
+			// Cancellation/load failure must not leave old unique attribution
+			// active indefinitely. Publish a complete conservative candidate.
+			s.pricingCatalog.Replace(s.pricingCatalog.Snapshot().WithoutCredentialAttribution())
+		}
+		s.pricingCatalog.MutationMutex().Unlock()
+		if pricingErr != nil {
+			upsertErr = joinErrors(upsertErr, fmt.Errorf("refresh pricing identity evidence failed"))
+		}
+	}
 	// aggregateErr 只承接没有 notifier 的兼容同步补算错误。
 	var aggregateErr error
 	// 任一数据库写入失败都阻止基于半成品 identity 发送通知或执行兼容补算。

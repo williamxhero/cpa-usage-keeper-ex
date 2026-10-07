@@ -12,7 +12,7 @@ func UsageEventCostSubject(event entities.UsageEvent) pricing.CostSubject {
 	if event.ModelAlias != nil {
 		modelAlias = *event.ModelAlias
 	}
-	return newUsagePricingCostSubject(
+	subject := newUsagePricingCostSubject(
 		event.APIGroupKey,
 		event.Model,
 		event.AuthIndex,
@@ -27,10 +27,13 @@ func UsageEventCostSubject(event entities.UsageEvent) pricing.CostSubject {
 		event.CacheReadTokens,
 		event.CacheCreationTokens,
 	)
+	subject.AuthType = event.AuthType
+	subject.ObservedIdentity = true
+	return subject
 }
 
 func UsageEventRecordCostSubject(record dto.UsageEventRecord) pricing.CostSubject {
-	return newUsagePricingCostSubject(
+	subject := newUsagePricingCostSubject(
 		record.APIGroupKey,
 		record.Model,
 		record.AuthIndex,
@@ -45,6 +48,13 @@ func UsageEventRecordCostSubject(record dto.UsageEventRecord) pricing.CostSubjec
 		record.CacheReadTokens,
 		record.CacheCreationTokens,
 	)
+	subject.AuthType = record.AuthType
+	subject.ObservedIdentity = true
+	if record.PricingIdentityObserved {
+		subject.AuthType = record.PricingAuthType
+		subject.IdentityAuthIndex = record.PricingAuthIndex
+	}
+	return subject
 }
 
 func UsageOverviewHourlyCostSubject(row entities.UsageOverviewHourlyStat) pricing.CostSubject {

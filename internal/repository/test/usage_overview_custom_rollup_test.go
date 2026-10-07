@@ -129,12 +129,12 @@ func TestPresetOverviewRawBoundaryUsesCardOnlyProjection(t *testing.T) {
 	}
 
 	query := findOverviewRollupQuery(t, *queries, "usage_events")
-	for _, unwanted := range []string{"provider", "auth_type", "source", "auth_index", "generate", "latency_ms", "ttft_ms"} {
+	for _, unwanted := range []string{"provider", "source", "generate", "latency_ms", "ttft_ms"} {
 		if strings.Contains(query, unwanted) {
 			t.Fatalf("Overview boundary projection should exclude %q:\n%s", unwanted, query)
 		}
 	}
-	for _, required := range []string{"api_group_key", "model", "model_alias", "timestamp", "failed", "input_tokens", "total_tokens"} {
+	for _, required := range []string{"api_group_key", "model", "model_alias", "timestamp", "failed", "input_tokens", "total_tokens", "auth_index", "auth_type"} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("Overview boundary projection should include %q:\n%s", required, query)
 		}
@@ -176,9 +176,30 @@ func captureOverviewDataQueries(t *testing.T, db *gorm.DB, suffix ...string) *[]
 	t.Helper()
 	queries := make([]string, 0, 3)
 	callbackName := "test:capture_overview_data_queries"
-	if len(suffix) > 0 && suffix[0] != "" { callbackName += "_" + suffix[0] }
+	if len(suffix) > 0 && suffix[0] != "" {
+		callbackName += "_" + suffix[0]
+	}
 	capture := func(tx *gorm.DB) {
-		queries = append(queries, strings.ToLower(tx.Statement.SQL.String()))
+		query := strings.ToLower(strings.Join(strings.Fields(tx.Statement.SQL.String()), " "))
+		// Ticket8 adds independent reference proof reads. These cannot populate
+		// old usage totals or series, whose original routing assertions stay exact.
+		if strings.HasPrefix(query, "select * from `usage_aggregation_checkpoints` where name in (") {
+			return // Read-only committed-prefix watermark for reference proof.
+		}
+		if strings.Contains(query, "from sqlite_master") {
+			return // Raw-retention table availability, not a usage data read.
+		}
+		const evidenceColumns = "id, api_group_key, model, model_alias, auth_index, auth_type, service_tier, response_service_tier, reasoning_effort, endpoint, executor_type, timestamp, failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, cache_creation_tokens, total_tokens"
+		if strings.HasPrefix(query, "select "+evidenceColumns+" from usage_events where ") || strings.HasPrefix(query, "select "+evidenceColumns+" from usage_events_archive where ") {
+			if !strings.Contains(query, "timestamp >= ? and timestamp < ? and id <= ?") || strings.Contains(query, "raw_json") {
+				t.Errorf("reference proof must be bounded to committed minimal facts: %s", query)
+			}
+			if strings.Contains(query, "union all") && !strings.Contains(query, "not exists (select 1 from usage_events hot where hot.id = usage_events_archive.id)") {
+				t.Errorf("reference proof must deduplicate archive IDs: %s", query)
+			}
+			return
+		}
+		queries = append(queries, query)
 	}
 	if err := db.Callback().Query().After("gorm:query").Register(callbackName, capture); err != nil {
 		t.Fatalf("register query callback: %v", err)

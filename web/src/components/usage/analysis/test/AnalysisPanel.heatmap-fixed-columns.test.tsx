@@ -83,11 +83,11 @@ describe('AnalysisPanel heatmap columns', () => {
       'Primary Production Key', '1.00K', '2.50K', '3.50K', '$0.7500',
     ]);
     expect(row.querySelector('[class*="heatmapRowLabel"]')?.getAttribute('aria-label')).toBe(
-      'usage_stats.analysis_heatmap_api_key: Primary Production Key, usage_stats.total_tokens: 3.50K, usage_stats.total_cost: $0.7500',
+      'usage_stats.analysis_heatmap_api_key: Primary Production Key, usage_stats.total_tokens: 3.50K, cost_estimates.configured: $0.7500 · cost_estimates.not_provided, cost_estimates.reference: — · cost_estimates.not_provided',
     );
     expect([...row.querySelectorAll('[class*="heatmapSummaryCell"]')].map((cell) => cell.getAttribute('aria-label'))).toEqual([
       'usage_stats.total_tokens: 3.50K, usage_stats.analysis_heatmap_api_key: Primary Production Key',
-      'usage_stats.total_cost: $0.7500, usage_stats.analysis_heatmap_api_key: Primary Production Key',
+      'cost_estimates.configured: $0.7500 · cost_estimates.not_provided, cost_estimates.reference: — · cost_estimates.not_provided, usage_stats.analysis_heatmap_api_key: Primary Production Key',
     ]);
   });
 

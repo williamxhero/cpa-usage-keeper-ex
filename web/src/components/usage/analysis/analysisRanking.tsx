@@ -1,6 +1,8 @@
 import { useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { calculateCacheReadRate, formatCompactNumber, formatPerMinuteValue, formatUsd } from '@/utils/usage';
+import { calculateCacheReadRate, formatCompactNumber, formatPerMinuteValue } from '@/utils/usage';
+import type { DualCosts } from '@/lib/types';
+import { DualCostsDisplay, dualCostLines } from '../DualCosts';
 import type { UsageChartGradientColor } from '@/utils/usage/chartConfig';
 import styles from './AnalysisPanel.module.scss';
 
@@ -11,6 +13,7 @@ export type AnalysisRankingItem = {
   share: number;
   requests: number;
   cost: number | null;
+  dualCosts?: DualCosts;
   inputTokens: number | null;
   cacheReadTokens: number | null;
   color: UsageChartGradientColor;
@@ -78,7 +81,7 @@ export function AnalysisRankingList({ items, label, windowMinutes, highlight }: 
               style={{ '--ranking-color': item.color.base } as CSSProperties}
               data-active={active === item.key} data-muted={Boolean(active && active !== item.key)}
               aria-pressed={highlight.selected === item.key}
-              aria-label={`${index + 1}. ${item.label}, ${t('usage_stats.total_tokens')}: ${formatCompactNumber(item.total)}, ${t('usage_stats.analysis_composition_token_percent')}: ${item.share.toFixed(2)}%, ${t('usage_stats.cache_rate')}: ${cacheRate === null ? '--' : `${cacheRate.toFixed(2)}%`}`}
+              aria-label={`${index + 1}. ${item.label}, ${t('usage_stats.total_tokens')}: ${formatCompactNumber(item.total)}, ${t('usage_stats.analysis_composition_token_percent')}: ${item.share.toFixed(2)}%, ${t('usage_stats.cache_rate')}: ${cacheRate === null ? '--' : `${cacheRate.toFixed(2)}%`}, ${dualCostLines(item.dualCosts, t, item.cost).join(', ')}`}
               {...highlight.events(item.key)}
             >
               <span className={styles.rankingTopline}>
@@ -89,13 +92,13 @@ export function AnalysisRankingList({ items, label, windowMinutes, highlight }: 
                 <span className={styles.rankingShare}>{item.share.toFixed(2)}%</span>
               </span>
               <span className={styles.rankingTrack} aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, item.share))}%` }} /></span>
-              <span className={styles.rankingMetrics}>
+              <div className={styles.rankingMetrics}>
                 <span data-metric="cache" className={styles.rankingCache}>{t('usage_stats.cache_rate')} <strong>{cacheRate === null ? '--' : `${cacheRate.toFixed(2)}%`}</strong></span>
                 <span>{t('usage_stats.requests_count')} <strong>{formatCompactNumber(item.requests)}</strong></span>
-                <span>{t('usage_stats.total_cost')} <strong>{item.cost === null ? '--' : formatUsd(item.cost)}</strong></span>
+                <DualCostsDisplay costs={item.dualCosts} configuredFallback={item.cost} />
                 <span>{t('usage_stats.rpm')} <strong>{rate(item.requests)}</strong></span>
                 <span>{t('usage_stats.tpm')} <strong>{rate(item.total)}</strong></span>
-              </span>
+              </div>
             </button>
           </li>
         );

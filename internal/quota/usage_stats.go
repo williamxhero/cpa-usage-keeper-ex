@@ -53,6 +53,8 @@ func (s *Service) attachWindowUsageStatsWithProvider(ctx context.Context, authIn
 			}
 			response.Quota[index].WindowUsageTokens = nil
 			response.Quota[index].WindowUsageCost = nil
+			response.Quota[index].DualCosts = nil
+			response.Quota[index].PricingSnapshotID = ""
 			windowStart, windowEnd, windowOK := quotaRowUsageWindow(response.Quota[index], now)
 			if !windowOK {
 				continue
@@ -78,6 +80,7 @@ func (s *Service) attachWindowUsageStatsWithProvider(ctx context.Context, authIn
 			if !exists {
 				// 已知组在完整查询中没有事件时是可靠的零用量，而不是缺失结果。
 				stats.CostAvailable = true
+				stats.PricingSnapshotID = grouped.PricingSnapshotID
 			}
 			if !stats.CostAvailable {
 				continue
@@ -86,6 +89,9 @@ func (s *Service) attachWindowUsageStatsWithProvider(ctx context.Context, authIn
 			cost := stats.Cost
 			response.Quota[index].WindowUsageTokens = &tokens
 			response.Quota[index].WindowUsageCost = &cost
+			dual := stats.DualCosts.Normalized()
+			response.Quota[index].DualCosts = &dual
+			response.Quota[index].PricingSnapshotID = stats.PricingSnapshotID
 			continue
 		}
 		// Pro 等上游可能已经返回窗口 token/cost；非 window scope 不用本地 auth 级统计兜底。
@@ -96,6 +102,8 @@ func (s *Service) attachWindowUsageStatsWithProvider(ctx context.Context, authIn
 		// provider pair 不完整时先丢弃单边字段，避免 fallback 失败后输出不同口径的半套数据。
 		response.Quota[index].WindowUsageTokens = nil
 		response.Quota[index].WindowUsageCost = nil
+		response.Quota[index].DualCosts = nil
+		response.Quota[index].PricingSnapshotID = ""
 		// 根据 reset_at 和 window.seconds 计算该 row 对应的统计窗口。
 		windowStart, windowEnd, ok := quotaRowUsageWindow(response.Quota[index], now)
 		// 没有明确窗口或 reset_at 无法解析时跳过该 row。
@@ -127,6 +135,9 @@ func (s *Service) attachWindowUsageStatsWithProvider(ctx context.Context, authIn
 		// token 和 cost 必须来自同一统计口径；provider pair 不完整时整对使用本地统计。
 		response.Quota[index].WindowUsageTokens = &tokens
 		response.Quota[index].WindowUsageCost = &cost
+		dual := stats.DualCosts.Normalized()
+		response.Quota[index].DualCosts = &dual
+		response.Quota[index].PricingSnapshotID = stats.PricingSnapshotID
 	}
 	// 返回已经补充窗口用量的 quota 响应。
 	return response
