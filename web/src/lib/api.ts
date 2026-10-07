@@ -1,4 +1,4 @@
-import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingChannel, type PricingChannelInput, type PricingChannelsResponse, type PricingCredential, type PricingCredentialDefault, type PricingCredentialFixedInput, type PricingCredentialModel, type PricingCredentialModelsResponse, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
+import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingChannel, type PricingChannelInput, type PricingChannelModel, type PricingChannelModelsResponse, type PricingChannelsResponse, type PricingCredential, type PricingCredentialDefault, type PricingCredentialFixedInput, type PricingCredentialModel, type PricingCredentialModelsResponse, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed'
 import { resolveUsageRequestRange } from '@/utils/usage/rangeQuery'
 
@@ -1059,6 +1059,44 @@ export async function savePricingChannelDefault(channelId: string, multiplier: s
 export async function clearPricingChannelDefault(channelId: string, signal?: AbortSignal): Promise<PricingChannel> {
   const response = await apiFetch(apiPath(`/pricing/channels/${encodeURIComponent(channelId)}/default`), { method: 'DELETE', signal })
   if (!response.ok) await parseApiError(response, 'Unable to clear channel default')
+  return response.json()
+}
+
+export async function fetchPricingChannelModels(channelId: string, signal?: AbortSignal): Promise<PricingChannelModelsResponse> {
+  const response = await apiFetch(apiPath(`/pricing/channels/${encodeURIComponent(channelId)}/models`), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load channel model exceptions')
+  return response.json()
+}
+
+function pricingChannelModelPath(channelId: string, model: string): string {
+  return `${apiPath(`/pricing/channels/${encodeURIComponent(channelId)}/model`)}?${new URLSearchParams({ model })}`
+}
+
+export async function fetchPricingChannelModel(channelId: string, model: string, signal?: AbortSignal): Promise<PricingChannelModel> {
+  const response = await apiFetch(pricingChannelModelPath(channelId, model), { signal, cache: 'no-store' })
+  if (!response.ok) await parseApiError(response, 'Unable to load channel model exception')
+  return response.json()
+}
+
+export async function savePricingChannelModel(channelId: string, model: string, multiplier: string, signal?: AbortSignal): Promise<PricingChannelModel> {
+  const response = await apiFetch(pricingChannelModelPath(channelId, model), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'multiplier', multiplier }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save channel model exception')
+  return response.json()
+}
+
+export async function savePricingChannelFixed(channelId: string, model: string, fixed: PricingCredentialFixedInput, signal?: AbortSignal): Promise<PricingChannelModel> {
+  const response = await apiFetch(pricingChannelModelPath(channelId, model), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'fixed', fixed }), signal,
+  })
+  if (!response.ok) await parseApiError(response, 'Unable to save channel fixed tariff')
+  return response.json()
+}
+
+export async function clearPricingChannelModel(channelId: string, model: string, signal?: AbortSignal): Promise<PricingChannelModel> {
+  const response = await apiFetch(pricingChannelModelPath(channelId, model), { method: 'DELETE', signal })
+  if (!response.ok) await parseApiError(response, 'Unable to clear channel model exception')
   return response.json()
 }
 
