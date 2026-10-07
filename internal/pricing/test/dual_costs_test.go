@@ -11,6 +11,67 @@ import (
 	"cpa-usage-keeper/internal/pricing"
 )
 
+func TestDualCostsCredentialOnlyAttributionWarnings(t *testing.T) {
+	unique := []pricing.CredentialBinding{{SubjectID: "cred_a", AuthType: "oauth", AuthIndex: "synthetic-private-index", Status: "unique"}}
+	ambiguous := []pricing.CredentialBinding{{SubjectID: "cred_a", AuthType: "oauth", AuthIndex: "synthetic-private-index", Status: "ambiguous"}}
+	collision := append(append([]pricing.CredentialBinding{}, unique...), pricing.CredentialBinding{SubjectID: "cred_b", AuthType: "apikey", AuthIndex: "synthetic-private-index", Status: "unique"})
+	for _, mode := range []string{"default", "model", "none"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, test := range []struct {
+				name               string
+				bindings           []pricing.CredentialBinding
+				index, authType    string
+				observed, selected bool
+				warning            string
+			}{
+				{"unique", unique, "synthetic-private-index", "oauth", true, true, ""},
+				{"ambiguous", ambiguous, "synthetic-private-index", "oauth", true, false, "unresolved_identity"},
+				{"missing index", unique, "", "oauth", true, false, "unknown_identity"},
+				{"unknown raw type", unique, "synthetic-private-index", "unknown", true, false, "unknown_identity"},
+				{"missing raw type", unique, "synthetic-private-index", "", true, false, "unknown_identity"},
+				{"typed collision", collision, "synthetic-private-index", "oauth", true, true, ""},
+				{"typeless collision", collision, "synthetic-private-index", "", false, false, "unresolved_identity"},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					var defaults []pricing.CredentialConfig
+					var overrides pricing.OverrideConfig
+					if mode == "default" {
+						defaults = []pricing.CredentialConfig{{SubjectID: "cred_a", Multiplier: .2}}
+					}
+					if mode == "model" {
+						overrides.CredentialModels = []pricing.CredentialModelConfig{{SubjectID: "cred_a", Model: "m", Mode: pricing.ModeMultiplier, Multiplier: .2}}
+					}
+					snapshot, err := pricing.CompileSnapshotWithCredentials([]pricing.ModelConfig{{Pricing: testPricingWithPromptAndMultiplier("m", 10, 3)}}, test.bindings, defaults, overrides)
+					if err != nil {
+						t.Fatal(err)
+					}
+					resolver := pricing.NewCatalog(snapshot).NewResolver()
+					subject := pricing.NewCostSubject(pricing.UsageDimensions{Model: "m", AuthIndex: test.index}, helper.UsageTokenCostInput{InputTokens: 1_000_000})
+					subject.AuthType, subject.ObservedIdentity = test.authType, test.observed
+					result := resolver.Calculate(subject)
+					warning, cost := test.warning, 30.0
+					if mode == "none" {
+						warning = ""
+					} else if test.selected {
+						cost = 2
+					}
+					if result.AttributionWarning != warning || result.Cost.TotalCostUSD != cost || !result.Available || result.ReferenceCost.TotalCostUSD != 10 || !result.ReferenceAvailable || result.ChannelID != "" || result.ChannelName != "" {
+						t.Fatalf("credential-only attribution %+v want warning=%q cost=%g", result, warning, cost)
+					}
+					selection := resolver.Selection(result)
+					if selection == nil || selection.SnapshotID != snapshot.ID() || selection.AttributionWarning != warning || (!test.selected && selection.SubjectID != "") {
+						t.Fatalf("unsafe/unpinned explanation %+v", selection)
+					}
+					body, err := json.Marshal(selection)
+					if err != nil || strings.Contains(string(body), "synthetic-private-index") {
+						t.Fatalf("unsafe explanation %s %v", body, err)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestDualCostsLegacyIndependentReferenceAndSafeExplanation(t *testing.T) {
 	resolver := compileResolver(t, pricing.ModelConfig{
 		Pricing: testPricingWithPromptAndMultiplier("m", 10, .5),

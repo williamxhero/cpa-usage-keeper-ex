@@ -1071,6 +1071,17 @@ func TestCredentialDefaultMetadataRefreshAmbiguousStaleFailureAndRecovery(t *tes
 		for _, event := range page.Events {
 			if event.InputTokens == 1_000_000 && event.OutputTokens == 100_000 && event.AuthIndex == "synthetic-a" {
 				closeCost(t, event.CostUSD, expected)
+				warning := ""
+				if expected == 29.4 {
+					warning = "unresolved_identity"
+				}
+				selection := event.PricingSelection
+				if selection == nil || selection.AttributionWarning != warning || selection.ChannelID != "" || selection.ChannelName != "" || selection.SnapshotID != page.PricingSnapshotID || event.PricingSnapshotID != page.PricingSnapshotID || page.PricingSnapshotID != f.catalog.Snapshot().ID() {
+					t.Fatalf("credential-only metadata explanation %+v page=%s", selection, page.PricingSnapshotID)
+				}
+				if warning != "" && (selection.Scope != "legacy" || selection.SubjectID != "") {
+					t.Fatalf("ambiguous metadata guessed attribution %+v", selection)
+				}
 				return
 			}
 		}

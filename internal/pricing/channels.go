@@ -210,7 +210,7 @@ func (r Resolver) MayUsePricingOverride(subject CostSubject) bool {
 
 // ChannelAttribution never equates a provider, name, or endpoint to a channel.
 func (r Resolver) ChannelAttribution(subject CostSubject) (string, string, string) {
-	if r.snapshot == nil || !r.HasChannels() {
+	if r.snapshot == nil || (!r.HasChannels() && !r.HasPricingOverrides()) {
 		return "", "", ""
 	}
 	id := r.snapshot.subjectChannels[r.credentialSubject(subject)]
@@ -222,6 +222,11 @@ func (r Resolver) ChannelAttribution(subject CostSubject) (string, string, strin
 	}
 	if r.credentialSubject(subject) == "" {
 		return "", "", "unresolved_identity"
+	}
+	// Credential-only overrides still need identity-failure evidence, but a
+	// resolved credential does not require a channel when none are configured.
+	if !r.HasChannels() {
+		return "", "", ""
 	}
 	return "", "", "unbound_channel"
 }

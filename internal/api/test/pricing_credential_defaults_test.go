@@ -20,6 +20,114 @@ import (
 	servicedto "cpa-usage-keeper/internal/service/dto"
 )
 
+func TestCredentialOnlyAmbiguityServiceAndHTTPExplanation(t *testing.T) {
+	for _, mode := range []string{"default", "model"} {
+		t.Run(mode, func(t *testing.T) {
+			db := openAPITestDatabase(t)
+			ctx := context.Background()
+			identity := entities.UsageIdentity{Name: "Synthetic safe account", AuthType: entities.UsageIdentityAuthTypeAIProvider, AuthTypeName: "apikey", Identity: "synthetic-private-identity", LookupKey: "synthetic-private-source-key", Type: "openai", BindingIdentityStatus: "unique"}
+			if err := db.Create(&identity).Error; err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := repository.LoadPricingSnapshot(ctx, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalog := pricing.NewCatalog(snapshot)
+			prices := service.NewPricingService(db, catalog)
+			if _, err := prices.UpdatePricing(ctx, servicedto.UpdatePricingInput{Model: "base", PromptPricePer1M: 10, PriceMultiplier: new(3.0)}); err != nil {
+				t.Fatal(err)
+			}
+			router, cookie := credentialPricingRouter(t, db, catalog)
+			bound := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identity.ID), cookie)
+			var credential safeCredential
+			if bound.Code != http.StatusCreated || json.Unmarshal(bound.Body.Bytes(), &credential) != nil {
+				t.Fatal(bound.Body.String())
+			}
+			path := "/api/v1/pricing/credentials/" + credential.SubjectID + "/default"
+			if mode == "model" {
+				path = "/api/v1/pricing/credentials/" + credential.SubjectID + "/model?model=base"
+			}
+			saved := serveCredentialMutation(router, http.MethodPut, path, `{"multiplier":0.2}`, cookie)
+			if saved.Code != http.StatusOK {
+				t.Fatal(saved.Body.String())
+			}
+			start := time.Now().Truncate(time.Hour).Add(-6 * time.Hour)
+			end := start.Add(6 * time.Hour)
+			event := entities.UsageEvent{EventKey: "credential-only-explanation", Model: "base", AuthType: "apikey", AuthIndex: identity.Identity, Timestamp: start.Add(time.Minute), InputTokens: 1_000_000, TotalTokens: 1_000_000}
+			if _, _, err := repository.InsertUsageEvents(db, []entities.UsageEvent{event}); err != nil {
+				t.Fatal(err)
+			}
+			query := "?" + url.Values{"range": {"custom"}, "unit": {"hour"}, "start": {start.Format(time.RFC3339)}, "end": {end.Format(time.RFC3339)}}.Encode()
+			assertExplanation := func(cost float64, warning string) {
+				t.Helper()
+				if catalog.NewResolver().HasChannels() {
+					t.Fatal("fixture must have no channels")
+				}
+				page, err := service.NewUsageService(db, catalog).ListUsageEvents(ctx, servicedto.UsageFilter{StartTime: &start, EndTime: &end, EndExclusive: true})
+				if err != nil || len(page.Events) != 1 {
+					t.Fatalf("service page %+v %v", page, err)
+				}
+				response := serveAPIGet(router, "/api/v1/usage/events"+query, cookie)
+				var dto struct {
+					SnapshotID string `json:"pricing_snapshot_id"`
+					Events     []struct {
+						Cost       float64                `json:"cost_usd"`
+						Available  bool                   `json:"cost_available"`
+						SnapshotID string                 `json:"pricing_snapshot_id"`
+						Selection  *pricing.CostSelection `json:"pricing_selection"`
+						DualCosts  pricing.DualCosts      `json:"dual_costs"`
+					} `json:"events"`
+				}
+				if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &dto) != nil || len(dto.Events) != 1 {
+					t.Fatalf("HTTP page %d %s", response.Code, response.Body.String())
+				}
+				actual := dto.Events[0]
+				selection := actual.Selection
+				if math.Abs(actual.Cost-cost) > 1e-9 || !actual.Available || selection == nil || selection.AttributionWarning != warning || selection.ChannelID != "" || selection.ChannelName != "" || dto.SnapshotID != catalog.Snapshot().ID() || actual.SnapshotID != dto.SnapshotID || selection.SnapshotID != dto.SnapshotID || page.PricingSnapshotID != dto.SnapshotID || page.Events[0].PricingSnapshotID != dto.SnapshotID {
+					t.Fatalf("unpinned/incorrect HTTP explanation %+v", dto)
+				}
+				wantScope := "credential_" + mode
+				if warning != "" {
+					wantScope = "legacy"
+					if selection.SubjectID != "" {
+						t.Fatal("guessed ambiguous subject")
+					}
+				}
+				if selection.Scope != wantScope || actual.DualCosts.Configured.TotalCostUSD == nil || *actual.DualCosts.Configured.TotalCostUSD != cost || actual.DualCosts.Reference.TotalCostUSD == nil || *actual.DualCosts.Reference.TotalCostUSD != 10 || !actual.DualCosts.Configured.Complete || !actual.DualCosts.Reference.Complete {
+					t.Fatalf("changed arithmetic/state %+v", actual)
+				}
+				body, err := json.Marshal(selection)
+				serviceBody, serviceErr := json.Marshal(page.Events[0].PricingSelection)
+				if err != nil || serviceErr != nil || string(body) != string(serviceBody) || strings.Contains(string(body), identity.Identity) || strings.Contains(string(body), identity.LookupKey) {
+					t.Fatalf("unsafe/mismatched explanation %s %s", body, serviceBody)
+				}
+			}
+			assertExplanation(2, "")
+			old := catalog.NewResolver()
+			// Persisted ambiguous metadata disables exact attribution, not saved pricing.
+			if err := db.Model(&identity).Update("binding_identity_status", "ambiguous").Error; err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err = repository.LoadPricingSnapshot(ctx, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			catalog = pricing.NewCatalog(snapshot)
+			router, cookie = credentialPricingRouter(t, db, catalog)
+			assertExplanation(30, "unresolved_identity")
+			prior := old.Calculate(repository.UsageEventCostSubject(event))
+			if prior.Cost.TotalCostUSD != 2 || prior.AttributionWarning != "" || old.SnapshotID() == catalog.Snapshot().ID() {
+				t.Fatal("old snapshot mutated")
+			}
+			readback := serveAPIGet(router, path, cookie)
+			if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"multiplier":0.2`) {
+				t.Fatalf("saved override lost %s", readback.Body.String())
+			}
+		})
+	}
+}
+
 func TestCredentialDefaultAdminHTTPPersistenceCostQueriesAndSafeValidation(t *testing.T) {
 	db := openAPITestDatabase(t)
 	ctx := context.Background()
