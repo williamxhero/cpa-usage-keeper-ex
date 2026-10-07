@@ -1,12 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { ApiError, clearPricingCredentialModel, fetchCredentialPricingSubjects, fetchPricing, fetchPricingCredentialModel, fetchPricingCredentialModels, fetchUsedModels, savePricingCredentialModel } from '@/lib/api';
-import type { PricingCredential, PricingCredentialModel } from '@/lib/types';
+import { ApiError, clearPricingCredentialModel, fetchCredentialPricingSubjects, fetchPricing, fetchPricingCredentialModel, fetchPricingCredentialModels, fetchUsedModels, savePricingCredentialFixed, savePricingCredentialModel } from '@/lib/api';
+import type { PricingCredential, PricingCredentialFixedInput, PricingCredentialModel, PricingStyle } from '@/lib/types';
 import styles from './PricingCredentialDefaultsCard.module.scss';
+
+const rateFields = ['prompt_price_per_1m', 'completion_price_per_1m', 'cache_read_price_per_1m', 'cache_write_price_per_1m'] as const;
+const emptyRates = () => ({ prompt_price_per_1m: '', completion_price_per_1m: '', cache_read_price_per_1m: '', cache_write_price_per_1m: '' });
+const savedMode = (saved: PricingCredentialModel) => saved.mode ?? (saved.multiplier === null ? 'inherit' : 'multiplier');
+const decimalText = (value: number) => value.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 });
 
 export function PricingCredentialModelsCard({ canManage = true }: { canManage?: boolean }) {
   const { t } = useTranslation();
@@ -17,6 +22,10 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
   const [model, setModel] = useState('');
   const [config, setConfig] = useState<PricingCredentialModel | null>(null);
   const [multiplier, setMultiplier] = useState('');
+  const [mode, setMode] = useState<'multiplier' | 'fixed'>('multiplier');
+  const [rates, setRates] = useState(emptyRates);
+  const [pricingStyle, setPricingStyle] = useState<PricingStyle | ''>('');
+  const [baselineModels, setBaselineModels] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
   const [error, setError] = useState('');
@@ -31,26 +40,37 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
     setBusy(true); setError(''); setFieldError(''); setNotice('');
     return controller;
   };
+  const resetDraft = useCallback(() => {
+    setMultiplier(''); setMode('multiplier'); setRates(emptyRates()); setPricingStyle('');
+  }, []);
   const applyConfig = (saved: PricingCredentialModel) => {
     setConfig(saved);
-    setMultiplier(saved.multiplier === null ? '' : saved.multiplier.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 }));
+    setMode(savedMode(saved) === 'fixed' ? 'fixed' : 'multiplier');
+    setMultiplier(saved.multiplier === null ? '' : decimalText(saved.multiplier));
+    setRates(saved.fixed ? {
+      prompt_price_per_1m: decimalText(saved.fixed.prompt_price_per_1m),
+      completion_price_per_1m: decimalText(saved.fixed.completion_price_per_1m),
+      cache_read_price_per_1m: decimalText(saved.fixed.cache_read_price_per_1m),
+      cache_write_price_per_1m: decimalText(saved.fixed.cache_write_price_per_1m),
+    } : emptyRates());
+    setPricingStyle(saved.fixed?.pricing_style ?? '');
     setExceptions(previous => [
       ...previous.filter(item => item.model !== saved.model),
-      ...(saved.multiplier === null ? [] : [saved]),
+      ...(savedMode(saved) === 'inherit' ? [] : [saved]),
     ]);
   };
-  const handleError = (cause: unknown, fallback: string) => {
+  const handleError = useCallback((cause: unknown, fallback: string, inputMode: 'multiplier' | 'fixed' = 'multiplier') => {
     // Never display upstream bodies: only localized safe errors are allowed.
     if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
-      setDenied(true); setSubjects([]); setModels([]); setExceptions([]);
-      setSelected(''); setModel(''); setConfig(null); setMultiplier(''); setNotice(''); setFieldError('');
+      setDenied(true); setSubjects([]); setModels([]); setBaselineModels([]); setExceptions([]);
+      setSelected(''); setModel(''); setConfig(null); resetDraft(); setNotice(''); setFieldError('');
       setError('pricing_credential_models.permission_denied');
     } else if (fallback === 'pricing_credential_models.save_failed' && cause instanceof ApiError && (cause.status === 400 || cause.status === 422)) {
-      setFieldError('pricing_credential_models.invalid_multiplier');
+      setFieldError(inputMode === 'fixed' ? 'pricing_credential_models.invalid_fixed' : 'pricing_credential_models.invalid_multiplier');
     } else {
       setError(cause instanceof ApiError && cause.status === 409 ? 'pricing_credential_models.conflict' : fallback);
     }
-  };
+  }, [resetDraft]);
   const loadChoices = async (signal: AbortSignal) => {
     const [directory, used, pricing] = await Promise.all([
       fetchCredentialPricingSubjects(signal), fetchUsedModels(signal), fetchPricing(signal),
@@ -59,26 +79,27 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
     const registered = directory.credentials.filter(item => item.subject_id);
     setSubjects(registered);
     setModels([...new Set([...used.models, ...pricing.pricing.map(item => item.model)])].sort());
+    setBaselineModels(pricing.pricing.map(item => item.model));
     return registered;
   };
 
   useEffect(() => {
     const controller = new AbortController();
     requestRef.current = controller;
-    setSubjects([]); setModels([]); setExceptions([]); setSelected(''); setModel('');
-    setConfig(null); setMultiplier(''); setError(''); setFieldError(''); setNotice(''); setDenied(false); setBusy(canManage);
+    setSubjects([]); setModels([]); setBaselineModels([]); setExceptions([]); setSelected(''); setModel('');
+    setConfig(null); resetDraft(); setError(''); setFieldError(''); setNotice(''); setDenied(false); setBusy(canManage);
     if (canManage) {
       void loadChoices(controller.signal).catch(cause => {
         if (!controller.signal.aborted) handleError(cause, 'pricing_credential_models.load_failed');
       }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
     }
     return () => requestRef.current?.abort();
-  }, [canManage]);
+  }, [canManage, handleError, resetDraft]);
 
   const chooseSubject = async (subjectId: string) => {
     if (busy) return;
     const controller = beginRequest();
-    setSelected(subjectId); setModel(''); setConfig(null); setMultiplier(''); setExceptions([]);
+    setSelected(subjectId); setModel(''); setConfig(null); resetDraft(); setExceptions([]);
     try {
       const saved = await fetchPricingCredentialModels(subjectId, controller.signal);
       if (!controller.signal.aborted) setExceptions(saved.models);
@@ -89,7 +110,7 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
   const chooseModel = async (modelName: string) => {
     if (busy || !selected) return;
     const controller = beginRequest();
-    setModel(modelName); setConfig(null); setMultiplier('');
+    setModel(modelName); setConfig(null); resetDraft();
     try {
       const saved = await fetchPricingCredentialModel(selected, modelName, controller.signal);
       if (!controller.signal.aborted) applyConfig(saved);
@@ -100,7 +121,7 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
   const refresh = async () => {
     if (busy) return;
     const controller = beginRequest();
-    setConfig(null); setMultiplier(''); setExceptions([]);
+    setConfig(null); resetDraft(); setExceptions([]);
     try {
       const registered = await loadChoices(controller.signal);
       if (!registered) return;
@@ -118,16 +139,36 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
     } finally { if (!controller.signal.aborted) setBusy(false); }
   };
   const save = async (clear = false) => {
-    if (busy || !selected || !model || !config || (clear && config.multiplier === null)) return;
+    if (busy || !selected || !model || !config || (clear && savedMode(config) === 'inherit')) return;
     const text = multiplier.trim();
-    const match = /^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)([xX%])?$/.exec(text);
-    const value = match ? Number(match[1] ? text.slice(0, -1) : text) / (match[1] === '%' ? 100 : 1) : NaN;
-    if (!clear && (!Number.isFinite(value) || value < 0)) {
-      setError(''); setNotice(''); setFieldError('pricing_credential_models.invalid_multiplier'); return;
+    const target: PricingCredentialFixedInput = {
+      prompt_price_per_1m: rates.prompt_price_per_1m.trim(),
+      completion_price_per_1m: rates.completion_price_per_1m.trim(),
+      cache_read_price_per_1m: rates.cache_read_price_per_1m.trim(),
+      cache_write_price_per_1m: rates.cache_write_price_per_1m.trim(),
+      ...(pricingStyle ? { pricing_style: pricingStyle } : {}),
+    };
+    if (!clear) {
+      let invalid = '';
+      if (mode === 'fixed') {
+        if (rateFields.some(field => !/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(target[field]) || !Number.isFinite(Number(target[field])))) {
+          invalid = 'pricing_credential_models.invalid_fixed';
+        } else if (!pricingStyle && !baselineModels.includes(model)) {
+          invalid = 'pricing_credential_models.style_required';
+        }
+      } else {
+        const match = /^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)([xX%])?$/.exec(text);
+        const value = match ? Number(match[1] ? text.slice(0, -1) : text) / (match[1] === '%' ? 100 : 1) : NaN;
+        if (!Number.isFinite(value) || value < 0) invalid = 'pricing_credential_models.invalid_multiplier';
+      }
+      if (invalid) { setError(''); setNotice(''); setFieldError(invalid); return; }
     }
     const controller = beginRequest();
     try {
-      const saved = await (clear ? clearPricingCredentialModel(selected, model, controller.signal) : savePricingCredentialModel(selected, model, text, controller.signal));
+      // Send only the complete target mode; hidden drafts never affect the save.
+      const saved = await (clear ? clearPricingCredentialModel(selected, model, controller.signal)
+        : mode === 'fixed' ? savePricingCredentialFixed(selected, model, target, controller.signal)
+          : savePricingCredentialModel(selected, model, text, controller.signal));
       if (controller.signal.aborted) return;
       // Retain the committed canonical result even if readback fails.
       applyConfig(saved);
@@ -139,7 +180,7 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
         if (!controller.signal.aborted) handleError(cause, 'pricing_credential_models.load_failed');
       }
     } catch (cause) {
-      if (!controller.signal.aborted) handleError(cause, clear ? 'pricing_credential_models.clear_failed' : 'pricing_credential_models.save_failed');
+      if (!controller.signal.aborted) handleError(cause, clear ? 'pricing_credential_models.clear_failed' : 'pricing_credential_models.save_failed', mode);
     } finally { if (!controller.signal.aborted) setBusy(false); }
   };
   const label = (item: PricingCredential) => [item.alias, item.name, item.provider_type, item.auth_type, item.endpoint,
@@ -177,17 +218,43 @@ export function PricingCredentialModelsCard({ canManage = true }: { canManage?: 
           {!busy && subjects.length === 0 && <p className={styles.hint}>{t('pricing_credential_models.empty')}</p>}
           {config && <div className={styles.readback}>
             <span>{t('pricing_credential_models.current')}</span><span>{config.model}</span>
-            {config.multiplier === null ? <span>{t('pricing_credential_models.inherited')}</span> : <>
+            {savedMode(config) === 'inherit' ? <span>{t('pricing_credential_models.inherited')}</span> : <>
               <span>{t('pricing_credential_models.active')}</span>
-              <output aria-label={t('pricing_credential_models.canonical')}>{String(config.multiplier)}</output>
+              {savedMode(config) === 'fixed' && config.fixed ? <>
+                <span>{t('pricing_credential_models.fixed')}</span>
+                {rateFields.map(field => <span key={field}>
+                  {t(`pricing_credential_models.${field}`)}: <output aria-label={t(`pricing_credential_models.${field}`)}>{String(config.fixed![field])}</output>
+                </span>)}
+                <span>{t('pricing_credential_models.style')}: {config.fixed.pricing_style || t('pricing_credential_models.style_inherit')}</span>
+              </> : <output aria-label={t('pricing_credential_models.canonical')}>{String(config.multiplier)}</output>}
             </>}
           </div>}
-          <Input type="text" label={t('pricing_credential_models.multiplier')} aria-label={t('pricing_credential_models.multiplier')}
+          <div className={styles.actions}><div className={styles.selector}>
+            <Select value={mode} onChange={value => { if (value === 'multiplier' || value === 'fixed') { setMode(value); setFieldError(''); setNotice(''); } }}
+              disabled={busy || !config} ariaLabel={t('pricing_credential_models.mode')}
+              options={['multiplier', 'fixed'].map(value => ({ value, label: t(`pricing_credential_models.${value}`) }))} />
+          </div></div>
+          {mode === 'multiplier' ? <Input type="text" label={t('pricing_credential_models.multiplier')} aria-label={t('pricing_credential_models.multiplier')}
             value={multiplier} onChange={event => { setMultiplier(event.target.value); setFieldError(''); }} disabled={busy || !config}
-            placeholder="1.2x" hint={t('pricing_credential_models.input_help')} error={fieldError ? t(fieldError) : undefined} />
+            placeholder="1.2x" hint={t('pricing_credential_models.input_help')} error={fieldError ? t(fieldError) : undefined} /> : <>
+            <p className={styles.hint}>{t('pricing_credential_models.fixed_help')}</p>
+            {fieldError && <div className={styles.error} role="alert">{t(fieldError)}</div>}
+            <div className={styles.fixedRates}>
+              {rateFields.map(field => <Input key={field} type="text" inputMode="decimal"
+                label={t(`pricing_credential_models.${field}`)} aria-label={t(`pricing_credential_models.${field}`)}
+                value={rates[field]} disabled={busy || !config}
+                onChange={event => { setRates(previous => ({ ...previous, [field]: event.target.value })); setFieldError(''); }} />)}
+            </div>
+            <div className={styles.actions}><div className={styles.selector}>
+              <Select value={pricingStyle} onChange={value => { if (value === '' || value === 'openai' || value === 'claude') { setPricingStyle(value); setFieldError(''); } }}
+                disabled={busy || !config} ariaLabel={t('pricing_credential_models.style')} placeholder={t('pricing_credential_models.style_inherit')}
+                options={[{ value: '', label: t('pricing_credential_models.style_inherit') }, { value: 'openai', label: 'OpenAI' }, { value: 'claude', label: 'Claude' }]} />
+            </div></div>
+            <p className={styles.hint}>{t('pricing_credential_models.style_help')}</p>
+          </>}
           <div className={styles.actions}>
             <Button onClick={() => void save()} disabled={busy || !config}>{t('pricing_credential_models.save')}</Button>
-            <Button variant="secondary" onClick={() => void save(true)} disabled={busy || !config || config.multiplier === null}>{t('pricing_credential_models.clear')}</Button>
+            <Button variant="secondary" onClick={() => void save(true)} disabled={busy || !config || savedMode(config) === 'inherit'}>{t('pricing_credential_models.clear')}</Button>
           </div>
         </>}
       </div>

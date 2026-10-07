@@ -12,6 +12,8 @@ const model = 'synthetic/unpriced-request-model'
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 const dto = (multiplier: number | null, name = model) => ({ subject_id: subject.subject_id, model: name, multiplier, snapshot_id: 'snapshot_synthetic' })
 const modelUrl = `/api/v1/pricing/credentials/${subject.subject_id}/model?${new URLSearchParams({ model })}`
+const rateFields = ['prompt_price_per_1m', 'completion_price_per_1m', 'cache_read_price_per_1m', 'cache_write_price_per_1m'] as const
+const fixedDto = (factor = 1, style: string | undefined = 'openai', name = model) => ({ ...dto(null, name), mode: 'fixed', fixed: { prompt_price_per_1m: factor, completion_price_per_1m: 2 * factor, cache_read_price_per_1m: 3 * factor, cache_write_price_per_1m: 4 * factor, ...(style ? { pricing_style: style } : {}) } })
 
 describe('PricingCredentialModelsCard', () => {
   let root: Root
@@ -31,6 +33,22 @@ describe('PricingCredentialModelsCard', () => {
       input().dispatchEvent(new Event('input', { bubbles: true }))
     })
   }
+  const enterRate = async (field: typeof rateFields[number], value: string) => {
+    const element = container.querySelector<HTMLInputElement>(`input[aria-label="${prefix}${field}"]`)!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value)
+      element.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+  const enterRates = async (values = ['1', '2', '3', '4']) => {
+    for (const [index, field] of rateFields.entries()) await enterRate(field, values[index])
+  }
+  const chooseSetting = async (key: 'mode' | 'style', label: string) => {
+    await act(async () => container.querySelector<HTMLElement>(`[aria-label="${prefix}${key}"]`)!.click())
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(item => item.textContent?.includes(label))!
+    expect(option).toBeTruthy(); await act(async () => option.click())
+  }
+  const fixedMode = async () => chooseSetting('mode', prefix + 'fixed')
   const setup = (handler: (url: string, init?: RequestInit) => Response | Promise<Response> = () => response(dto(null)), exceptions: ReturnType<typeof dto>[] = []) => {
     const mock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const path = String(url)
@@ -145,6 +163,126 @@ describe('PricingCredentialModelsCard', () => {
       await act(async () => button('refresh').click())
       expect(container.querySelector('output')?.textContent).toBe('0.4')
     }
+  })
+  it('saves the complete fixed target only, then uses canonical GET rates and style', async () => {
+    let committed = false
+    const mock = setup((_url, init) => {
+      if (init?.method === 'PUT') { committed = true; return response(fixedDto(1)) }
+      return response(committed ? fixedDto(2, 'claude') : dto(null))
+    })
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await select()
+    await enter('synthetic-private-token'); await fixedMode(); await enterRates([' 1 ', '2.00', '.3', '4'])
+    await chooseSetting('style', 'OpenAI')
+    await act(async () => button('save').click())
+    expect(mock.mock.calls.find(([, init]) => init?.method === 'PUT')?.[1]?.body).toBe(JSON.stringify({ mode: 'fixed', fixed: { prompt_price_per_1m: '1', completion_price_per_1m: '2.00', cache_read_price_per_1m: '.3', cache_write_price_per_1m: '4', pricing_style: 'openai' } }))
+    for (const [index, field] of rateFields.entries()) {
+      expect(container.querySelector(`output[aria-label="${prefix}${field}"]`)?.textContent).toBe(String(2 * (index + 1)))
+      expect(container.querySelector<HTMLInputElement>(`input[aria-label="${prefix}${field}"]`)?.value).toBe(String(2 * (index + 1)))
+    }
+    expect(container.textContent).toContain('claude'); expect(container.textContent).toContain(prefix + 'saved')
+    expect(container.textContent).not.toContain('synthetic-private-token')
+  })
+  it('ignores invalid hidden fixed drafts when switching back to multiplier', async () => {
+    const mock = setup(() => response(dto(0.2)))
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await select(); await fixedMode()
+    await enterRate('prompt_price_per_1m', 'NaN')
+    await chooseSetting('mode', prefix + 'multiplier'); await enter('20%')
+    await act(async () => button('save').click())
+    expect(mock.mock.calls.find(([, init]) => init?.method === 'PUT')?.[1]?.body).toBe(JSON.stringify({ multiplier: '20%' }))
+    expect(container.querySelector('output')?.textContent).toBe('0.2')
+    expect(container.textContent).not.toContain(prefix + 'invalid_fixed')
+  })
+  it.each(rateFields.flatMap(field => ['', '-1', 'NaN', 'Infinity', '1e2', '2x', '20%', '+1'].map(value => [field, value] as const)))('rejects incomplete or invalid fixed draft %s=%s without a mutation', async (field, value) => {
+    const mock = setup()
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await select(); await fixedMode()
+    await enterRates(); await chooseSetting('style', 'OpenAI'); await enterRate(field, value)
+    await act(async () => button('save').click())
+    expect(container.textContent).toContain(prefix + 'invalid_fixed')
+    expect(mock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+  })
+  it('requires explicit supported fallback without a configured-model baseline, and saves all four zeros as active', async () => {
+    let committed = false
+    const mock = setup((_url, init) => {
+      if (init?.method === 'PUT') committed = true
+      return response(committed ? fixedDto(0, 'claude') : dto(null))
+    })
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await select(); await fixedMode(); await enterRates(['0', '0', '0', '0'])
+    await act(async () => button('save').click())
+    expect(container.textContent).toContain(prefix + 'style_required')
+    expect(mock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+    await chooseSetting('style', 'Claude'); await act(async () => button('save').click())
+    expect(container.textContent).not.toContain(prefix + 'inherited')
+    expect(button('clear').disabled).toBe(false)
+    expect(container.querySelectorAll('output').length).toBe(4)
+    for (const output of container.querySelectorAll('output')) expect(output.textContent).toBe('0')
+  })
+  it('can omit fallback when the configured model has a baseline and does not invent a style', async () => {
+    const baseline = 'synthetic/baseline'
+    const mock = setup(() => response(dto(null, baseline)))
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await choose(0, 'Selected account'); await choose(1, baseline)
+    await fixedMode(); await enterRates(); await act(async () => button('save').click())
+    expect(mock.mock.calls.find(([, init]) => init?.method === 'PUT')?.[1]?.body).toBe(JSON.stringify({ mode: 'fixed', fixed: { prompt_price_per_1m: '1', completion_price_per_1m: '2', cache_read_price_per_1m: '3', cache_write_price_per_1m: '4' } }))
+    expect(container.textContent).not.toContain(prefix + 'style_required')
+  })
+  it.each([[400, 'invalid_fixed'], [422, 'invalid_fixed'], [409, 'conflict'], [500, 'save_failed'], [401, 'permission_denied'], [403, 'permission_denied']] as const)('handles fixed save error %s without exposing private bodies', async (status, key) => {
+    setup((_url, init) => init?.method === 'PUT' ? response({ error: 'synthetic-private-token' }, status) : response(fixedDto()))
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await select(); await enterRate('cache_write_price_per_1m', '9')
+    await act(async () => button('save').click())
+    expect(container.textContent).toContain(prefix + key); expect(container.textContent).not.toContain('synthetic-private-token')
+    expect(container.textContent).not.toContain(prefix + 'saved')
+    if (key === 'permission_denied') expect(container.querySelector('[role="combobox"]')).toBeNull()
+    else {
+      expect(container.querySelector(`output[aria-label="${prefix}cache_write_price_per_1m"]`)?.textContent).toBe('4')
+      expect(container.querySelector<HTMLInputElement>(`input[aria-label="${prefix}cache_write_price_per_1m"]`)?.value).toBe('9')
+    }
+  })
+  it('retains committed fixed canonical state after failed GET readback and refresh recovers', async () => {
+    let committed = false; let failure = true
+    setup((_url, init) => {
+      if (init?.method === 'PUT') { committed = true; return response(fixedDto(2)) }
+      return committed && failure ? response({ error: 'synthetic-private-token' }, 500) : response(fixedDto(committed ? 3 : 1))
+    })
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await select()
+    await act(async () => button('save').click())
+    expect(container.textContent).toContain(prefix + 'load_failed'); expect(container.textContent).toContain(prefix + 'saved')
+    expect(container.querySelector<HTMLInputElement>(`input[aria-label="${prefix}prompt_price_per_1m"]`)?.value).toBe('2')
+    failure = false; await act(async () => button('refresh').click())
+    expect(container.querySelector<HTMLInputElement>(`input[aria-label="${prefix}prompt_price_per_1m"]`)?.value).toBe('3')
+    expect(container.textContent).not.toContain('synthetic-private-token')
+  })
+  it('includes fixed-only historical identifiers in exact model choices', async () => {
+    const historical = 'synthetic/historical-fixed-only'
+    setup(() => response(fixedDto(1, 'openai', historical)), [fixedDto(1, 'openai', historical)])
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await choose(0, 'Selected account'); await choose(1, historical)
+    expect(container.textContent).toContain(historical); expect(button('clear').disabled).toBe(false)
+  })
+  it('aborts a fixed mutation on unmount and ignores its late successful response', async () => {
+    let resolve!: (value: Response) => void
+    const mock = setup((_url, init) => init?.method === 'PUT' ? new Promise<Response>(done => { resolve = done }) : response(fixedDto()))
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await select(); await act(async () => button('save').click())
+    const signal = mock.mock.calls.find(([, init]) => init?.method === 'PUT')?.[1]?.signal
+    await act(async () => root.unmount())
+    expect(signal?.aborted).toBe(true)
+    await act(async () => resolve(response(fixedDto(2))))
+    expect(container.textContent).toBe('')
+    root = createRoot(container)
+  })
+  it('reads an active fixed tariff and clears it despite a null multiplier', async () => {
+    let cleared = false
+    const fixed = { ...dto(null), mode: 'fixed', fixed: { prompt_price_per_1m: 0, completion_price_per_1m: 2, cache_read_price_per_1m: 3, cache_write_price_per_1m: 4, pricing_style: 'openai' } }
+    const mock = setup((_url, init) => {
+      if (init?.method === 'DELETE') cleared = true
+      return response(cleared ? { ...dto(null), mode: 'inherit' } : fixed)
+    }, [fixed])
+    await act(async () => root.render(<PricingCredentialModelsCard />)); await select()
+    expect(container.textContent).toContain(prefix + 'fixed')
+    expect(container.textContent).not.toContain(prefix + 'inherited')
+    expect(container.querySelector(`output[aria-label="${prefix}prompt_price_per_1m"]`)?.textContent).toBe('0')
+    expect(button('clear').disabled).toBe(false)
+    await act(async () => button('clear').click())
+    expect(mock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true)
+    expect(container.textContent).toContain(prefix + 'inherited')
+    expect(button('clear').disabled).toBe(true)
   })
   it('aborts late reads on permission revocation and ignores stale response', async () => {
     let resolve!: (value: Response) => void

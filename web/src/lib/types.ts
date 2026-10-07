@@ -906,6 +906,18 @@ export interface PricingCredentialDefault {
   snapshot_id: string
 }
 
+export interface PricingCredentialFixed {
+  prompt_price_per_1m: number
+  completion_price_per_1m: number
+  cache_read_price_per_1m: number
+  cache_write_price_per_1m: number
+  pricing_style?: PricingStyle
+}
+
+export type PricingCredentialFixedInput = {
+  [K in keyof Omit<PricingCredentialFixed, 'pricing_style'>]: string
+} & { pricing_style?: PricingStyle }
+
 export interface PricingChannel {
   id: string
   name: string
@@ -926,6 +938,9 @@ export interface PricingChannelsResponse {
 
 export interface PricingCredentialModel extends PricingCredentialDefault {
   model: string
+  // Optional for compatibility with existing multiplier-only API responses.
+  mode?: 'inherit' | 'multiplier' | 'fixed'
+  fixed?: PricingCredentialFixed
 }
 
 export interface PricingCredentialModelsResponse {

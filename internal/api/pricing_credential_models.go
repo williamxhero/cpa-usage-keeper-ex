@@ -7,16 +7,66 @@ import (
 	"net/http"
 	"strings"
 
+	"bytes"
+	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/service"
 	"github.com/gin-gonic/gin"
 )
+
+func invalidCredentialFixed(c *gin.Context, field string) {
+	c.JSON(http.StatusBadRequest, gin.H{"error": "invalid complete fixed tariff or pricing style", "field": field})
+}
+
+func decodeCredentialFixed(raw json.RawMessage) (pricing.FixedTariff, string) {
+	var request struct {
+		Prompt     json.RawMessage `json:"prompt_price_per_1m"`
+		Completion json.RawMessage `json:"completion_price_per_1m"`
+		Read       json.RawMessage `json:"cache_read_price_per_1m"`
+		Write      json.RawMessage `json:"cache_write_price_per_1m"`
+		Style      string          `json:"pricing_style"`
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return pricing.FixedTariff{}, "fixed"
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&request) != nil {
+		return pricing.FixedTariff{}, "fixed"
+	}
+	result := pricing.FixedTariff{PricingStyle: request.Style}
+	for _, item := range []struct {
+		name   string
+		raw    json.RawMessage
+		target **float64
+	}{
+		{"prompt_price_per_1m", request.Prompt, &result.PromptPricePer1M},
+		{"completion_price_per_1m", request.Completion, &result.CompletionPricePer1M},
+		{"cache_read_price_per_1m", request.Read, &result.CacheReadPricePer1M},
+		{"cache_write_price_per_1m", request.Write, &result.CacheWritePricePer1M},
+	} {
+		text, err := credentialMultiplierText(item.raw)
+		if err != nil {
+			return pricing.FixedTariff{}, item.name
+		}
+		value, err := pricing.ParseFixedRate(text)
+		if err != nil {
+			return pricing.FixedTariff{}, item.name
+		}
+		*item.target = &value
+	}
+	return result, ""
+}
 
 func registerPricingCredentialModelRoutes(router gin.IRoutes, pricingProvider service.PricingProvider) {
 	provider, _ := pricingProvider.(service.PricingCredentialModelsProvider)
 	writeError := func(c *gin.Context, err error) {
 		switch {
 		case errors.Is(err, service.ErrInvalidPricingInput):
-			invalidCredentialMultiplier(c)
+			if c.GetString("credential_pricing_mode") == pricing.ModeFixed {
+				invalidCredentialFixed(c, "fixed")
+			} else {
+				invalidCredentialMultiplier(c)
+			}
 		case errors.Is(err, service.ErrPricingCredentialNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "pricing credential not found"})
 		default:
@@ -54,7 +104,9 @@ func registerPricingCredentialModelRoutes(router gin.IRoutes, pricingProvider se
 			result, err = provider.ClearCredentialModel(c.Request.Context(), id, model)
 		case http.MethodPut:
 			var request struct {
+				Mode       string          `json:"mode"`
 				Multiplier json.RawMessage `json:"multiplier"`
+				Fixed      json.RawMessage `json:"fixed"`
 			}
 			decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4096))
 			decoder.DisallowUnknownFields()
@@ -62,12 +114,31 @@ func registerPricingCredentialModelRoutes(router gin.IRoutes, pricingProvider se
 				invalidCredentialMultiplier(c)
 				return
 			}
-			text, parseErr := credentialMultiplierText(request.Multiplier)
-			if parseErr != nil {
-				invalidCredentialMultiplier(c)
+			switch request.Mode {
+			case "", pricing.ModeMultiplier:
+				text, parseErr := credentialMultiplierText(request.Multiplier)
+				if parseErr != nil {
+					invalidCredentialMultiplier(c)
+					return
+				}
+				result, err = provider.SetCredentialModel(c.Request.Context(), id, model, text)
+			case pricing.ModeFixed:
+				c.Set("credential_pricing_mode", pricing.ModeFixed)
+				fixed, field := decodeCredentialFixed(request.Fixed)
+				if field != "" {
+					invalidCredentialFixed(c, field)
+					return
+				}
+				fixedProvider, ok := pricingProvider.(service.PricingCredentialFixedProvider)
+				if !ok {
+					c.JSON(http.StatusNotImplemented, gin.H{"error": "fixed pricing is not configured"})
+					return
+				}
+				result, err = fixedProvider.SetCredentialFixed(c.Request.Context(), id, model, fixed)
+			default:
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pricing mode", "field": "mode"})
 				return
 			}
-			result, err = provider.SetCredentialModel(c.Request.Context(), id, model, text)
 		}
 		if err != nil {
 			writeError(c, err)
