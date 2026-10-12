@@ -131,6 +131,8 @@ func (r *MetadataSyncRunner) Run(ctx context.Context) error {
 			r.runMetadataSync(ctx)
 			if r.runPricingCredentialSync(ctx) {
 				resetTimer(pricingPeriodic, r.pricingCredentialSyncInterval)
+			} else {
+				r.clearQueuedCredentialSync()
 			}
 			resetTimer(periodic, r.interval)
 		case <-r.connectedRequests:
@@ -396,6 +398,19 @@ func (r *MetadataSyncRunner) markPricingCredentialSyncAttempt() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.lastPricingCredentialSyncAt = r.currentTimeLocked()
+}
+
+func (r *MetadataSyncRunner) clearQueuedCredentialSync() {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	if r.syncStatus.State != "queued" || r.syncStatus.InFlight {
+		return
+	}
+	if r.syncStatus.LastSuccessAt != nil {
+		r.syncStatus.State = "succeeded"
+	} else {
+		r.syncStatus.State = "idle"
+	}
 }
 
 func (r *MetadataSyncRunner) recordSyncAttempt() {
