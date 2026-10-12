@@ -2,7 +2,10 @@
 package pricingmetadata
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +17,13 @@ import (
 
 var ErrInvalidSource = errors.New("unsupported pricing source")
 
+const SourceOpenRouter = "openrouter"
+
+const (
+	maxCatalogResponseBytes = 64 << 20
+	maxCatalogFetchDuration = 12 * time.Second
+)
+
 type Source struct{ ID, Name, URL string }
 
 func SourceByID(id string) (Source, error) {
@@ -22,6 +32,8 @@ func SourceByID(id string) (Source, error) {
 		return Source{"models-dev", "Models.dev", "https://models.dev/api.json"}, nil
 	case "litellm":
 		return Source{"litellm", "LiteLLM", "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"}, nil
+	case SourceOpenRouter:
+		return Source{SourceOpenRouter, "OpenRouter", "https://openrouter.ai/api/v1/models"}, nil
 	default:
 		return Source{}, ErrInvalidSource
 	}
@@ -51,20 +63,31 @@ type Entry struct {
 }
 
 type Catalog struct {
-	Source  Source
-	Entries []Entry
+	Source       Source
+	FetchedAt    time.Time
+	ResponseHash string
+	Entries      []Entry
 }
 
 type Client struct{ httpClient *http.Client }
 
 func NewClient(httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 12 * time.Second}
+		httpClient = &http.Client{Timeout: maxCatalogFetchDuration}
+	} else {
+		clientCopy := *httpClient
+		if clientCopy.Timeout == 0 || clientCopy.Timeout > maxCatalogFetchDuration {
+			clientCopy.Timeout = maxCatalogFetchDuration
+		}
+		httpClient = &clientCopy
 	}
 	return &Client{httpClient: httpClient}
 }
 
 func (c *Client) Fetch(ctx context.Context, sourceID string) (Catalog, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	source, err := SourceByID(sourceID)
 	if err != nil {
 		return Catalog{}, err
@@ -82,16 +105,35 @@ func (c *Client) Fetch(ctx context.Context, sourceID string) (Catalog, error) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return Catalog{}, fmt.Errorf("fetch %s pricing catalog: unexpected status %d", source.Name, response.StatusCode)
 	}
-	// 每次预览读取所选来源；两个适配器统一为同一种目录，后续匹配不依赖上游 JSON 格式。
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 64<<20))
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxCatalogResponseBytes+1))
+	if err != nil {
+		return Catalog{}, fmt.Errorf("read %s pricing catalog: %w", source.Name, err)
+	}
+	if len(body) > maxCatalogResponseBytes {
+		return Catalog{}, fmt.Errorf("read %s pricing catalog: response exceeds %d bytes", source.Name, maxCatalogResponseBytes)
+	}
+	// Preserve only a digest and fetch time in the catalog; upstream bodies may
+	// contain provider metadata and are never exposed as persisted source data.
+	responseHash := sha256.Sum256(body)
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	var entries []Entry
-	if source.ID == "litellm" {
+	switch source.ID {
+	case "litellm":
 		entries, err = decodeLiteLLM(decoder)
-	} else {
+	case SourceOpenRouter:
+		entries, err = decodeOpenRouter(decoder)
+	default:
 		entries, err = decodeModelsDev(decoder)
 	}
 	if err != nil {
 		return Catalog{}, fmt.Errorf("decode %s pricing catalog: %w", source.Name, err)
 	}
-	return Catalog{Source: source, Entries: entries}, nil
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return Catalog{}, fmt.Errorf("decode %s pricing catalog: trailing JSON data (multiple JSON documents)", source.Name)
+		}
+		return Catalog{}, fmt.Errorf("decode %s pricing catalog: %w", source.Name, err)
+	}
+	return Catalog{Source: source, FetchedAt: time.Now().UTC(), ResponseHash: hex.EncodeToString(responseHash[:]), Entries: entries}, nil
 }

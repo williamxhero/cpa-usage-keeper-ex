@@ -100,6 +100,16 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
 	}
+	// The official catalog is a separate immutable fact source. Older databases
+	// may not have its table until the schema migration has run, so absence is
+	// treated as an empty catalog rather than making legacy pricing unavailable.
+	if query.Migrator().HasTable(&entities.OfficialModelPrice{}) {
+		officialPrices, loadErr := ListOfficialModelPrices(query)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load official model prices: %w", loadErr)
+		}
+		snapshot.SetOfficialPrices(officialPrices)
+	}
 	return snapshot, nil
 }
 

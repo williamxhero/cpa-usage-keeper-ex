@@ -136,6 +136,7 @@ func registerPricingRoutes(router gin.IRoutes, pricingProvider service.PricingPr
 	registerPricingChannelModelRoutes(router, pricingProvider)
 	registerPricingCredentialModelRoutes(router, pricingProvider)
 	registerPricingIdentityMigrationRoutes(router, pricingProvider)
+	registerOfficialPricingRoutes(router, pricingProvider)
 
 	router.PUT("/pricing", func(c *gin.Context) {
 		updatePricing(c, pricingProvider, "")
