@@ -12,8 +12,27 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func registerPricingCredentialRoutes(router gin.IRoutes, pricingProvider service.PricingProvider) {
+func registerPricingCredentialRoutes(router gin.IRoutes, pricingProvider service.PricingProvider, syncProviders ...service.PricingCredentialSyncProvider) {
 	provider, _ := pricingProvider.(service.PricingCredentialProvider)
+	var syncProvider service.PricingCredentialSyncProvider
+	if len(syncProviders) > 0 {
+		syncProvider = syncProviders[0]
+	}
+	router.GET("/pricing/credentials/sync-status", func(c *gin.Context) {
+		if syncProvider == nil {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "credential sync is not configured"})
+			return
+		}
+		c.JSON(http.StatusOK, syncProvider.PricingCredentialSyncStatus())
+	})
+	router.POST("/pricing/credentials/refresh", func(c *gin.Context) {
+		if syncProvider == nil {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "credential sync is not configured"})
+			return
+		}
+		syncProvider.RequestPricingCredentialRefresh()
+		c.JSON(http.StatusAccepted, syncProvider.PricingCredentialSyncStatus())
+	})
 	router.GET("/pricing/credentials", func(c *gin.Context) {
 		if provider == nil {
 			c.JSON(http.StatusNotImplemented, gin.H{"error": "credential directory is not configured"})

@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"cpa-usage-keeper/internal/config"
+	"cpa-usage-keeper/internal/service"
 	"github.com/sirupsen/logrus"
 )
 
@@ -13,17 +15,29 @@ type MetadataSyncer interface {
 	SyncMetadata(ctx context.Context) error
 }
 
+type pricingCredentialSubjectSyncer interface {
+	SyncPricingCredentialSubjects(ctx context.Context) error
+}
+
+type credentialDirectorySyncer interface {
+	SyncCredentialDirectory(ctx context.Context) error
+}
+
 const metadataSyncRefreshDebounceDefault = time.Second
 
 type MetadataSyncRunner struct {
 	// syncer 是唯一真正执行 metadata 同步的服务入口。
 	syncer MetadataSyncer
-	// interval 是轮询模式下的固定同步间隔。
+	// interval 是 legacy metadata 轮询模式下的固定同步间隔。
 	interval time.Duration
+	// pricingCredentialSyncInterval 是凭证定价主体同步的独立最小间隔。
+	pricingCredentialSyncInterval time.Duration
 	// refreshDebounce 是 refresh=true 后的最小合并等待窗口。
 	refreshDebounce time.Duration
 	// refreshRequests 用单元素缓冲合并密集 refresh 通知。
 	refreshRequests chan struct{}
+	// immediateRequests 用单元素缓冲合并启动和管理员立即刷新请求。
+	immediateRequests chan struct{}
 	// connectedRequests 用单元素缓冲接收 ingest 连接成功信号，避免连接建立时阻塞 ingest。
 	connectedRequests chan struct{}
 	// onStart 只给测试确认后台 runner 已启动，生产逻辑不依赖它。
@@ -33,6 +47,9 @@ type MetadataSyncRunner struct {
 
 	// mu 保护 runner 状态和最近 refresh 时间。
 	mu sync.Mutex
+	// statusMu 保护只读的管理同步状态，错误只以稳定 code 暴露。
+	statusMu   sync.RWMutex
+	syncStatus service.PricingCredentialSyncStatus
 	// running 表示 metadata runner 当前是否处于 Run 生命周期内。
 	running bool
 	// notificationMode 表示 CPA 已支持通知，周期 tick 应该 no-op。
@@ -41,17 +58,28 @@ type MetadataSyncRunner struct {
 	activated bool
 	// lastRefreshRequestedAt 记录最后一条 refresh=true 的收到时间。
 	lastRefreshRequestedAt time.Time
+	// lastPricingCredentialSyncAt 记录凭证主体同步的最后执行时间，包括失败尝试。
+	lastPricingCredentialSyncAt time.Time
 }
 
 func NewMetadataSyncRunner(syncer MetadataSyncer, interval time.Duration) *MetadataSyncRunner {
+	return NewMetadataSyncRunnerWithIntervals(syncer, interval, config.PricingCredentialSyncIntervalDefault)
+}
+
+// NewMetadataSyncRunnerWithIntervals keeps legacy metadata polling and pricing
+// credential subject reconciliation on independent schedules.
+func NewMetadataSyncRunnerWithIntervals(syncer MetadataSyncer, metadataInterval, pricingCredentialInterval time.Duration) *MetadataSyncRunner {
 	// 构造阶段只保存依赖，不主动访问 CPA 或数据库。
 	return &MetadataSyncRunner{
-		syncer:            syncer,
-		interval:          interval,
-		refreshDebounce:   metadataSyncRefreshDebounceDefault,
-		refreshRequests:   make(chan struct{}, 1),
-		connectedRequests: make(chan struct{}, 1),
-		now:               time.Now,
+		syncer:                        syncer,
+		interval:                      metadataInterval,
+		pricingCredentialSyncInterval: pricingCredentialInterval,
+		refreshDebounce:               metadataSyncRefreshDebounceDefault,
+		refreshRequests:               make(chan struct{}, 1),
+		immediateRequests:             make(chan struct{}, 1),
+		connectedRequests:             make(chan struct{}, 1),
+		now:                           time.Now,
+		syncStatus:                    service.PricingCredentialSyncStatus{State: "idle"},
 	}
 }
 
@@ -72,10 +100,12 @@ func (r *MetadataSyncRunner) Run(ctx context.Context) error {
 		r.onStart()
 	}
 
-	// periodic 负责默认轮询模式的固定周期 tick。
+	// periodic 负责 legacy metadata 的固定周期 tick。
 	periodic := time.NewTimer(r.interval)
-	// Run 退出时释放周期 timer。
 	defer periodic.Stop()
+	// pricingPeriodic 负责凭证定价主体目录的独立周期 tick。
+	pricingPeriodic := time.NewTimer(r.pricingCredentialSyncInterval)
+	defer pricingPeriodic.Stop()
 	// debounce 只在收到 refresh=true 后创建。
 	var debounce *time.Timer
 	// debounceC 为 nil 时 select 不会监听 debounce 分支。
@@ -92,6 +122,19 @@ func (r *MetadataSyncRunner) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			// 应用关闭是正常退出，不返回错误。
 			return nil
+		case <-r.immediateRequests:
+			// 启动和管理员刷新不依赖 Redis ingest 连接；两类同步仍各自执行。
+			if ctx.Err() != nil {
+				return nil
+			}
+			r.markActivated()
+			r.runMetadataSync(ctx)
+			if r.runPricingCredentialSync(ctx) {
+				resetTimer(pricingPeriodic, r.pricingCredentialSyncInterval)
+			} else {
+				r.clearQueuedCredentialSync()
+			}
+			resetTimer(periodic, r.interval)
 		case <-r.connectedRequests:
 			// 连接成功是首次同步的门闩；无论当前是否通知模式，都执行一次。
 			// 关停优先于连接触发的同步，避免应用退出时再发起外部请求。
@@ -100,9 +143,12 @@ func (r *MetadataSyncRunner) Run(ctx context.Context) error {
 			}
 			// 首次消费连接信号后解锁周期同步和后续 refresh debounce。
 			r.markActivated()
-			// 连接事件只触发一次同步，失败由后续连接、周期或 refresh 调度再次处理。
-			r.runSync(ctx)
-			// 连接触发的同步完成后重新开始周期计时，避免紧接着又执行一次轮询。
+			// legacy metadata 保持既有节奏；凭证目录同步只在独立窗口到期时执行。
+			r.runMetadataSync(ctx)
+			if r.runPricingCredentialSync(ctx) {
+				resetTimer(pricingPeriodic, r.pricingCredentialSyncInterval)
+			}
+			// 连接触发的 metadata 同步完成后重新开始 legacy 计时。
 			resetTimer(periodic, r.interval)
 		case <-periodic.C:
 			// 周期 tick 到达后再检查一次 context，避免关停时多同步。
@@ -111,10 +157,18 @@ func (r *MetadataSyncRunner) Run(ctx context.Context) error {
 			}
 			// 首次连接前不访问 metadata；非订阅（轮询）模式继续按 interval 同步。
 			if r.isActivated() && !r.isNotificationMode() {
-				r.runSync(ctx)
+				r.runMetadataSync(ctx)
 			}
 			// 无论是否 no-op，都继续维持 tick，方便降级回轮询后恢复节奏。
 			periodic.Reset(r.interval)
+		case <-pricingPeriodic.C:
+			if ctx.Err() != nil {
+				return nil
+			}
+			if r.isActivated() {
+				r.runPricingCredentialSync(ctx)
+			}
+			pricingPeriodic.Reset(r.pricingCredentialSyncInterval)
 		case <-r.refreshRequests:
 			// 首个 refresh 请求创建 debounce timer。
 			if debounce == nil {
@@ -137,8 +191,8 @@ func (r *MetadataSyncRunner) Run(ctx context.Context) error {
 				// 应用关停时不再发起 refresh 同步，避免关闭期多一次无效请求。
 				return nil
 			}
-			// debounce 窗口稳定后只执行一次 SyncMetadata。
-			r.runSync(ctx)
+			// debounce 窗口稳定后只执行一次 legacy metadata sync。
+			r.runMetadataSync(ctx)
 			// 同步完成后释放 debounce 状态，等待下一轮 refresh 创建新 timer。
 			debounce = nil
 			debounceC = nil
@@ -152,6 +206,55 @@ func (r *MetadataSyncRunner) MarkRefreshSupported() {
 		// CPA 明确支持 refresh 通知后，记录一次模式切换。
 		logrus.WithField("source", "support_refresh").Info("metadata sync switched to notification mode")
 	}
+}
+
+// RequestStartupSync schedules the non-blocking post-configuration sync. It does
+// not wait for the Redis ingest connection, so a slow CPA cannot delay startup.
+func (r *MetadataSyncRunner) RequestStartupSync() {
+	r.requestImmediateSync()
+}
+
+// RequestPricingCredentialRefresh schedules an administrator-triggered refresh.
+// Requests are coalesced and executed by the same single runner as periodic sync.
+func (r *MetadataSyncRunner) RequestPricingCredentialRefresh() {
+	r.requestImmediateSync()
+}
+
+func (r *MetadataSyncRunner) requestImmediateSync() {
+	if r == nil {
+		return
+	}
+	r.statusMu.Lock()
+	if !r.syncStatus.InFlight {
+		r.syncStatus.State = "queued"
+	}
+	r.statusMu.Unlock()
+	select {
+	case r.immediateRequests <- struct{}{}:
+	default:
+	}
+}
+
+func (r *MetadataSyncRunner) PricingCredentialSyncStatus() service.PricingCredentialSyncStatus {
+	if r == nil {
+		return service.PricingCredentialSyncStatus{State: "unavailable"}
+	}
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+	status := r.syncStatus
+	if status.LastAttemptAt != nil {
+		value := *status.LastAttemptAt
+		status.LastAttemptAt = &value
+	}
+	if status.LastSuccessAt != nil {
+		value := *status.LastSuccessAt
+		status.LastSuccessAt = &value
+	}
+	if status.LastFailureAt != nil {
+		value := *status.LastFailureAt
+		status.LastFailureAt = &value
+	}
+	return status
 }
 
 func (r *MetadataSyncRunner) RequestMetadataRefresh() {
@@ -215,6 +318,10 @@ func (r *MetadataSyncRunner) validate() error {
 	if r.refreshRequests == nil {
 		r.refreshRequests = make(chan struct{}, 1)
 	}
+	// 测试可能清空立即刷新 channel，运行前恢复单缓冲队列。
+	if r.immediateRequests == nil {
+		r.immediateRequests = make(chan struct{}, 1)
+	}
 	// 测试可能清空连接信号 channel，运行前恢复单缓冲队列。
 	if r.connectedRequests == nil {
 		r.connectedRequests = make(chan struct{}, 1)
@@ -222,6 +329,9 @@ func (r *MetadataSyncRunner) validate() error {
 	// 测试可能清空时钟函数，运行前恢复生产时钟。
 	if r.now == nil {
 		r.now = time.Now
+	}
+	if r.pricingCredentialSyncInterval <= 0 {
+		r.pricingCredentialSyncInterval = config.PricingCredentialSyncIntervalDefault
 	}
 	return nil
 }
@@ -238,12 +348,111 @@ func (r *MetadataSyncRunner) NotifyIngestConnected() {
 	}
 }
 
-func (r *MetadataSyncRunner) runSync(ctx context.Context) {
-	// 所有 metadata 同步都从这里串行调用 SyncMetadata。
+func (r *MetadataSyncRunner) runMetadataSync(ctx context.Context) {
 	if err := r.syncer.SyncMetadata(ctx); err != nil {
-		// 单次同步失败不退出 runner，下一次连接信号、tick 或 refresh 再按既有调度尝试。
-		logrus.WithError(err).Error("metadata sync failed")
+		// legacy metadata errors do not alter credential sync status or directory state.
+		logrus.Error("metadata sync failed")
 	}
+}
+
+func (r *MetadataSyncRunner) runPricingCredentialSync(ctx context.Context) bool {
+	if !r.pricingCredentialSyncDue() {
+		return false
+	}
+	var sync func(context.Context) error
+	if directorySyncer, ok := r.syncer.(credentialDirectorySyncer); ok {
+		sync = directorySyncer.SyncCredentialDirectory
+	} else if subjectSyncer, ok := r.syncer.(pricingCredentialSubjectSyncer); ok {
+		sync = subjectSyncer.SyncPricingCredentialSubjects
+	}
+	if sync == nil {
+		// Keep the status API compatible for legacy implementations that only provide SyncMetadata.
+		r.recordSyncAttempt()
+		r.recordSyncSuccess()
+		return true
+	}
+
+	r.markPricingCredentialSyncAttempt()
+	r.recordSyncAttempt()
+	if err := sync(ctx); err != nil {
+		// A failed complete refresh leaves the last committed directory untouched;
+		// the next automatic attempt is gated by the independent interval.
+		r.recordSyncFailure()
+		logrus.Error("pricing credential sync failed")
+		return true
+	}
+	r.recordSyncSuccess()
+	return true
+}
+
+func (r *MetadataSyncRunner) pricingCredentialSyncDue() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lastPricingCredentialSyncAt.IsZero() {
+		return true
+	}
+	return r.currentTimeLocked().Sub(r.lastPricingCredentialSyncAt) >= r.pricingCredentialSyncInterval
+}
+
+func (r *MetadataSyncRunner) markPricingCredentialSyncAttempt() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lastPricingCredentialSyncAt = r.currentTimeLocked()
+}
+
+func (r *MetadataSyncRunner) clearQueuedCredentialSync() {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	if r.syncStatus.State != "queued" || r.syncStatus.InFlight {
+		return
+	}
+	if r.syncStatus.LastSuccessAt != nil {
+		r.syncStatus.State = "succeeded"
+	} else {
+		r.syncStatus.State = "idle"
+	}
+}
+
+func (r *MetadataSyncRunner) recordSyncAttempt() {
+	now := r.runnerNow()
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.syncStatus.State = "running"
+	r.syncStatus.InFlight = true
+	r.syncStatus.LastAttemptAt = timePtr(now)
+}
+
+func (r *MetadataSyncRunner) recordSyncSuccess() {
+	now := r.runnerNow()
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.syncStatus.State = "succeeded"
+	r.syncStatus.InFlight = false
+	r.syncStatus.LastSuccessAt = timePtr(now)
+	r.syncStatus.LastErrorCode = ""
+}
+
+func (r *MetadataSyncRunner) recordSyncFailure() {
+	now := r.runnerNow()
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.syncStatus.State = "failed"
+	r.syncStatus.InFlight = false
+	r.syncStatus.LastFailureAt = timePtr(now)
+	r.syncStatus.LastErrorCode = "sync_failed"
+}
+
+func (r *MetadataSyncRunner) runnerNow() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+func timePtr(value time.Time) *time.Time {
+	return &value
 }
 
 func (r *MetadataSyncRunner) setRunning(running bool) {

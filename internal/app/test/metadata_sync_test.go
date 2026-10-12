@@ -34,6 +34,38 @@ func (s *metadataSyncStub) CallCount() int {
 	return int(s.calls.Load())
 }
 
+type independentSyncStub struct {
+	metadataCalls    atomic.Int32
+	credentialCalls  atomic.Int32
+	metadataSignal   chan struct{}
+	credentialSignal chan struct{}
+}
+
+func newIndependentSyncStub() *independentSyncStub {
+	return &independentSyncStub{
+		metadataSignal:   make(chan struct{}, 8),
+		credentialSignal: make(chan struct{}, 8),
+	}
+}
+
+func (s *independentSyncStub) SyncMetadata(context.Context) error {
+	s.metadataCalls.Add(1)
+	select {
+	case s.metadataSignal <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (s *independentSyncStub) SyncCredentialDirectory(context.Context) error {
+	s.credentialCalls.Add(1)
+	select {
+	case s.credentialSignal <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
 type metadataSyncErrContext struct {
 	context.Context
 
@@ -317,5 +349,48 @@ func TestMetadataSyncRunnerFallbackRestoresPolling(t *testing.T) {
 	}
 	if got := syncer.CallCount(); got != 2 {
 		t.Fatalf("expected connection sync plus restored periodic sync, got %d", got)
+	}
+}
+
+func TestMetadataSyncRunnerKeepsLegacyAndCredentialIntervalsIndependent(t *testing.T) {
+	syncer := newIndependentSyncStub()
+	runner := NewMetadataSyncRunnerWithIntervals(syncer, 10*time.Millisecond, 40*time.Millisecond)
+	runner.NotifyIngestConnected()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+
+	select {
+	case <-syncer.metadataSignal:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial metadata sync")
+	}
+	select {
+	case <-syncer.credentialSignal:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial credential sync")
+	}
+
+	select {
+	case <-syncer.credentialSignal:
+		t.Fatal("credential sync ran before its independent interval")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := syncer.metadataCalls.Load(); got < 2 {
+		t.Fatalf("legacy metadata calls = %d, want at least 2 before credential interval", got)
+	}
+
+	select {
+	case <-syncer.credentialSignal:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for second credential sync")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := syncer.credentialCalls.Load(); got != 2 {
+		t.Fatalf("credential sync calls = %d, want 2", got)
 	}
 }

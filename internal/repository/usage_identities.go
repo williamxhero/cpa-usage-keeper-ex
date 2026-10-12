@@ -47,17 +47,11 @@ func ReplaceUsageIdentitiesForAuthType(ctx context.Context, db *gorm.DB, identit
 	if db == nil {
 		return fmt.Errorf("database is nil")
 	}
-	// 零时间无法形成可靠的 metadata 版本，必须在任何数据库读取或写入前拒绝。
 	if now.IsZero() {
-		// 明确错误阻止调用方把零值继续传播到 identity 行。
 		return fmt.Errorf("usage identity sync time is zero")
 	}
-	// 本轮所有 create、refresh、restore 与 stale 路径共用同一个项目存储时区时间。
 	normalizedNow := timeutil.NormalizeStorageTime(now)
-
-	// 先统一清洗和去重输入，后续 upsert 与 stale 判断都使用同一组 identity。
 	normalized, incomingIdentities := normalizeUsageIdentities(identities, authType)
-	// 在独立 reader 上完成全量 metadata 比较，只有实际变化才占用 writer。
 	changes, err := prepareUsageIdentitySync(db.Clauses(dbresolver.Read).WithContext(ctx), normalized, incomingIdentities, authType, nil, false, normalizedNow)
 	if err != nil {
 		return fmt.Errorf("list usage identities for sync: %w", err)
@@ -65,28 +59,58 @@ func ReplaceUsageIdentitiesForAuthType(ctx context.Context, db *gorm.DB, identit
 	return applyUsageIdentitySync(db.WithContext(ctx), changes, normalizedNow, "mark stale usage identities deleted")
 }
 
+// ReplaceUsageIdentitiesForAuthTypeInTransaction applies the replacement to an
+// already-open writer transaction so multiple metadata scopes can publish atomically.
+func ReplaceUsageIdentitiesForAuthTypeInTransaction(ctx context.Context, tx *gorm.DB, identities []entities.UsageIdentity, authType entities.UsageIdentityAuthType, now time.Time) error {
+	if tx == nil {
+		return fmt.Errorf("database is nil")
+	}
+	if now.IsZero() {
+		return fmt.Errorf("usage identity sync time is zero")
+	}
+	normalizedNow := timeutil.NormalizeStorageTime(now)
+	normalized, incomingIdentities := normalizeUsageIdentities(identities, authType)
+	changes, err := prepareUsageIdentitySync(tx.WithContext(ctx), normalized, incomingIdentities, authType, nil, false, normalizedNow)
+	if err != nil {
+		return fmt.Errorf("list usage identities for sync: %w", err)
+	}
+	return applyUsageIdentitySyncInTransaction(tx.WithContext(ctx), changes, normalizedNow, "mark stale usage identities deleted")
+}
+
 func ReplaceUsageIdentitiesForProviderTypes(ctx context.Context, db *gorm.DB, identities []entities.UsageIdentity, providerTypes []string, now time.Time) error {
 	if db == nil {
 		return fmt.Errorf("database is nil")
 	}
-	// Provider replace 同样在事务前拒绝零时间，避免部分 provider scope 被错误刷新。
 	if now.IsZero() {
-		// 与 Auth File 入口返回同一明确错误，保持调用方处理简单。
 		return fmt.Errorf("usage identity sync time is zero")
 	}
-	// provider 的所有成功类型共用一轮规范化时间，不能各自读取系统时钟。
 	normalizedNow := timeutil.NormalizeStorageTime(now)
-
-	// Provider metadata 只允许刷新 AI provider 身份，输入类型和 identity 先统一规范化。
 	normalized, incomingIdentities := normalizeUsageIdentities(identities, entities.UsageIdentityAuthTypeAIProvider)
 	types := normalizeProviderTypes(providerTypes)
-
-	// 成功的 provider type 决定 stale 范围；失败来源的旧行保留。
 	changes, err := prepareUsageIdentitySync(db.Clauses(dbresolver.Read).WithContext(ctx), normalized, incomingIdentities, entities.UsageIdentityAuthTypeAIProvider, types, true, normalizedNow)
 	if err != nil {
 		return fmt.Errorf("list provider usage identities for sync: %w", err)
 	}
 	return applyUsageIdentitySync(db.WithContext(ctx), changes, normalizedNow, "mark stale provider usage identities deleted")
+}
+
+// ReplaceUsageIdentitiesForProviderTypesInTransaction applies provider-scope
+// replacement to an already-open writer transaction.
+func ReplaceUsageIdentitiesForProviderTypesInTransaction(ctx context.Context, tx *gorm.DB, identities []entities.UsageIdentity, providerTypes []string, now time.Time) error {
+	if tx == nil {
+		return fmt.Errorf("database is nil")
+	}
+	if now.IsZero() {
+		return fmt.Errorf("usage identity sync time is zero")
+	}
+	normalizedNow := timeutil.NormalizeStorageTime(now)
+	normalized, incomingIdentities := normalizeUsageIdentities(identities, entities.UsageIdentityAuthTypeAIProvider)
+	types := normalizeProviderTypes(providerTypes)
+	changes, err := prepareUsageIdentitySync(tx.WithContext(ctx), normalized, incomingIdentities, entities.UsageIdentityAuthTypeAIProvider, types, true, normalizedNow)
+	if err != nil {
+		return fmt.Errorf("list provider usage identities for sync: %w", err)
+	}
+	return applyUsageIdentitySyncInTransaction(tx.WithContext(ctx), changes, normalizedNow, "mark stale provider usage identities deleted")
 }
 
 type ListUsageIdentitiesPageRequest struct {
@@ -805,35 +829,45 @@ func applyUsageIdentitySync(db *gorm.DB, changes usageIdentityChanges, now time.
 		return nil
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		// 短事务只提交已判定的变化；更新与恢复仍先于新增和 stale 标记。
-		for _, change := range changes.update {
-			query := tx.Model(&entities.UsageIdentity{}).Where("id = ?", change.id)
-			// 本地编辑可能发生在 reader 快照之后；只对本轮将写的可编辑字段检查旧值，冲突时整行跳过。
-			if _, changed := change.fields["priority"]; changed {
-				if change.oldPriority == nil {
-					query = query.Where("priority IS NULL")
-				} else {
-					query = query.Where("priority = ?", *change.oldPriority)
-				}
-			}
-			if _, changed := change.fields["disabled"]; changed {
-				if change.oldDisabled == nil {
-					query = query.Where("disabled IS NULL")
-				} else {
-					query = query.Where("disabled = ?", *change.oldDisabled)
-				}
-			}
-			if err := query.Updates(change.fields).Error; err != nil {
-				return fmt.Errorf("update usage identity: %w", err)
-			}
-		}
-		if len(changes.create) > 0 {
-			if err := tx.CreateInBatches(&changes.create, insertBatchSize(entities.UsageIdentity{})).Error; err != nil {
-				return fmt.Errorf("create usage identities: %w", err)
-			}
-		}
-		return markStaleUsageIdentityRowsDeleted(tx, changes.staleIDs, now, staleContext)
+		return applyUsageIdentitySyncInTransaction(tx, changes, now, staleContext)
 	})
+}
+
+func applyUsageIdentitySyncInTransaction(tx *gorm.DB, changes usageIdentityChanges, now time.Time, staleContext string) error {
+	if len(changes.create) == 0 && len(changes.update) == 0 && len(changes.staleIDs) == 0 {
+		return nil
+	}
+	// 短事务只提交已判定的变化；更新与恢复仍先于新增和 stale 标记。
+	for _, change := range changes.update {
+		query := tx.Model(&entities.UsageIdentity{}).Where("id = ?", change.id)
+		// 本地编辑可能发生在 reader 快照之后；只对本轮将写的可编辑字段检查旧值，冲突时整行跳过。
+		if _, changed := change.fields["priority"]; changed {
+			if change.oldPriority == nil {
+				query = query.Where("priority IS NULL")
+			} else {
+				query = query.Where("priority = ?", *change.oldPriority)
+			}
+		}
+		if _, changed := change.fields["disabled"]; changed {
+			if change.oldDisabled == nil {
+				query = query.Where("disabled IS NULL")
+			} else {
+				query = query.Where("disabled = ?", *change.oldDisabled)
+			}
+		}
+		if err := query.Updates(change.fields).Error; err != nil {
+			return fmt.Errorf("update usage identity: %w", err)
+		}
+	}
+	if len(changes.create) > 0 {
+		if err := tx.CreateInBatches(&changes.create, insertBatchSize(entities.UsageIdentity{})).Error; err != nil {
+			return fmt.Errorf("create usage identities: %w", err)
+		}
+	}
+	if err := markStaleUsageIdentityRowsDeleted(tx, changes.staleIDs, now, staleContext); err != nil {
+		return err
+	}
+	return nil
 }
 
 func markStaleUsageIdentityRowsDeleted(tx *gorm.DB, staleIDs []int64, now time.Time, context string) error {

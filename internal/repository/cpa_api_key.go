@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +13,23 @@ import (
 )
 
 func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
+	if db == nil {
+		return fmt.Errorf("database is nil")
+	}
+	return syncCPAAPIKeys(db, db.Clauses(dbresolver.Read), keys, syncedAt, true)
+}
+
+// SyncCPAAPIKeysInTransaction applies the complete key replacement to an
+// already-open writer transaction. Its comparison read stays on that same
+// transaction so a complete credential refresh cannot publish a partial scope.
+func SyncCPAAPIKeysInTransaction(tx *gorm.DB, keys []string, syncedAt time.Time) error {
+	if tx == nil {
+		return fmt.Errorf("database is nil")
+	}
+	return syncCPAAPIKeys(tx, tx, keys, syncedAt, false)
+}
+
+func syncCPAAPIKeys(writer, reader *gorm.DB, keys []string, syncedAt time.Time, startTransaction bool) error {
 	seen := make(map[string]struct{}, len(keys))
 	uniqueKeys := make([]string, 0, len(keys))
 	for _, key := range keys {
@@ -32,8 +50,7 @@ func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 		DisplayKey string
 		IsDeleted  bool
 	}
-	// 先在独立 reader 上比较完整 key 集合，只有变化才进入 writer 事务。
-	if err := db.Clauses(dbresolver.Read).Model(&entities.CPAAPIKey{}).
+	if err := reader.Model(&entities.CPAAPIKey{}).
 		Select("id, api_key, display_key, is_deleted").Find(&existingRows).Error; err != nil {
 		return err
 	}
@@ -85,7 +102,7 @@ func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 	if len(toCreate) == 0 && len(toUpdate) == 0 && len(staleIDs) == 0 {
 		return nil
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
+	apply := func(tx *gorm.DB) error {
 		for _, change := range toUpdate {
 			if err := tx.Model(&entities.CPAAPIKey{}).Where("id = ?", change.id).Updates(change.fields).Error; err != nil {
 				return err
@@ -100,7 +117,11 @@ func SyncCPAAPIKeys(db *gorm.DB, keys []string, syncedAt time.Time) error {
 			return nil
 		}
 		return tx.Model(&entities.CPAAPIKey{}).Where("id IN ?", staleIDs).Updates(map[string]any{"is_deleted": true, "updated_at": syncedAt}).Error
-	})
+	}
+	if startTransaction {
+		return writer.Transaction(apply)
+	}
+	return apply(writer)
 }
 
 func ListActiveCPAAPIKeys(db *gorm.DB) ([]entities.CPAAPIKey, error) {

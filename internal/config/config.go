@@ -20,9 +20,11 @@ const (
 	DefaultTimeZone                = "Asia/Shanghai"
 	publicLoginPasswordPlaceholder = "replace-with-your-login-password"
 	RedisQueueBatchSizeDefault     = 10000
-	MetadataSyncIntervalDefault    = 30 * time.Second
-	QuotaRefreshWorkerLimitDefault = 10
-	QuotaRefreshWorkerLimitMax     = 100
+	// Auth files and provider metadata retain the legacy fixed refresh cadence.
+	MetadataSyncIntervalDefault          = 30 * time.Second
+	PricingCredentialSyncIntervalDefault = 15 * time.Minute
+	QuotaRefreshWorkerLimitDefault       = 10
+	QuotaRefreshWorkerLimitMax           = 100
 )
 
 var (
@@ -70,6 +72,8 @@ type Config struct {
 	RedisQueueIdleInterval time.Duration
 	// MetadataSyncInterval 是 auth files 和 provider metadata 的固定刷新间隔。
 	MetadataSyncInterval time.Duration
+	// PricingCredentialSyncInterval 是凭证定价主体目录的独立刷新间隔。
+	PricingCredentialSyncInterval time.Duration
 	// QuotaRefreshWorkerLimit 是 Auth Files 限额刷新队列的最大并发数。
 	QuotaRefreshWorkerLimit int
 	// QuotaUpstreamResponsesEnabled 控制是否缓存并返回限额查询的原始上游响应。
@@ -155,6 +159,14 @@ func Load(options LoadOptions) (*Config, error) {
 	}
 	if redisQueueIdleInterval <= 0 {
 		return nil, fmt.Errorf("REDIS_QUEUE_IDLE_INTERVAL must be positive")
+	}
+
+	pricingCredentialSyncInterval, err := getDuration("PRICING_CREDENTIAL_SYNC_INTERVAL", PricingCredentialSyncIntervalDefault)
+	if err != nil {
+		return nil, err
+	}
+	if pricingCredentialSyncInterval <= 0 {
+		return nil, fmt.Errorf("PRICING_CREDENTIAL_SYNC_INTERVAL must be positive")
 	}
 
 	quotaRefreshWorkerLimit, err := getInt("QUOTA_REFRESH_WORKER_LIMIT", QuotaRefreshWorkerLimitDefault)
@@ -282,6 +294,7 @@ func Load(options LoadOptions) (*Config, error) {
 		RedisQueueBatchSize:             redisQueueBatchSize,
 		RedisQueueIdleInterval:          redisQueueIdleInterval,
 		MetadataSyncInterval:            MetadataSyncIntervalDefault,
+		PricingCredentialSyncInterval:   pricingCredentialSyncInterval,
 		QuotaRefreshWorkerLimit:         quotaRefreshWorkerLimit,
 		QuotaUpstreamResponsesEnabled:   quotaUpstreamResponsesEnabled,
 		WorkDir:                         workDir,

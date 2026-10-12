@@ -8,10 +8,22 @@ import (
 	"cpa-usage-keeper/internal/service/providermetadata"
 	"cpa-usage-keeper/internal/timeutil"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 // SyncMetadata 同步三类 CPA metadata，并只在三类数据库写入都成功后通知后台 identity 聚合。
 func (s *SyncService) SyncMetadata(ctx context.Context) error {
+	return s.syncMetadata(ctx, false)
+}
+
+// SyncCredentialDirectory performs the complete credential-directory refresh.
+// Unlike the legacy metadata path, any source failure aborts before publication,
+// preserving the last successful directory and its pricing subjects.
+func (s *SyncService) SyncCredentialDirectory(ctx context.Context) error {
+	return s.syncMetadata(ctx, true)
+}
+
+func (s *SyncService) syncMetadata(ctx context.Context, completeCredentialDirectory bool) error {
 	// metadata 入口仍复用原 validate，并保留老构造器的 client 回填行为。
 	if err := s.validate(syncMetadataRequired); err != nil {
 		// 配置不完整时不发起任何远端读取。
@@ -27,30 +39,70 @@ func (s *SyncService) SyncMetadata(ctx context.Context) error {
 	apiKeysResult, apiKeysErr := s.metadataFetcher.FetchManagementAPIKeys(ctx)
 	// 八个 provider endpoint 只在纯包内并发，返回按 registry 确定性归并的 snapshot。
 	providerSnapshot, providerFetchErr := providermetadata.Fetch(ctx, s.metadataFetcher)
+	if completeCredentialDirectory {
+		if authFilesErr == nil && authFilesResult == nil {
+			authFilesErr = fmt.Errorf("empty response")
+		}
+		if apiKeysErr == nil && apiKeysResult == nil {
+			apiKeysErr = fmt.Errorf("empty response")
+		}
+	}
+	if completeCredentialDirectory && (authFilesErr != nil || apiKeysErr != nil || providerFetchErr != nil) {
+		// A credential refresh is authoritative only when every source scope
+		// completed. Do not enter any persistence transaction on a partial fetch.
+		return joinErrors(
+			wrapMetadataFetchError("fetch auth files", authFilesErr),
+			wrapMetadataFetchError("fetch management api keys", apiKeysErr),
+			wrapMetadataFetchError("fetch provider metadata", providerFetchErr),
+		)
+	}
 	// Fetching does not hold the pricing writer lock. Relevant committed metadata
 	// and pricing publication are serialized with all admin pricing mutations.
 	if s.pricingCatalog != nil {
 		s.pricingCatalog.MutationMutex().Lock()
 	}
-	// Auth Files 先进入自己的 repository 事务，保持原有写入顺序。
-	authSyncErr := syncAuthFiles(ctx, s.db, authFilesResult, authFilesErr, fetchedAt)
-	// 管理 API Keys 第二个串行写入，不与 SQLite provider 写入并发。
-	apiKeySyncErr := syncManagementAPIKeys(s.db, apiKeysResult, apiKeysErr, fetchedAt)
-	// provider snapshot 最后一次进入 scoped replace 单事务，并分开返回 persistence error 与 fetch warning。
-	providerSyncErr, providerWarningErr := persistProviderMetadata(ctx, s.db, providerSnapshot, providerFetchErr, fetchedAt)
+	var authSyncErr, apiKeySyncErr, providerSyncErr, providerWarningErr error
+	if completeCredentialDirectory {
+		// Complete credential publication uses one outer writer transaction. The
+		// existing scoped helpers remain unchanged for legacy metadata callers.
+		transactionErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			authSyncErr = syncAuthFilesInTransaction(ctx, tx, authFilesResult, authFilesErr, fetchedAt)
+			if authSyncErr != nil {
+				return authSyncErr
+			}
+			apiKeySyncErr = syncManagementAPIKeysInTransaction(tx, apiKeysResult, apiKeysErr, fetchedAt)
+			if apiKeySyncErr != nil {
+				return apiKeySyncErr
+			}
+			providerSyncErr, providerWarningErr = persistProviderMetadataInTransaction(ctx, tx, providerSnapshot, providerFetchErr, fetchedAt)
+			if providerSyncErr != nil {
+				return providerSyncErr
+			}
+			return repository.EnsureCredentialPricingSubjects(tx, fetchedAt)
+		})
+		if transactionErr != nil && authSyncErr == nil && apiKeySyncErr == nil && providerSyncErr == nil {
+			providerSyncErr = transactionErr
+		}
+	} else {
+		// Legacy metadata callers retain the existing independent scope semantics.
+		authSyncErr = syncAuthFiles(ctx, s.db, authFilesResult, authFilesErr, fetchedAt)
+		apiKeySyncErr = syncManagementAPIKeys(s.db, apiKeysResult, apiKeysErr, fetchedAt)
+		providerSyncErr, providerWarningErr = persistProviderMetadata(ctx, s.db, providerSnapshot, providerFetchErr, fetchedAt)
+	}
 	// 三类持久化错误按 Auth Files、管理 key、provider 的既有顺序合并。
 	upsertErr := joinErrors(authSyncErr, apiKeySyncErr, providerSyncErr)
 	if s.pricingCatalog != nil {
-		// Independent metadata transactions may partially succeed. Recompile the
-		// actual committed directory, never publish half a pricing candidate.
-		snapshot, pricingErr := repository.LoadPricingSnapshot(ctx, s.db)
-		if pricingErr == nil {
-			s.pricingCatalog.Replace(snapshot)
-		} else {
-			// Independent directory transactions may already have committed.
-			// Cancellation/load failure must not leave old unique attribution
-			// active indefinitely. Publish a complete conservative candidate.
-			s.pricingCatalog.Replace(s.pricingCatalog.Snapshot().WithoutCredentialAttribution())
+		var pricingErr error
+		if !completeCredentialDirectory || upsertErr == nil {
+			// Publish only the committed directory. Complete refresh failures retain
+			// the previous in-memory pricing snapshot and its credential ownership.
+			snapshot, loadErr := repository.LoadPricingSnapshot(ctx, s.db)
+			pricingErr = loadErr
+			if pricingErr == nil {
+				s.pricingCatalog.Replace(snapshot)
+			} else if !completeCredentialDirectory {
+				s.pricingCatalog.Replace(s.pricingCatalog.Snapshot().WithoutCredentialAttribution())
+			}
 		}
 		s.pricingCatalog.MutationMutex().Unlock()
 		if pricingErr != nil {
@@ -92,4 +144,11 @@ func (s *SyncService) SyncMetadata(ctx context.Context) error {
 	logrus.WithFields(fields).Debug("metadata sync finished")
 	// 返回全部可观察错误，同时保留本轮已提交数据。
 	return err
+}
+
+func wrapMetadataFetchError(prefix string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
 }
