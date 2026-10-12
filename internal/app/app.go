@@ -220,7 +220,7 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 		PricingCatalog:   pricingCatalog,
 	})
 	// metadataSyncRunner 提前创建，保证控制消息和后台任务使用同一个调度器实例。
-	metadataSyncRunner := NewMetadataSyncRunner(syncService, cfg.MetadataSyncInterval)
+	metadataSyncRunner := NewMetadataSyncRunnerWithIntervals(syncService, cfg.MetadataSyncInterval, cfg.PricingCredentialSyncInterval)
 	// redisPullSource 负责 Redis batch pull，并在 usage/queue 两个 key 间做一次兼容探测。
 	redisPullSource := poller.NewRedisPullSource(cpa.RedisQueueOptions{
 		BaseURL:       cfg.CPABaseURL,

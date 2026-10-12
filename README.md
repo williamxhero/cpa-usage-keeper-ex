@@ -467,6 +467,7 @@ For cross-origin CPAMC embedding, `CPA_PUBLIC_URL` must be a complete `http://` 
 | --- | --- | --- | --- |
 | `TZ` | No | `Asia/Shanghai` | Timezone used for statistics and display; Today, daily totals, page timestamps, log timestamps, and daily cleanup are calculated in this timezone |
 | `REQUEST_TIMEOUT` | No | `30s` | Timeout for CPA HTTP requests and Redis queue operations |
+| `PRICING_CREDENTIAL_SYNC_INTERVAL` | No | `15m` | Independent maximum interval for the complete pricing credential directory refresh; legacy metadata remains on its fixed 30-second cadence |
 | `TLS_SKIP_VERIFY` | No | `false` | Skip TLS certificate verification for CPA HTTPS and Redis queue TLS; enable only with self-signed certificates |
 
 ### Auth Files Quota Refresh
