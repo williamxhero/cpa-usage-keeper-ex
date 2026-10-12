@@ -3,7 +3,6 @@ package migration
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 
 	"cpa-usage-keeper/internal/entities"
@@ -69,24 +68,15 @@ func officialModelPricesMigration(tx *gorm.DB) error {
 			CacheReadPricePer1M:  row.CacheReadPricePer1M,
 			CacheWritePricePer1M: row.CacheWritePricePer1M,
 		}
-		if !validOfficialMigrationPrice(price) {
+		price.MissingSegments = officialMissingSegments(price)
+		if !officialFiniteNonNegative(price) {
 			return fmt.Errorf("legacy model price %q contains an invalid price", model)
 		}
-		price.MissingSegments = officialMissingSegments(price)
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&price).Error; err != nil {
 			return fmt.Errorf("seed official model price %q: %w", model, err)
 		}
 	}
 	return nil
-}
-
-func validOfficialMigrationPrice(price entities.OfficialModelPrice) bool {
-	for _, value := range []*float64{price.PromptPricePer1M, price.CompletionPricePer1M, price.CacheReadPricePer1M, price.CacheWritePricePer1M} {
-		if value != nil && (*value < 0 || math.IsNaN(*value) || math.IsInf(*value, 0)) {
-			return false
-		}
-	}
-	return true
 }
 
 func officialMissingSegments(price entities.OfficialModelPrice) string {
@@ -103,6 +93,14 @@ func officialMissingSegments(price entities.OfficialModelPrice) string {
 	if price.CacheWritePricePer1M == nil {
 		missing = append(missing, "cache_write")
 	}
-	sort.Strings(missing)
 	return strings.Join(missing, ",")
+}
+
+func officialFiniteNonNegative(price entities.OfficialModelPrice) bool {
+	for _, value := range []*float64{price.PromptPricePer1M, price.CompletionPricePer1M, price.CacheReadPricePer1M, price.CacheWritePricePer1M} {
+		if value != nil && (*value < 0 || math.IsNaN(*value) || math.IsInf(*value, 0)) {
+			return false
+		}
+	}
+	return true
 }

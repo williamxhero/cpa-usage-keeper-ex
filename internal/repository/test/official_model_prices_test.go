@@ -117,3 +117,24 @@ func TestUpsertOfficialModelPricesRejectsNonFinitePrice(t *testing.T) {
 		t.Fatal("expected infinite official price to be rejected")
 	}
 }
+
+func TestUpsertOfficialModelPricePreservesAliasesWhenOmitted(t *testing.T) {
+	db := openTestDatabase(t)
+	prompt := 1.0
+	if _, err := repository.UpsertOfficialModelPrice(db, entities.OfficialModelPrice{
+		CanonicalModelID: "model", PromptPricePer1M: &prompt,
+		Aliases: []entities.OfficialModelPriceAlias{{Alias: "model-alias"}},
+	}); err != nil {
+		t.Fatalf("seed aliased price: %v", err)
+	}
+	prompt = 2.0
+	if _, err := repository.UpsertOfficialModelPrice(db, entities.OfficialModelPrice{
+		CanonicalModelID: "model", PromptPricePer1M: &prompt,
+	}); err != nil {
+		t.Fatalf("update price without aliases: %v", err)
+	}
+	rows, err := repository.ListOfficialModelPrices(db)
+	if err != nil || len(rows) != 1 || len(rows[0].Aliases) != 1 || rows[0].Aliases[0].Alias != "model-alias" {
+		t.Fatalf("omitted aliases were not preserved: %+v, err=%v", rows, err)
+	}
+}

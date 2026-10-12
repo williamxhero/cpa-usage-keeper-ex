@@ -85,6 +85,9 @@ func NewClient(httpClient *http.Client) *Client {
 }
 
 func (c *Client) Fetch(ctx context.Context, sourceID string) (Catalog, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	source, err := SourceByID(sourceID)
 	if err != nil {
 		return Catalog{}, err
@@ -125,19 +128,12 @@ func (c *Client) Fetch(ctx context.Context, sourceID string) (Catalog, error) {
 	if err != nil {
 		return Catalog{}, fmt.Errorf("decode %s pricing catalog: %w", source.Name, err)
 	}
-	if err := ensureJSONDocumentEnded(decoder); err != nil {
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return Catalog{}, fmt.Errorf("decode %s pricing catalog: trailing JSON data (multiple JSON documents)", source.Name)
+		}
 		return Catalog{}, fmt.Errorf("decode %s pricing catalog: %w", source.Name, err)
 	}
 	return Catalog{Source: source, FetchedAt: time.Now().UTC(), ResponseHash: hex.EncodeToString(responseHash[:]), Entries: entries}, nil
-}
-
-func ensureJSONDocumentEnded(decoder *json.Decoder) error {
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return errors.New("unexpected trailing JSON value")
-		}
-		return err
-	}
-	return nil
 }

@@ -2,6 +2,7 @@ package pricing
 
 import (
 	"strings"
+	"unicode"
 
 	"cpa-usage-keeper/internal/entities"
 )
@@ -36,7 +37,9 @@ type OfficialMatch struct {
 // ID, case-folded canonical ID, the existing CPA prefix-stripping convention,
 // then explicit aliases. It never guesses from a short name or substring.
 func MatchOfficialPrice(prices []entities.OfficialModelPrice, model string, required []OfficialPriceSegment) OfficialMatch {
-	return MatchOfficialPriceWithPrefixes(prices, model, required, nil)
+	// These are the only built-in CPA wrappers; callers with other registered
+	// wrappers must pass them explicitly to avoid provider/model guessing.
+	return MatchOfficialPriceWithPrefixes(prices, model, required, []string{"custom", "cpa"})
 }
 
 // MatchOfficialPriceWithPrefixes accepts only explicitly registered CPA prefixes.
@@ -69,6 +72,21 @@ func MatchOfficialPriceWithPrefixes(prices []entities.OfficialModelPrice, model 
 				}
 			}
 			return false
+		}))
+	}
+	modelKey := normalizeOfficialModelKey(model)
+	if modelKey != "" {
+		tiers = append(tiers, filterOfficialPrices(prices, func(price entities.OfficialModelPrice) bool {
+			return normalizeOfficialModelKey(price.CanonicalModelID) == modelKey
+		}))
+	}
+	for _, candidate := range stripped {
+		candidateKey := normalizeOfficialModelKey(candidate)
+		if candidateKey == "" || candidateKey == modelKey {
+			continue
+		}
+		tiers = append(tiers, filterOfficialPrices(prices, func(price entities.OfficialModelPrice) bool {
+			return normalizeOfficialModelKey(price.CanonicalModelID) == candidateKey
 		}))
 	}
 	tiers = append(tiers,
@@ -115,6 +133,16 @@ func officialPrefixCandidates(model string, prefixes []string) []string {
 		}
 	}
 	return candidates
+}
+
+func normalizeOfficialModelKey(value string) string {
+	var builder strings.Builder
+	for _, char := range value {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) {
+			builder.WriteRune(unicode.ToLower(char))
+		}
+	}
+	return builder.String()
 }
 
 func filterOfficialPrices(prices []entities.OfficialModelPrice, matches func(entities.OfficialModelPrice) bool) []entities.OfficialModelPrice {

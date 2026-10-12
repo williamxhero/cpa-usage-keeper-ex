@@ -1,15 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"cpa-usage-keeper/internal/entities"
+	"cpa-usage-keeper/internal/pricingmetadata"
 	"cpa-usage-keeper/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -24,6 +26,7 @@ type officialPricingResponse struct {
 	PricingStyle         string     `json:"pricing_style"`
 	SourceURL            string     `json:"source_url,omitempty"`
 	FetchedAt            *time.Time `json:"fetched_at,omitempty"`
+	UpdatedAt            *time.Time `json:"updated_at,omitempty"`
 	ResponseHash         string     `json:"response_hash,omitempty"`
 	SourceVersion        string     `json:"source_version,omitempty"`
 	PromptPricePer1M     *float64   `json:"prompt_price_per_1m"`
@@ -33,19 +36,7 @@ type officialPricingResponse struct {
 	MissingSegments      []string   `json:"missing_segments"`
 	Stale                bool       `json:"stale"`
 	StaleAt              *time.Time `json:"stale_at,omitempty"`
-	UpdatedAt            time.Time  `json:"updated_at"`
 	Aliases              []string   `json:"aliases,omitempty"`
-}
-
-type officialRefreshPreviewResponse struct {
-	PreviewID    string                    `json:"preview_id"`
-	SourceID     string                    `json:"source_id"`
-	Source       string                    `json:"source"`
-	SourceURL    string                    `json:"source_url"`
-	FetchedAt    time.Time                 `json:"fetched_at"`
-	ResponseHash string                    `json:"response_hash"`
-	Prices       []officialPricingResponse `json:"prices"`
-	Stale        bool                      `json:"stale"`
 }
 
 type officialPricingRequest struct {
@@ -67,6 +58,18 @@ type officialPricingBatchRequest struct {
 
 type officialRefreshCommitRequest struct {
 	PreviewID string `json:"preview_id"`
+}
+
+type officialRefreshPreviewResponse struct {
+	PreviewID       string                    `json:"preview_id"`
+	SourceID        string                    `json:"source_id"`
+	Source          string                    `json:"source"`
+	SourceURL       string                    `json:"source_url"`
+	FetchedAt       time.Time                 `json:"fetched_at"`
+	ResponseHash    string                    `json:"response_hash"`
+	Prices          []officialPricingResponse `json:"prices"`
+	AmbiguousModels []string                  `json:"ambiguous_models,omitempty"`
+	Stale           bool                      `json:"stale"`
 }
 
 func registerOfficialPricingRoutes(router gin.IRoutes, pricingProvider service.PricingProvider) {
@@ -103,12 +106,8 @@ func registerOfficialPricingRoutes(router gin.IRoutes, pricingProvider service.P
 		if !decodeOfficialPricingJSON(c, &request) {
 			return
 		}
-		if canonical := strings.TrimSpace(c.Param("canonicalModelID")); canonical != "" {
-			request.CanonicalModelID = canonical
-		}
-		if err := validateManualOfficialPricingRequest(request); err != nil {
-			officialPricingError(c, err)
-			return
+		if pathID := strings.TrimSpace(c.Param("canonicalModelID")); pathID != "" {
+			request.CanonicalModelID = pathID
 		}
 		row, err := provider.UpdateOfficialPricing(c.Request.Context(), officialPricingInput(request))
 		if err != nil {
@@ -130,10 +129,6 @@ func registerOfficialPricingRoutes(router gin.IRoutes, pricingProvider service.P
 		}
 		inputs := make([]service.OfficialPricingInput, len(request.Pricing))
 		for index := range request.Pricing {
-			if err := validateManualOfficialPricingRequest(request.Pricing[index]); err != nil {
-				officialPricingError(c, err)
-				return
-			}
 			inputs[index] = officialPricingInput(request.Pricing[index])
 		}
 		rows, err := provider.UpdateOfficialPricingBatch(c.Request.Context(), inputs)
@@ -181,35 +176,35 @@ func registerOfficialPricingRoutes(router gin.IRoutes, pricingProvider service.P
 	})
 }
 
+func officialRefreshPreviewResponseFromService(preview service.OfficialPricingRefreshPreview) officialRefreshPreviewResponse {
+	prices := make([]officialPricingResponse, len(preview.Prices))
+	for index, row := range preview.Prices {
+		prices[index] = officialPricingResponseFromEntity(row)
+	}
+	return officialRefreshPreviewResponse{PreviewID: preview.PreviewID, SourceID: preview.SourceID, Source: preview.Source, SourceURL: preview.SourceURL, FetchedAt: preview.FetchedAt, ResponseHash: preview.ResponseHash, Prices: prices, AmbiguousModels: preview.AmbiguousModels, Stale: preview.Stale}
+}
+
 func decodeOfficialPricingJSON(c *gin.Context, target any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, maxOfficialPricingRequestBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		if _, ok := err.(*http.MaxBytesError); ok {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "official pricing request is too large", "code": "official_pricing_request_too_large"})
-			return false
+		if isRequestEntityTooLarge(err) {
+			writeRequestEntityTooLarge(c)
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid official pricing request", "code": "invalid_official_pricing"})
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid official pricing request", "code": "invalid_official_pricing"})
 		return false
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid official pricing request", "code": "invalid_official_pricing"})
+		if isRequestEntityTooLarge(err) {
+			writeRequestEntityTooLarge(c)
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid official pricing request", "code": "invalid_official_pricing"})
+		}
 		return false
 	}
 	return true
-}
-
-func validateManualOfficialPricingRequest(input officialPricingRequest) error {
-	if strings.TrimSpace(input.CanonicalModelID) == "" {
-		return service.ErrInvalidPricingInput
-	}
-	for _, value := range []*float64{input.PromptPricePer1M, input.CompletionPricePer1M, input.CacheReadPricePer1M, input.CacheWritePricePer1M} {
-		if value == nil || math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 {
-			return service.ErrInvalidPricingInput
-		}
-	}
-	return nil
 }
 
 func officialPricingInput(input officialPricingRequest) service.OfficialPricingInput {
@@ -217,7 +212,7 @@ func officialPricingInput(input officialPricingRequest) service.OfficialPricingI
 		CanonicalModelID: input.CanonicalModelID, DisplayModelID: input.DisplayModelID, Source: input.Source,
 		PricingStyle: input.PricingStyle, SourceURL: input.SourceURL, PromptPricePer1M: input.PromptPricePer1M,
 		CompletionPricePer1M: input.CompletionPricePer1M, CacheReadPricePer1M: input.CacheReadPricePer1M,
-		CacheWritePricePer1M: input.CacheWritePricePer1M, Aliases: input.Aliases,
+		CacheWritePricePer1M: input.CacheWritePricePer1M, Aliases: input.Aliases, RequireComplete: true,
 	}
 }
 
@@ -230,23 +225,21 @@ func officialPricingResponseFromEntity(row entities.OfficialModelPrice) official
 	for _, alias := range row.Aliases {
 		aliases = append(aliases, alias.Alias)
 	}
-	return officialPricingResponse{ID: row.ID, CanonicalModelID: row.CanonicalModelID, DisplayModelID: row.DisplayModelID, Source: row.Source, PricingStyle: row.PricingStyle, SourceURL: row.SourceURL, FetchedAt: row.FetchedAt, ResponseHash: row.ResponseHash, SourceVersion: row.SourceVersion, PromptPricePer1M: row.PromptPricePer1M, CompletionPricePer1M: row.CompletionPricePer1M, CacheReadPricePer1M: row.CacheReadPricePer1M, CacheWritePricePer1M: row.CacheWritePricePer1M, MissingSegments: missing, Stale: row.Stale, StaleAt: row.StaleAt, UpdatedAt: row.UpdatedAt, Aliases: aliases}
-}
-
-func officialRefreshPreviewResponseFromService(preview service.OfficialPricingRefreshPreview) officialRefreshPreviewResponse {
-	prices := make([]officialPricingResponse, len(preview.Prices))
-	for index := range preview.Prices {
-		prices[index] = officialPricingResponseFromEntity(preview.Prices[index])
+	var updatedAt *time.Time
+	if !row.UpdatedAt.IsZero() {
+		updated := row.UpdatedAt
+		updatedAt = &updated
 	}
-	return officialRefreshPreviewResponse{
-		PreviewID: preview.PreviewID, SourceID: preview.SourceID, Source: preview.Source,
-		SourceURL: preview.SourceURL, FetchedAt: preview.FetchedAt, ResponseHash: preview.ResponseHash,
-		Prices: prices, Stale: preview.Stale,
-	}
+	return officialPricingResponse{ID: row.ID, CanonicalModelID: row.CanonicalModelID, DisplayModelID: row.DisplayModelID, Source: row.Source, PricingStyle: row.PricingStyle, SourceURL: row.SourceURL, FetchedAt: row.FetchedAt, UpdatedAt: updatedAt, ResponseHash: row.ResponseHash, SourceVersion: row.SourceVersion, PromptPricePer1M: row.PromptPricePer1M, CompletionPricePer1M: row.CompletionPricePer1M, CacheReadPricePer1M: row.CacheReadPricePer1M, CacheWritePricePer1M: row.CacheWritePricePer1M, MissingSegments: missing, Stale: row.Stale, StaleAt: row.StaleAt, Aliases: aliases}
 }
 
 func officialPricingError(c *gin.Context, err error) {
+	var networkError net.Error
 	switch {
+	case errors.Is(err, pricingmetadata.ErrInvalidSource):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported pricing source", "code": "invalid_pricing_source"})
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()):
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "pricing source request timed out", "code": "pricing_source_timeout"})
 	case errors.Is(err, service.ErrOfficialPricingBatchTooLarge):
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "official pricing batch exceeds limit", "code": "official_pricing_batch_too_large"})
 	case errors.Is(err, service.ErrOfficialPricingPreviewNotFound):

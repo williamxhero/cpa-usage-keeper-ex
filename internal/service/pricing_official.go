@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -19,7 +20,11 @@ import (
 	"gorm.io/gorm"
 )
 
-const maxOfficialPricingBatch = 5000
+const (
+	maxOfficialPricingBatch   = 5000
+	maxOfficialPricingPreview = 128
+	officialPricingPreviewTTL = 15 * time.Minute
+)
 
 var (
 	ErrOfficialPricingPreviewNotFound = errors.New("official pricing preview not found")
@@ -42,17 +47,19 @@ type OfficialPricingInput struct {
 	CacheReadPricePer1M  *float64
 	CacheWritePricePer1M *float64
 	Aliases              []string
+	RequireComplete      bool
 }
 
 type OfficialPricingRefreshPreview struct {
-	PreviewID    string                        `json:"preview_id"`
-	SourceID     string                        `json:"source_id"`
-	Source       string                        `json:"source"`
-	SourceURL    string                        `json:"source_url"`
-	FetchedAt    time.Time                     `json:"fetched_at"`
-	ResponseHash string                        `json:"response_hash"`
-	Prices       []entities.OfficialModelPrice `json:"prices"`
-	Stale        bool                          `json:"stale"`
+	PreviewID       string                        `json:"preview_id"`
+	SourceID        string                        `json:"source_id"`
+	Source          string                        `json:"source"`
+	SourceURL       string                        `json:"source_url"`
+	FetchedAt       time.Time                     `json:"fetched_at"`
+	ResponseHash    string                        `json:"response_hash"`
+	Prices          []entities.OfficialModelPrice `json:"prices"`
+	AmbiguousModels []string                      `json:"ambiguous_models,omitempty"`
+	Stale           bool                          `json:"stale"`
 }
 
 type OfficialPricingProvider interface {
@@ -64,7 +71,8 @@ type OfficialPricingProvider interface {
 }
 
 type officialRefreshCandidate struct {
-	preview OfficialPricingRefreshPreview
+	preview   OfficialPricingRefreshPreview
+	createdAt time.Time
 }
 
 func (s *pricingService) ListOfficialPricing(context.Context) ([]entities.OfficialModelPrice, error) {
@@ -141,18 +149,29 @@ func normalizeOfficialPricingInput(input OfficialPricingInput) (entities.Officia
 	if source == "" {
 		source = entities.OfficialModelPriceSourceOfficial
 	}
-	if source != entities.OfficialModelPriceSourceOfficial && source != entities.OfficialModelPriceSourceOpenRouter && source != entities.OfficialModelPriceSourceLegacySeed {
+	if source != entities.OfficialModelPriceSourceOfficial && source != entities.OfficialModelPriceSourceModelsDev && source != entities.OfficialModelPriceSourceLiteLLM && source != entities.OfficialModelPriceSourceOpenRouter && source != entities.OfficialModelPriceSourceLegacySeed {
 		return entities.OfficialModelPrice{}, "", fmt.Errorf("source is not supported")
 	}
 	if err := validateOfficialURL(input.SourceURL); err != nil {
 		return entities.OfficialModelPrice{}, "", err
 	}
-	for _, value := range []*float64{input.PromptPricePer1M, input.CompletionPricePer1M, input.CacheReadPricePer1M, input.CacheWritePricePer1M} {
+	values := []*float64{input.PromptPricePer1M, input.CompletionPricePer1M, input.CacheReadPricePer1M, input.CacheWritePricePer1M}
+	if input.RequireComplete {
+		for _, value := range values {
+			if value == nil {
+				return entities.OfficialModelPrice{}, "", fmt.Errorf("all four prices are required")
+			}
+		}
+	}
+	for _, value := range values {
 		if value != nil && (*value < 0 || math.IsNaN(*value) || math.IsInf(*value, 0)) {
 			return entities.OfficialModelPrice{}, "", fmt.Errorf("prices must be finite and non-negative")
 		}
 	}
-	aliases := make([]entities.OfficialModelPriceAlias, 0, len(input.Aliases))
+	var aliases []entities.OfficialModelPriceAlias
+	if input.Aliases != nil {
+		aliases = make([]entities.OfficialModelPriceAlias, 0, len(input.Aliases))
+	}
 	seenAliases := make(map[string]struct{}, len(input.Aliases))
 	for _, alias := range input.Aliases {
 		alias = strings.TrimSpace(alias)
@@ -184,6 +203,13 @@ func validateOfficialURL(raw string) error {
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("source_url must be a public https URL without credentials or query parameters")
 	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") || !strings.Contains(host, ".") {
+		return fmt.Errorf("source_url must use a public host")
+	}
+	if address := net.ParseIP(host); address != nil && (address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast() || address.IsUnspecified()) {
+		return fmt.Errorf("source_url must use a public host")
+	}
 	return nil
 }
 
@@ -196,31 +222,48 @@ func (s *pricingService) PreviewOfficialPricingRefresh(ctx context.Context, sour
 	}
 	catalog, err := s.metadataClient.Fetch(ctx, sourceID)
 	if err != nil {
-		_ = repository.MarkOfficialModelPricesStale(s.db, nil)
+		s.markOfficialPricingStale(ctx)
 		return OfficialPricingRefreshPreview{}, err
 	}
-	persisted, persistedErr := repository.ListOfficialModelPrices(s.db)
-	if persistedErr != nil {
-		return OfficialPricingRefreshPreview{}, persistedErr
+	existing, err := repository.ListOfficialModelPrices(s.db)
+	if err != nil {
+		return OfficialPricingRefreshPreview{}, err
 	}
-	entries := catalog.Entries
+	blockedFallback := make(map[string]struct{}, len(existing))
+	blockedOpenRouter := make(map[string]struct{}, len(existing))
+	for _, row := range existing {
+		key := strings.ToLower(strings.TrimSpace(row.CanonicalModelID))
+		if key == "" {
+			continue
+		}
+		if row.Source != entities.OfficialModelPriceSourceOpenRouter {
+			blockedFallback[key] = struct{}{}
+			blockedOpenRouter[key] = struct{}{}
+		}
+	}
+	entries, ambiguousModels := uniqueRefreshEntries(catalog.Entries)
 	var fallbackCatalog *pricingmetadata.Catalog
 	if catalog.Source.ID != pricingmetadata.SourceOpenRouter {
 		// OpenRouter is a fallback catalog only. A failed fallback does not
 		// replace the last successful persisted snapshot.
 		fallback, fallbackErr := s.metadataClient.Fetch(ctx, pricingmetadata.SourceOpenRouter)
 		if fallbackErr != nil {
-			_ = repository.MarkOfficialModelPricesStale(s.db, nil)
+			s.markOfficialPricingStale(ctx)
 			return OfficialPricingRefreshPreview{}, fallbackErr
 		}
 		fallbackCatalog = &fallback
-		entries = mergeOfficialAndOpenRouterEntries(entries, fallback.Entries, persisted)
+		fallbackEntries, fallbackAmbiguous := uniqueRefreshEntries(fallback.Entries)
+		ambiguousModels = append(ambiguousModels, fallbackAmbiguous...)
+		entries = mergeOfficialAndOpenRouterEntries(entries, fallbackEntries, blockedFallback)
 	} else {
-		entries = filterOpenRouterEntries(entries, persisted)
-	}
-	if err := validateRefreshEntries(catalog.Source.ID, entries); err != nil {
-		_ = repository.MarkOfficialModelPricesStale(s.db, nil)
-		return OfficialPricingRefreshPreview{}, err
+		filtered := entries[:0]
+		for _, entry := range entries {
+			if _, exists := blockedOpenRouter[strings.ToLower(strings.TrimSpace(entry.Model.ID))]; exists {
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+		entries = filtered
 	}
 	prices := make([]entities.OfficialModelPrice, 0, len(entries))
 	for _, entry := range entries {
@@ -236,37 +279,79 @@ func (s *pricingService) PreviewOfficialPricingRefresh(ctx context.Context, sour
 			CanonicalModelID: id, DisplayModelID: displayMetadataModel(entry.Model),
 			Source:       sourceForMetadata(metadataCatalog.Source.ID, entry),
 			PricingStyle: metadataPricingStyle(entry.Model), SourceURL: sourceURLForMetadata(metadataCatalog, entry),
-			FetchedAt: timePointer(metadataCatalog.FetchedAt), ResponseHash: metadataCatalog.ResponseHash,
+			FetchedAt: timePointer(metadataCatalog.FetchedAt), ResponseHash: metadataCatalog.ResponseHash, SourceVersion: strings.TrimSpace(entry.Model.LastUpdated),
 			PromptPricePer1M: entry.Model.Cost.Input, CompletionPricePer1M: entry.Model.Cost.Output,
 			CacheReadPricePer1M: entry.Model.Cost.CacheRead, CacheWritePricePer1M: entry.Model.Cost.CacheWrite,
 		}
-		price.SourceVersion = strings.TrimSpace(entry.Model.LastUpdated)
 		price.MissingSegments = officialMissingSegments(price)
 		prices = append(prices, price)
 	}
 	sort.Slice(prices, func(i, j int) bool {
 		return strings.ToLower(prices[i].CanonicalModelID) < strings.ToLower(prices[j].CanonicalModelID)
 	})
-	preview := OfficialPricingRefreshPreview{PreviewID: newPreviewID(), SourceID: catalog.Source.ID, Source: catalog.Source.Name, SourceURL: catalog.Source.URL, FetchedAt: catalog.FetchedAt, ResponseHash: catalog.ResponseHash, Prices: prices}
+	preview := OfficialPricingRefreshPreview{PreviewID: newPreviewID(), SourceID: catalog.Source.ID, Source: catalog.Source.Name, SourceURL: catalog.Source.URL, FetchedAt: catalog.FetchedAt, ResponseHash: catalog.ResponseHash, Prices: prices, AmbiguousModels: uniqueSortedStrings(ambiguousModels)}
 	s.officialMu.Lock()
 	if s.officialPreviews == nil {
 		s.officialPreviews = make(map[string]officialRefreshCandidate)
 	}
-	s.officialPreviews[preview.PreviewID] = officialRefreshCandidate{preview: preview}
+	now := time.Now().UTC()
+	pruneOfficialPricingPreviewsLocked(s.officialPreviews, now)
+	for len(s.officialPreviews) >= maxOfficialPricingPreview {
+		oldestID := ""
+		var oldest time.Time
+		for id, candidate := range s.officialPreviews {
+			if oldestID == "" || candidate.createdAt.Before(oldest) {
+				oldestID, oldest = id, candidate.createdAt
+			}
+		}
+		if oldestID == "" {
+			break
+		}
+		delete(s.officialPreviews, oldestID)
+	}
+	s.officialPreviews[preview.PreviewID] = officialRefreshCandidate{preview: preview, createdAt: now}
 	s.officialMu.Unlock()
 	return cloneOfficialPreview(preview), nil
 }
 
-func mergeOfficialAndOpenRouterEntries(official, fallback []pricingmetadata.Entry, persisted []entities.OfficialModelPrice) []pricingmetadata.Entry {
-	result := append([]pricingmetadata.Entry(nil), official...)
-	seen := make(map[string]struct{}, len(official)+len(persisted))
-	for _, entry := range official {
-		if id := strings.ToLower(strings.TrimSpace(entry.Model.ID)); id != "" {
-			seen[id] = struct{}{}
+func pruneOfficialPricingPreviewsLocked(previews map[string]officialRefreshCandidate, now time.Time) {
+	for id, candidate := range previews {
+		if candidate.createdAt.IsZero() || now.Sub(candidate.createdAt) >= officialPricingPreviewTTL {
+			delete(previews, id)
 		}
 	}
-	for _, row := range persisted {
-		if id := strings.ToLower(strings.TrimSpace(row.CanonicalModelID)); id != "" {
+}
+
+func uniqueRefreshEntries(entries []pricingmetadata.Entry) ([]pricingmetadata.Entry, []string) {
+	byID := make(map[string]pricingmetadata.Entry, len(entries))
+	ambiguous := make(map[string]struct{})
+	for _, entry := range entries {
+		id := strings.TrimSpace(entry.Model.ID)
+		key := strings.ToLower(id)
+		if key == "" {
+			continue
+		}
+		if _, exists := byID[key]; exists {
+			ambiguous[key] = struct{}{}
+			continue
+		}
+		byID[key] = entry
+	}
+	result := make([]pricingmetadata.Entry, 0, len(byID))
+	for key, entry := range byID {
+		if _, isAmbiguous := ambiguous[key]; !isAmbiguous {
+			result = append(result, entry)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return strings.ToLower(result[i].Model.ID) < strings.ToLower(result[j].Model.ID) })
+	return result, uniqueSortedStrings(stringMapKeys(ambiguous))
+}
+
+func mergeOfficialAndOpenRouterEntries(official, fallback []pricingmetadata.Entry, blocked map[string]struct{}) []pricingmetadata.Entry {
+	result := append([]pricingmetadata.Entry(nil), official...)
+	seen := make(map[string]struct{}, len(official))
+	for _, entry := range official {
+		if id := strings.ToLower(strings.TrimSpace(entry.Model.ID)); id != "" {
 			seen[id] = struct{}{}
 		}
 	}
@@ -278,33 +363,76 @@ func mergeOfficialAndOpenRouterEntries(official, fallback []pricingmetadata.Entr
 		if _, exists := seen[id]; exists {
 			continue
 		}
+		if _, exists := blocked[id]; exists {
+			continue
+		}
 		seen[id] = struct{}{}
 		result = append(result, entry)
 	}
 	return result
 }
 
-func filterOpenRouterEntries(entries []pricingmetadata.Entry, persisted []entities.OfficialModelPrice) []pricingmetadata.Entry {
-	protected := make(map[string]struct{}, len(persisted))
-	for _, row := range persisted {
-		if row.Source != entities.OfficialModelPriceSourceOpenRouter {
-			if id := strings.ToLower(strings.TrimSpace(row.CanonicalModelID)); id != "" {
-				protected[id] = struct{}{}
-			}
+func stringMapKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func uniqueSortedStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value != "" {
+			seen[value] = struct{}{}
 		}
 	}
-	result := make([]pricingmetadata.Entry, 0, len(entries))
-	for _, entry := range entries {
-		id := strings.ToLower(strings.TrimSpace(entry.Model.ID))
-		if id == "" {
-			continue
-		}
-		if _, exists := protected[id]; exists {
-			continue
-		}
-		result = append(result, entry)
-	}
+	result := stringMapKeys(seen)
+	sort.Strings(result)
 	return result
+}
+
+func (s *pricingService) markOfficialPricingStale(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+	var candidate *pricing.Snapshot
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := repository.MarkOfficialModelPricesStale(tx, nil); err != nil {
+			return err
+		}
+		var err error
+		candidate, err = repository.LoadPricingSnapshot(ctx, tx)
+		return err
+	})
+	if err == nil && candidate != nil {
+		s.catalog.Replace(candidate)
+	}
+}
+
+func (s *pricingService) CommitOfficialPricingRefresh(ctx context.Context, previewID string) ([]entities.OfficialModelPrice, error) {
+	previewID = strings.TrimSpace(previewID)
+	s.officialMu.Lock()
+	pruneOfficialPricingPreviewsLocked(s.officialPreviews, time.Now().UTC())
+	candidate, ok := s.officialPreviews[previewID]
+	s.officialMu.Unlock()
+	if !ok {
+		return nil, ErrOfficialPricingPreviewNotFound
+	}
+	inputs := make([]OfficialPricingInput, len(candidate.preview.Prices))
+	for index, row := range candidate.preview.Prices {
+		inputs[index] = OfficialPricingInput{CanonicalModelID: row.CanonicalModelID, DisplayModelID: row.DisplayModelID, Source: row.Source, PricingStyle: row.PricingStyle, SourceURL: row.SourceURL, FetchedAt: row.FetchedAt, ResponseHash: row.ResponseHash, SourceVersion: row.SourceVersion, PromptPricePer1M: row.PromptPricePer1M, CompletionPricePer1M: row.CompletionPricePer1M, CacheReadPricePer1M: row.CacheReadPricePer1M, CacheWritePricePer1M: row.CacheWritePricePer1M}
+	}
+	rows, err := s.UpdateOfficialPricingBatch(ctx, inputs)
+	if err != nil {
+		return nil, err
+	}
+	s.officialMu.Lock()
+	delete(s.officialPreviews, previewID)
+	s.officialMu.Unlock()
+	return rows, nil
 }
 
 func officialMissingSegments(price entities.OfficialModelPrice) string {
@@ -324,50 +452,18 @@ func officialMissingSegments(price entities.OfficialModelPrice) string {
 	return strings.Join(missing, ",")
 }
 
-func validateRefreshEntries(sourceID string, entries []pricingmetadata.Entry) error {
-	for _, entry := range entries {
-		id := strings.TrimSpace(entry.Model.ID)
-		if id == "" {
-			return fmt.Errorf("pricing catalog contains a model without an ID")
-		}
-		if entry.Model.Cost.Input == nil || entry.Model.Cost.Output == nil {
-			return fmt.Errorf("pricing catalog model %q is missing prompt or completion pricing", id)
-		}
-		for _, value := range []*float64{entry.Model.Cost.Input, entry.Model.Cost.Output, entry.Model.Cost.CacheRead, entry.Model.Cost.CacheWrite} {
-			if value != nil && (*value < 0 || math.IsNaN(*value) || math.IsInf(*value, 0)) {
-				return fmt.Errorf("pricing catalog model %q contains an invalid price", id)
-			}
-		}
-	}
-	return nil
-}
-
-func (s *pricingService) CommitOfficialPricingRefresh(ctx context.Context, previewID string) ([]entities.OfficialModelPrice, error) {
-	s.officialMu.Lock()
-	candidate, ok := s.officialPreviews[strings.TrimSpace(previewID)]
-	if ok {
-		delete(s.officialPreviews, strings.TrimSpace(previewID))
-	}
-	s.officialMu.Unlock()
-	if !ok {
-		return nil, ErrOfficialPricingPreviewNotFound
-	}
-	inputs := make([]OfficialPricingInput, len(candidate.preview.Prices))
-	for index, row := range candidate.preview.Prices {
-		inputs[index] = OfficialPricingInput{CanonicalModelID: row.CanonicalModelID, DisplayModelID: row.DisplayModelID, Source: row.Source, PricingStyle: row.PricingStyle, SourceURL: row.SourceURL, FetchedAt: row.FetchedAt, ResponseHash: row.ResponseHash, SourceVersion: row.SourceVersion, PromptPricePer1M: row.PromptPricePer1M, CompletionPricePer1M: row.CompletionPricePer1M, CacheReadPricePer1M: row.CacheReadPricePer1M, CacheWritePricePer1M: row.CacheWritePricePer1M}
-	}
-	rows, err := s.UpdateOfficialPricingBatch(ctx, inputs)
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
 func sourceForMetadata(sourceID string, entry pricingmetadata.Entry) string {
 	if sourceID == pricingmetadata.SourceOpenRouter || strings.EqualFold(entry.ProviderID, "openrouter") {
 		return entities.OfficialModelPriceSourceOpenRouter
 	}
-	return entities.OfficialModelPriceSourceOfficial
+	switch strings.ToLower(strings.TrimSpace(sourceID)) {
+	case "models-dev":
+		return entities.OfficialModelPriceSourceModelsDev
+	case "litellm":
+		return entities.OfficialModelPriceSourceLiteLLM
+	default:
+		return entities.OfficialModelPriceSourceOfficial
+	}
 }
 
 func sourceURLForMetadata(catalog pricingmetadata.Catalog, entry pricingmetadata.Entry) string {
@@ -403,27 +499,6 @@ func newPreviewID() string {
 func timePointer(value time.Time) *time.Time { return &value }
 
 func cloneOfficialPreview(input OfficialPricingRefreshPreview) OfficialPricingRefreshPreview {
-	if input.Prices == nil {
-		input.Prices = nil
-		return input
-	}
-	prices := input.Prices
-	input.Prices = make([]entities.OfficialModelPrice, len(prices))
-	for index, price := range prices {
-		input.Prices[index] = price
-		input.Prices[index].Aliases = append([]entities.OfficialModelPriceAlias(nil), price.Aliases...)
-		input.Prices[index].PromptPricePer1M = cloneOfficialPricePointer(price.PromptPricePer1M)
-		input.Prices[index].CompletionPricePer1M = cloneOfficialPricePointer(price.CompletionPricePer1M)
-		input.Prices[index].CacheReadPricePer1M = cloneOfficialPricePointer(price.CacheReadPricePer1M)
-		input.Prices[index].CacheWritePricePer1M = cloneOfficialPricePointer(price.CacheWritePricePer1M)
-	}
+	input.Prices = append([]entities.OfficialModelPrice(nil), input.Prices...)
 	return input
-}
-
-func cloneOfficialPricePointer(value *float64) *float64 {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
 }

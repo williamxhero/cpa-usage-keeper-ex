@@ -4,6 +4,8 @@ import "time"
 
 const (
 	OfficialModelPriceSourceOfficial   = "official"
+	OfficialModelPriceSourceModelsDev  = "models-dev"
+	OfficialModelPriceSourceLiteLLM    = "litellm"
 	OfficialModelPriceSourceOpenRouter = "openrouter"
 	OfficialModelPriceSourceLegacySeed = "legacy-seed"
 )

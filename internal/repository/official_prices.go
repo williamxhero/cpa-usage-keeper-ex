@@ -10,16 +10,17 @@ import (
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/timeutil"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/plugin/dbresolver"
 )
 
 type legacyPriceForOfficialSeed struct {
 	Model                string
 	PricingStyle         string
-	PromptPricePer1M     float64
-	CompletionPricePer1M float64
-	CacheReadPricePer1M  float64
-	CacheWritePricePer1M float64 `gorm:"column:cache_creation_price_per1_m"`
+	PromptPricePer1M     *float64
+	CompletionPricePer1M *float64
+	CacheReadPricePer1M  *float64
+	CacheWritePricePer1M *float64 `gorm:"column:cache_creation_price_per1_m"`
 }
 
 var officialModelPriceColumns = []string{
@@ -70,10 +71,11 @@ func UpsertOfficialModelPrices(db *gorm.DB, inputs []entities.OfficialModelPrice
 		if err != nil {
 			return nil, fmt.Errorf("official model price %d: %w", index, err)
 		}
-		if _, exists := seenIDs[price.CanonicalModelID]; exists {
+		canonicalKey := strings.ToLower(price.CanonicalModelID)
+		if _, exists := seenIDs[canonicalKey]; exists {
 			return nil, fmt.Errorf("duplicate canonical_model_id %q in batch", price.CanonicalModelID)
 		}
-		seenIDs[price.CanonicalModelID] = struct{}{}
+		seenIDs[canonicalKey] = struct{}{}
 		normalized[index] = price
 	}
 	if len(normalized) == 0 {
@@ -81,16 +83,24 @@ func UpsertOfficialModelPrices(db *gorm.DB, inputs []entities.OfficialModelPrice
 	}
 
 	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := validateOfficialAliasConflicts(tx, normalized); err != nil {
+			return err
+		}
 		for index := range normalized {
 			input := &normalized[index]
 			var existing entities.OfficialModelPrice
-			err := tx.Clauses(dbresolver.Write).Where("canonical_model_id = ?", input.CanonicalModelID).First(&existing).Error
+			err := tx.Clauses(dbresolver.Write).Where("LOWER(canonical_model_id) = LOWER(?)", input.CanonicalModelID).First(&existing).Error
 			suppliedAliases := input.Aliases != nil
 			if err == nil {
 				input.ID = existing.ID
 				input.CreatedAt = existing.CreatedAt
 			} else if err != gorm.ErrRecordNotFound {
 				return fmt.Errorf("load official model price %q: %w", input.CanonicalModelID, err)
+			} else {
+				// Canonical IDs, not caller-provided primary keys, define identity.
+				// Never let an exported repository caller overwrite another row.
+				input.ID = 0
+				input.CreatedAt = time.Time{}
 			}
 			if err := tx.Omit("Aliases").Save(input).Error; err != nil {
 				return fmt.Errorf("save official model price %q: %w", input.CanonicalModelID, err)
@@ -173,16 +183,16 @@ func seedLegacyOfficialModelPrices(db *gorm.DB, legacy []legacyPriceForOfficialS
 				DisplayModelID:       model,
 				Source:               entities.OfficialModelPriceSourceLegacySeed,
 				PricingStyle:         normalizeSeedPricingStyle(row.PricingStyle),
-				PromptPricePer1M:     floatPointer(row.PromptPricePer1M),
-				CompletionPricePer1M: floatPointer(row.CompletionPricePer1M),
-				CacheReadPricePer1M:  floatPointer(row.CacheReadPricePer1M),
-				CacheWritePricePer1M: floatPointer(row.CacheWritePricePer1M),
+				PromptPricePer1M:     row.PromptPricePer1M,
+				CompletionPricePer1M: row.CompletionPricePer1M,
+				CacheReadPricePer1M:  row.CacheReadPricePer1M,
+				CacheWritePricePer1M: row.CacheWritePricePer1M,
 			}
 			seed.MissingSegments = missingOfficialModelPriceSegments(seed)
 			if !finiteNonNegativePrices(seed) {
 				return fmt.Errorf("legacy model price %q contains an invalid price", model)
 			}
-			if err := tx.Create(&seed).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "canonical_model_id"}}, DoNothing: true}).Create(&seed).Error; err != nil {
 				return fmt.Errorf("seed official model price %q: %w", model, err)
 			}
 		}
@@ -246,9 +256,19 @@ func normalizeOfficialModelPrice(input entities.OfficialModelPrice) (entities.Of
 	if input.DisplayModelID == "" {
 		input.DisplayModelID = input.CanonicalModelID
 	}
-	input.Source = strings.TrimSpace(input.Source)
+	input.Source = strings.ToLower(strings.TrimSpace(input.Source))
 	if input.Source == "" {
 		input.Source = entities.OfficialModelPriceSourceOfficial
+	}
+	if input.Source != entities.OfficialModelPriceSourceOfficial && input.Source != entities.OfficialModelPriceSourceModelsDev && input.Source != entities.OfficialModelPriceSourceLiteLLM && input.Source != entities.OfficialModelPriceSourceOpenRouter && input.Source != entities.OfficialModelPriceSourceLegacySeed {
+		return entities.OfficialModelPrice{}, fmt.Errorf("source is not supported")
+	}
+	input.PricingStyle = strings.ToLower(strings.TrimSpace(input.PricingStyle))
+	if input.PricingStyle == "" {
+		input.PricingStyle = entities.ModelPricingStyleOpenAI
+	}
+	if input.PricingStyle != entities.ModelPricingStyleOpenAI && input.PricingStyle != entities.ModelPricingStyleClaude {
+		return entities.OfficialModelPrice{}, fmt.Errorf("pricing_style must be openai or claude")
 	}
 	if !finiteNonNegativePrices(input) {
 		return entities.OfficialModelPrice{}, fmt.Errorf("prices must be finite and non-negative")
@@ -283,6 +303,47 @@ func missingOfficialModelPriceSegments(input entities.OfficialModelPrice) string
 	return strings.Join(missing, ",")
 }
 
+func validateOfficialAliasConflicts(db *gorm.DB, inputs []entities.OfficialModelPrice) error {
+	prices, err := ListOfficialModelPrices(db)
+	if err != nil {
+		return err
+	}
+	updating := make(map[string]struct{}, len(inputs))
+	for _, input := range inputs {
+		updating[strings.ToLower(input.CanonicalModelID)] = struct{}{}
+	}
+	owners := make(map[string]string)
+	for _, price := range prices {
+		canonical := strings.ToLower(strings.TrimSpace(price.CanonicalModelID))
+		if _, replaced := updating[canonical]; replaced {
+			continue
+		}
+		if canonical != "" {
+			owners[canonical] = price.CanonicalModelID
+		}
+		for _, alias := range price.Aliases {
+			key := strings.ToLower(strings.TrimSpace(alias.Alias))
+			if key != "" {
+				owners[key] = price.CanonicalModelID
+			}
+		}
+	}
+	for _, input := range inputs {
+		canonical := strings.ToLower(input.CanonicalModelID)
+		owners[canonical] = input.CanonicalModelID
+	}
+	for _, input := range inputs {
+		for _, alias := range normalizeOfficialModelPriceAliases(input.Aliases, 0) {
+			key := strings.ToLower(alias.Alias)
+			if owner, exists := owners[key]; exists && !strings.EqualFold(owner, input.CanonicalModelID) {
+				return fmt.Errorf("alias %q conflicts with model %q", alias.Alias, owner)
+			}
+			owners[key] = input.CanonicalModelID
+		}
+	}
+	return nil
+}
+
 func normalizeOfficialModelPriceAliases(input []entities.OfficialModelPriceAlias, priceID int64) []entities.OfficialModelPriceAlias {
 	seen := make(map[string]struct{}, len(input))
 	aliases := make([]entities.OfficialModelPriceAlias, 0, len(input))
@@ -291,10 +352,11 @@ func normalizeOfficialModelPriceAliases(input []entities.OfficialModelPriceAlias
 		if name == "" {
 			continue
 		}
-		if _, exists := seen[name]; exists {
+		key := strings.ToLower(name)
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[name] = struct{}{}
+		seen[key] = struct{}{}
 		aliases = append(aliases, entities.OfficialModelPriceAlias{OfficialModelPriceID: priceID, Alias: name})
 	}
 	sort.Slice(aliases, func(i, j int) bool { return aliases[i].Alias < aliases[j].Alias })
