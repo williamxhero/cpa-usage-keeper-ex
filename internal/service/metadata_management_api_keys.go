@@ -11,6 +11,14 @@ import (
 
 // syncManagementAPIKeys 同步 CPA 管理 API key 清单；原值只在本地保存，对外查询时再脱敏。
 func syncManagementAPIKeys(db *gorm.DB, result *response.ManagementAPIKeysResult, fetchErr error, now time.Time) error {
+	return syncManagementAPIKeysWithReplacement(db, result, fetchErr, now, false)
+}
+
+func syncManagementAPIKeysInTransaction(tx *gorm.DB, result *response.ManagementAPIKeysResult, fetchErr error, now time.Time) error {
+	return syncManagementAPIKeysWithReplacement(tx, result, fetchErr, now, true)
+}
+
+func syncManagementAPIKeysWithReplacement(db *gorm.DB, result *response.ManagementAPIKeysResult, fetchErr error, now time.Time, inTransaction bool) error {
 	// fetch failure 没有完整新清单，必须保留本地 active keys。
 	if fetchErr != nil {
 		// 保持原有来源错误包装。
@@ -26,8 +34,14 @@ func syncManagementAPIKeys(db *gorm.DB, result *response.ManagementAPIKeysResult
 		// 保持原有 nil response 错误文本。
 		return fmt.Errorf("fetch management api keys: empty response")
 	}
-	// 成功响应交给原 repository，以本轮统一 now 执行独立事务替换。
-	if err := repository.SyncCPAAPIKeys(db, result.Payload.APIKeys, now); err != nil {
+	// 成功响应交给 repository，以本轮统一 now 执行 key 集合替换。
+	var err error
+	if inTransaction {
+		err = repository.SyncCPAAPIKeysInTransaction(db, result.Payload.APIKeys, now)
+	} else {
+		err = repository.SyncCPAAPIKeys(db, result.Payload.APIKeys, now)
+	}
+	if err != nil {
 		// repository failure 使用原 service 上下文包装。
 		return fmt.Errorf("sync management api keys: %w", err)
 	}

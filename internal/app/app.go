@@ -374,6 +374,7 @@ func NewWithConfig(cfg config.Config) (*App, error) {
 				RequestLogs:        requestLogService,
 				Ranking:            rankingService,
 				LocalRanking:       localRankingService,
+				CredentialSync:     metadataSyncRunner,
 				Status: api.StatusRouteConfig{
 					CPAPublicURL:               cfg.CPAPublicURL,
 					CPARequestLogAccessEnabled: cfg.CPARequestLogAccessEnabled,
@@ -515,6 +516,9 @@ func (a *App) Run() error {
 				logrus.Errorf("metadata sync stopped: %v", err)
 			}
 		})
+		// Trigger the credential directory refresh after the runner is launched;
+		// the request is buffered and the CPA call runs asynchronously.
+		a.MetadataSync.RequestStartupSync()
 	}
 	if a.LocalRanking != nil {
 		a.startBackgroundTask(func() {

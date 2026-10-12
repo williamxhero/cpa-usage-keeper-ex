@@ -110,7 +110,7 @@ func TestLoadFromEnvAppliesDefaults(t *testing.T) {
 		t.Fatalf("expected default redis queue idle interval 1s, got %s", cfg.RedisQueueIdleInterval)
 	}
 	if cfg.MetadataSyncInterval != MetadataSyncIntervalDefault {
-		t.Fatalf("expected default metadata sync interval 30s, got %s", cfg.MetadataSyncInterval)
+		t.Fatalf("expected default metadata sync interval 15m, got %s", cfg.MetadataSyncInterval)
 	}
 	if cfg.QuotaRefreshWorkerLimit != 10 {
 		t.Fatalf("expected default quota refresh worker limit 10, got %d", cfg.QuotaRefreshWorkerLimit)

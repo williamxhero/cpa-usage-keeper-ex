@@ -6,11 +6,20 @@ import (
 	"sync"
 	"time"
 
+	"cpa-usage-keeper/internal/service"
 	"github.com/sirupsen/logrus"
 )
 
 type MetadataSyncer interface {
 	SyncMetadata(ctx context.Context) error
+}
+
+type pricingCredentialSubjectSyncer interface {
+	SyncPricingCredentialSubjects(ctx context.Context) error
+}
+
+type credentialDirectorySyncer interface {
+	SyncCredentialDirectory(ctx context.Context) error
 }
 
 const metadataSyncRefreshDebounceDefault = time.Second
@@ -24,6 +33,8 @@ type MetadataSyncRunner struct {
 	refreshDebounce time.Duration
 	// refreshRequests 用单元素缓冲合并密集 refresh 通知。
 	refreshRequests chan struct{}
+	// immediateRequests 用单元素缓冲合并启动和管理员立即刷新请求。
+	immediateRequests chan struct{}
 	// connectedRequests 用单元素缓冲接收 ingest 连接成功信号，避免连接建立时阻塞 ingest。
 	connectedRequests chan struct{}
 	// onStart 只给测试确认后台 runner 已启动，生产逻辑不依赖它。
@@ -33,6 +44,9 @@ type MetadataSyncRunner struct {
 
 	// mu 保护 runner 状态和最近 refresh 时间。
 	mu sync.Mutex
+	// statusMu 保护只读的管理同步状态，错误只以稳定 code 暴露。
+	statusMu   sync.RWMutex
+	syncStatus service.PricingCredentialSyncStatus
 	// running 表示 metadata runner 当前是否处于 Run 生命周期内。
 	running bool
 	// notificationMode 表示 CPA 已支持通知，周期 tick 应该 no-op。
@@ -50,8 +64,10 @@ func NewMetadataSyncRunner(syncer MetadataSyncer, interval time.Duration) *Metad
 		interval:          interval,
 		refreshDebounce:   metadataSyncRefreshDebounceDefault,
 		refreshRequests:   make(chan struct{}, 1),
+		immediateRequests: make(chan struct{}, 1),
 		connectedRequests: make(chan struct{}, 1),
 		now:               time.Now,
+		syncStatus:        service.PricingCredentialSyncStatus{State: "idle"},
 	}
 }
 
@@ -92,6 +108,14 @@ func (r *MetadataSyncRunner) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			// 应用关闭是正常退出，不返回错误。
 			return nil
+		case <-r.immediateRequests:
+			// 启动和管理员刷新不依赖 Redis ingest 连接，且共用单 runner 串行执行。
+			if ctx.Err() != nil {
+				return nil
+			}
+			r.markActivated()
+			r.runSync(ctx)
+			resetTimer(periodic, r.interval)
 		case <-r.connectedRequests:
 			// 连接成功是首次同步的门闩；无论当前是否通知模式，都执行一次。
 			// 关停优先于连接触发的同步，避免应用退出时再发起外部请求。
@@ -152,6 +176,55 @@ func (r *MetadataSyncRunner) MarkRefreshSupported() {
 		// CPA 明确支持 refresh 通知后，记录一次模式切换。
 		logrus.WithField("source", "support_refresh").Info("metadata sync switched to notification mode")
 	}
+}
+
+// RequestStartupSync schedules the non-blocking post-configuration sync. It does
+// not wait for the Redis ingest connection, so a slow CPA cannot delay startup.
+func (r *MetadataSyncRunner) RequestStartupSync() {
+	r.requestImmediateSync()
+}
+
+// RequestPricingCredentialRefresh schedules an administrator-triggered refresh.
+// Requests are coalesced and executed by the same single runner as periodic sync.
+func (r *MetadataSyncRunner) RequestPricingCredentialRefresh() {
+	r.requestImmediateSync()
+}
+
+func (r *MetadataSyncRunner) requestImmediateSync() {
+	if r == nil {
+		return
+	}
+	r.statusMu.Lock()
+	if !r.syncStatus.InFlight {
+		r.syncStatus.State = "queued"
+	}
+	r.statusMu.Unlock()
+	select {
+	case r.immediateRequests <- struct{}{}:
+	default:
+	}
+}
+
+func (r *MetadataSyncRunner) PricingCredentialSyncStatus() service.PricingCredentialSyncStatus {
+	if r == nil {
+		return service.PricingCredentialSyncStatus{State: "unavailable"}
+	}
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+	status := r.syncStatus
+	if status.LastAttemptAt != nil {
+		value := *status.LastAttemptAt
+		status.LastAttemptAt = &value
+	}
+	if status.LastSuccessAt != nil {
+		value := *status.LastSuccessAt
+		status.LastSuccessAt = &value
+	}
+	if status.LastFailureAt != nil {
+		value := *status.LastFailureAt
+		status.LastFailureAt = &value
+	}
+	return status
 }
 
 func (r *MetadataSyncRunner) RequestMetadataRefresh() {
@@ -215,6 +288,10 @@ func (r *MetadataSyncRunner) validate() error {
 	if r.refreshRequests == nil {
 		r.refreshRequests = make(chan struct{}, 1)
 	}
+	// 测试可能清空立即刷新 channel，运行前恢复单缓冲队列。
+	if r.immediateRequests == nil {
+		r.immediateRequests = make(chan struct{}, 1)
+	}
 	// 测试可能清空连接信号 channel，运行前恢复单缓冲队列。
 	if r.connectedRequests == nil {
 		r.connectedRequests = make(chan struct{}, 1)
@@ -240,10 +317,68 @@ func (r *MetadataSyncRunner) NotifyIngestConnected() {
 
 func (r *MetadataSyncRunner) runSync(ctx context.Context) {
 	// 所有 metadata 同步都从这里串行调用 SyncMetadata。
-	if err := r.syncer.SyncMetadata(ctx); err != nil {
-		// 单次同步失败不退出 runner，下一次连接信号、tick 或 refresh 再按既有调度尝试。
-		logrus.WithError(err).Error("metadata sync failed")
+	r.recordSyncAttempt()
+	var err error
+	if directorySyncer, ok := r.syncer.(credentialDirectorySyncer); ok {
+		err = directorySyncer.SyncCredentialDirectory(ctx)
+	} else {
+		err = r.syncer.SyncMetadata(ctx)
+		if err == nil {
+			if subjectSyncer, ok := r.syncer.(pricingCredentialSubjectSyncer); ok {
+				err = subjectSyncer.SyncPricingCredentialSubjects(ctx)
+			}
+		}
 	}
+	if err != nil {
+		// 单次同步失败不退出 runner，下一次连接信号、tick 或 refresh 再按既有调度尝试。
+		// 对外状态只保留稳定错误码；详细错误不得进入日志，避免上游响应泄露敏感数据。
+		r.recordSyncFailure()
+		logrus.Error("metadata sync failed")
+		return
+	}
+	r.recordSyncSuccess()
+}
+
+func (r *MetadataSyncRunner) recordSyncAttempt() {
+	now := r.runnerNow()
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.syncStatus.State = "running"
+	r.syncStatus.InFlight = true
+	r.syncStatus.LastAttemptAt = timePtr(now)
+}
+
+func (r *MetadataSyncRunner) recordSyncSuccess() {
+	now := r.runnerNow()
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.syncStatus.State = "succeeded"
+	r.syncStatus.InFlight = false
+	r.syncStatus.LastSuccessAt = timePtr(now)
+	r.syncStatus.LastErrorCode = ""
+}
+
+func (r *MetadataSyncRunner) recordSyncFailure() {
+	now := r.runnerNow()
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.syncStatus.State = "failed"
+	r.syncStatus.InFlight = false
+	r.syncStatus.LastFailureAt = timePtr(now)
+	r.syncStatus.LastErrorCode = "sync_failed"
+}
+
+func (r *MetadataSyncRunner) runnerNow() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+func timePtr(value time.Time) *time.Time {
+	return &value
 }
 
 func (r *MetadataSyncRunner) setRunning(running bool) {

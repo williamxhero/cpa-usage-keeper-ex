@@ -51,7 +51,11 @@ type updatePricingRequest struct {
 	LegacyCacheCreationPricePer1M json.RawMessage `json:"cache_creation_price_per_1m"`
 }
 
-func registerPricingRoutes(router gin.IRoutes, pricingProvider service.PricingProvider) {
+func registerPricingRoutes(router gin.IRoutes, pricingProvider service.PricingProvider, syncProviders ...service.PricingCredentialSyncProvider) {
+	var credentialSyncProvider service.PricingCredentialSyncProvider
+	if len(syncProviders) > 0 {
+		credentialSyncProvider = syncProviders[0]
+	}
 	router.GET("/models/used", func(c *gin.Context) {
 		if pricingProvider == nil {
 			c.JSON(http.StatusOK, usedModelsResponse{Models: []string{}})
@@ -126,7 +130,7 @@ func registerPricingRoutes(router gin.IRoutes, pricingProvider service.PricingPr
 	})
 
 	registerPricingRuleRoutes(router, pricingProvider)
-	registerPricingCredentialRoutes(router, pricingProvider)
+	registerPricingCredentialRoutes(router, pricingProvider, credentialSyncProvider)
 	registerPricingCredentialDefaultRoutes(router, pricingProvider)
 	registerPricingChannelRoutes(router, pricingProvider)
 	registerPricingChannelModelRoutes(router, pricingProvider)

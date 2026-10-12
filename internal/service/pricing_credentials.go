@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"time"
 
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/pricing"
@@ -27,6 +28,22 @@ type PricingCredentialProvider interface {
 	ListCredentialPricingSubjects(context.Context) ([]servicedto.PricingCredential, error)
 	BindPricingCredential(context.Context, int64) (servicedto.PricingCredential, error)
 	ResolvePricingCredential(context.Context, string, string) (servicedto.PricingCredential, error)
+}
+
+// PricingCredentialSyncStatus is the safe operational status exposed to
+// administrators. It intentionally contains no upstream error text or secret.
+type PricingCredentialSyncStatus struct {
+	State         string     `json:"state"`
+	InFlight      bool       `json:"in_flight"`
+	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
+	LastErrorCode string     `json:"last_error_code,omitempty"`
+}
+
+type PricingCredentialSyncProvider interface {
+	RequestPricingCredentialRefresh()
+	PricingCredentialSyncStatus() PricingCredentialSyncStatus
 }
 
 func (s *pricingService) ListPricingCredentials(ctx context.Context) ([]servicedto.PricingCredential, error) {
@@ -113,7 +130,10 @@ func (s *pricingService) BindPricingCredential(ctx context.Context, directoryID 
 			}
 			result = pricingCredential(identity, subjects)
 			if result.BindingStatus == "bound" {
-				return ErrCredentialBindingConflict
+				// Automatic discovery may have already published the exact
+				// relation. Treat an administrator bind as idempotent so the
+				// legacy endpoint remains usable after discovery.
+				return nil
 			}
 			if result.BindingStatus != "unbound" {
 				return ErrCredentialNotSelectable

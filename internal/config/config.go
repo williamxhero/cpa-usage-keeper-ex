@@ -20,7 +20,9 @@ const (
 	DefaultTimeZone                = "Asia/Shanghai"
 	publicLoginPasswordPlaceholder = "replace-with-your-login-password"
 	RedisQueueBatchSizeDefault     = 10000
-	MetadataSyncIntervalDefault    = 30 * time.Second
+	// Credential metadata refresh is intentionally conservative: a failed
+	// upstream read must not churn the published directory.
+	MetadataSyncIntervalDefault    = 15 * time.Minute
 	QuotaRefreshWorkerLimitDefault = 10
 	QuotaRefreshWorkerLimitMax     = 100
 )

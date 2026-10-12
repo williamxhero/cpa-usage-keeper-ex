@@ -15,6 +15,14 @@ import (
 
 // syncAuthFiles 将 CPA auth_files 映射为 OAuth 类 usage identities，并按 auth_type 整体替换。
 func syncAuthFiles(ctx context.Context, db *gorm.DB, result *response.AuthFilesResult, fetchErr error, now time.Time) error {
+	return syncAuthFilesWithReplacement(ctx, db, result, fetchErr, now, false)
+}
+
+func syncAuthFilesInTransaction(ctx context.Context, tx *gorm.DB, result *response.AuthFilesResult, fetchErr error, now time.Time) error {
+	return syncAuthFilesWithReplacement(ctx, tx, result, fetchErr, now, true)
+}
+
+func syncAuthFilesWithReplacement(ctx context.Context, db *gorm.DB, result *response.AuthFilesResult, fetchErr error, now time.Time, inTransaction bool) error {
 	// fetch failure 没有完整新列表，必须保留所有本地 Auth File identities。
 	if fetchErr != nil {
 		// 保持原有来源错误包装。
@@ -38,7 +46,13 @@ func syncAuthFiles(ctx context.Context, db *gorm.DB, result *response.AuthFilesR
 		identities = append(identities, authFileUsageIdentity(file))
 	}
 	// Auth Files 成功空列表也进入整个 auth type replace，保持旧 stale 语义。
-	if err := repository.ReplaceUsageIdentitiesForAuthType(ctx, db, identities, entities.UsageIdentityAuthTypeAuthFile, now); err != nil {
+	var err error
+	if inTransaction {
+		err = repository.ReplaceUsageIdentitiesForAuthTypeInTransaction(ctx, db, identities, entities.UsageIdentityAuthTypeAuthFile, now)
+	} else {
+		err = repository.ReplaceUsageIdentitiesForAuthType(ctx, db, identities, entities.UsageIdentityAuthTypeAuthFile, now)
+	}
+	if err != nil {
 		// repository failure 使用原 service 上下文包装。
 		return fmt.Errorf("sync auth file usage identities: %w", err)
 	}

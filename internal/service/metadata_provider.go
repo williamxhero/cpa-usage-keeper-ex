@@ -13,6 +13,14 @@ import (
 
 // persistProviderMetadata 把确定性 snapshot 映射为 AI Provider identities，并区分持久化错误与 fetch warning。
 func persistProviderMetadata(ctx context.Context, db *gorm.DB, snapshot providermetadata.Snapshot, fetchErr error, now time.Time) (error, error) {
+	return persistProviderMetadataWithReplacement(ctx, db, snapshot, fetchErr, now, false)
+}
+
+func persistProviderMetadataInTransaction(ctx context.Context, tx *gorm.DB, snapshot providermetadata.Snapshot, fetchErr error, now time.Time) (error, error) {
+	return persistProviderMetadataWithReplacement(ctx, tx, snapshot, fetchErr, now, true)
+}
+
+func persistProviderMetadataWithReplacement(ctx context.Context, db *gorm.DB, snapshot providermetadata.Snapshot, fetchErr error, now time.Time, inTransaction bool) (error, error) {
 	// nil 数据库属于 persistence error，并沿用旧逻辑抑制本轮 provider fetch warning。
 	if db == nil {
 		// 第一个返回值参与 upsert error，第二个 warning 为空。
@@ -81,7 +89,13 @@ func persistProviderMetadata(ctx context.Context, db *gorm.DB, snapshot provider
 		identities = append(identities, identity)
 	}
 	// 一次 scoped replace 接收全部成功 provider types，保留旧单事务 stale/restore 语义。
-	if err := repository.ReplaceUsageIdentitiesForProviderTypes(ctx, db, identities, snapshot.FetchedProviderTypes, now); err != nil {
+	var err error
+	if inTransaction {
+		err = repository.ReplaceUsageIdentitiesForProviderTypesInTransaction(ctx, db, identities, snapshot.FetchedProviderTypes, now)
+	} else {
+		err = repository.ReplaceUsageIdentitiesForProviderTypes(ctx, db, identities, snapshot.FetchedProviderTypes, now)
+	}
+	if err != nil {
 		// persistence error 回滚 provider 单事务，并抑制同轮 fetch warning。
 		return fmt.Errorf("sync provider usage identities: %w", err), nil
 	}
