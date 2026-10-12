@@ -38,15 +38,30 @@ type ModelsFetcher interface {
 }
 
 type pricingService struct {
-	db             *gorm.DB
-	modelsFetcher  ModelsFetcher
-	catalog        *pricing.Catalog
-	mutationMu     *sync.Mutex
-	metadataClient *pricingmetadata.Client
+	db               *gorm.DB
+	modelsFetcher    ModelsFetcher
+	catalog          *pricing.Catalog
+	mutationMu       *sync.Mutex
+	metadataClient   *pricingmetadata.Client
+	officialMu       sync.Mutex
+	officialPreviews map[string]officialRefreshCandidate
 }
 
 func NewPricingService(db *gorm.DB, catalog *pricing.Catalog, modelsFetcher ...ModelsFetcher) PricingProvider {
-	service := &pricingService{db: db, catalog: requirePricingCatalog(catalog), mutationMu: catalog.MutationMutex(), metadataClient: pricingmetadata.NewClient(nil)}
+	return newPricingService(db, catalog, pricingmetadata.NewClient(nil), modelsFetcher...)
+}
+
+// NewPricingServiceWithMetadataClient injects an upstream client for isolated
+// refresh tests and for callers that need custom transport/timeout policy.
+func NewPricingServiceWithMetadataClient(db *gorm.DB, catalog *pricing.Catalog, metadataClient *pricingmetadata.Client, modelsFetcher ...ModelsFetcher) PricingProvider {
+	if metadataClient == nil {
+		metadataClient = pricingmetadata.NewClient(nil)
+	}
+	return newPricingService(db, catalog, metadataClient, modelsFetcher...)
+}
+
+func newPricingService(db *gorm.DB, catalog *pricing.Catalog, metadataClient *pricingmetadata.Client, modelsFetcher ...ModelsFetcher) PricingProvider {
+	service := &pricingService{db: db, catalog: requirePricingCatalog(catalog), mutationMu: catalog.MutationMutex(), metadataClient: metadataClient}
 	if len(modelsFetcher) > 0 {
 		service.modelsFetcher = modelsFetcher[0]
 	}

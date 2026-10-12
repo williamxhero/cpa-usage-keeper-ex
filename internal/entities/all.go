@@ -8,6 +8,8 @@ func All() []any {
 		&ErrorEvent{},
 		&RedisUsageInbox{},
 		&ModelPriceSetting{},
+		&OfficialModelPrice{},
+		&OfficialModelPriceAlias{},
 		&ModelPriceRule{},
 		&CredentialPricingSubject{},
 		&CredentialPricingAssociation{},

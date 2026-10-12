@@ -20,6 +20,8 @@ func TestAllIncludesCoreModels(t *testing.T) {
 		&ErrorEvent{},
 		&RedisUsageInbox{},
 		&ModelPriceSetting{},
+		&OfficialModelPrice{},
+		&OfficialModelPriceAlias{},
 		&ModelPriceRule{},
 		&CredentialPricingSubject{},
 		&CredentialPricingAssociation{},

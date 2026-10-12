@@ -144,6 +144,12 @@ func OpenDatabase(cfg config.Config) (*gorm.DB, error) {
 		if err := migration.MarkAllAsApplied(db); err != nil {
 			return nil, fmt.Errorf("mark schema migrations applied: %w", err)
 		}
+		// Fresh databases skip individual migration bodies; still perform the
+		// idempotent legacy-price seed in case fixtures created model settings
+		// before opening the database.
+		if err := SeedOfficialModelPrices(db); err != nil {
+			return nil, fmt.Errorf("seed official model prices: %w", err)
+		}
 		// 新库初始化已完成，连接池开始由调用方负责生命周期。
 		closeOnError = false
 		return db, nil
