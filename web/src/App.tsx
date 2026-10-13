@@ -9,6 +9,7 @@ import { AppFooter } from './components/AppFooter';
 import { isKeyViewerPath, type KeyViewerPath } from './features/key-viewer';
 import { KeyAnalysisPage } from './pages/KeyAnalysisPage';
 import { KeyOverviewPage } from './pages/KeyOverviewPage';
+import { KeyPricingPage } from './pages/KeyPricingPage';
 import { KeyRankingPage } from './pages/KeyRankingPage';
 import { LoginPage } from './pages/LoginPage';
 import { UsagePage } from './pages/UsagePage';
@@ -180,7 +181,9 @@ function App() {
       ? <KeyAnalysisPage apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />
       : keyViewerPath === '/key-ranking'
         ? <KeyRankingPage apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />
-        : <KeyOverviewPage page={keyViewerPath === '/key-realtime' ? 'realtime' : 'overview'} apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />;
+        : keyViewerPath === '/key-pricing'
+          ? <KeyPricingPage apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />
+          : <KeyOverviewPage page={keyViewerPath === '/key-realtime' ? 'realtime' : 'overview'} apiKey={sessionAPIKey} onNavigate={handleKeyViewerNavigate} onAuthRequired={clearSession} />;
   } else {
     page = <UsagePage onAuthRequired={clearSession} />;
   }

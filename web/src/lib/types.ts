@@ -1,3 +1,5 @@
+export * from './types/pricingMatrix'
+
 export type AuthRole = 'admin' | 'api_key_viewer'
 
 export interface AuthSessionAPIKeySummary {
@@ -91,6 +93,10 @@ export interface PriceEstimate {
   has_known: boolean
   status: 'complete' | 'partial' | 'unavailable'
   unavailable_reason?: string
+  source?: string
+  matched_model?: string
+  matched_by?: string
+  snapshot_id?: string
 }
 
 export interface DualCosts {
@@ -99,6 +105,9 @@ export interface DualCosts {
 }
 
 export interface PricingSelection {
+  pricing_source?: string
+  pricing_status?: 'complete' | 'partial' | 'unavailable'
+  pricing_snapshot_id?: string
   snapshot_id: string
   scope: string
   mode: string

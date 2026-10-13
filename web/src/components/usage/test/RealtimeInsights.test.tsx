@@ -17,7 +17,7 @@ beforeEach(async () => { await i18n.changeLanguage('en'); charts.mixed = []; cha
 it.each([
   { amount: 0, status: 'complete' as const, expected: '$0.0000', state: 'Known zero' },
   { amount: 5, status: 'partial' as const, expected: '$5.00', state: 'Partial · known subtotal' },
-  { amount: null, status: 'unavailable' as const, expected: '—', state: 'Unavailable' },
+  { amount: null, status: 'unavailable' as const, expected: 'Unavailable', state: 'Unavailable' },
 ])('shows authoritative $status costs in the realtime summary, not a fallback zero or multiplier guess', ({ amount, status, expected, state }) => {
   const configured: PriceEstimate = { total_cost_usd: amount, uncached_input_cost_usd: amount ?? 0, output_cost_usd: 0, cache_read_cost_usd: 0, cache_write_cost_usd: 0, has_known: amount !== null, complete: status === 'complete', status };
   const reference: PriceEstimate = { ...configured, total_cost_usd: 8, has_known: true, complete: true, status: 'complete' };

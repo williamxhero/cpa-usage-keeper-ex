@@ -1,0 +1,92 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.search {
+  flex: 1 1 240px;
+  min-width: 0;
+  :global(.form-group) { margin-bottom: 0; }
+}
+.error {
+  color: var(--danger-color);
+  background: var(--bg-error-light);
+  padding: 12px;
+  border-radius: 14px;
+  overflow-wrap: anywhere;
+}
+.scroll {
+  max-width: 100%;
+  max-height: 560px;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+.table {
+  width: 100%;
+  min-width: 1120px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  th, td {
+    padding: 10px 12px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--border-color);
+  }
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-secondary);
+  }
+  th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: 240px;
+    min-width: 200px;
+    max-width: 280px;
+    background: var(--bg-primary);
+    box-shadow: 1px 0 var(--border-color);
+    overflow-wrap: anywhere;
+  }
+  thead th:first-child { z-index: 3; background: var(--bg-secondary); }
+  tbody tr:last-child > * { border-bottom: 0; }
+}
+.identity, .metadata, .status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.identity small { font-weight: normal; color: var(--text-secondary); }
+.price { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.preview { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+@media (max-width: 600px) {
+  .search { flex-basis: 100%; }
+  .actions :global(.btn) { flex: 1 1 auto; }
+  .rates { grid-template-columns: minmax(0, 1fr); }
+  .table th:first-child { min-width: 150px; width: 150px; max-width: 150px; }
+}

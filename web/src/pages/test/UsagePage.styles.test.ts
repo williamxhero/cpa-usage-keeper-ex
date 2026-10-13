@@ -44,46 +44,35 @@ describe('UsagePage responsive layout and accessibility', () => {
     expect(styles).toContain('@media (max-width: 600px)');
     expect(styles).toContain('white-space: normal; overflow: visible; overflow-wrap: anywhere;');
   });
-  it('mounts separate identity migration/correction with safe wrapping and mobile actions', () => {
-    const card = readSource(new URL('../../components/usage/pricing/PricingIdentityMigrationCard.tsx', import.meta.url))
-    const styles = readSource(new URL('../../components/usage/pricing/PricingIdentityMigrationCard.module.scss', import.meta.url))
-    expect(readSource(new URL('../UsagePage.tsx', import.meta.url))).toContain('<PricingIdentityMigrationCard onChanged={handlePricingChanged} />')
-    expect(card).toContain('pricing_identity_migration.migrate_title')
-    expect(card).toContain('pricing_identity_migration.correction_title')
-    expect(styles).toMatch(/\.body\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/)
-    expect(styles).toMatch(/\.selector\s*\{[^}]*width:\s*100%;/)
-    expect(styles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
-    expect(styles).toContain('@media (max-width: 600px)')
-    expect(styles).toContain('.actions :global(.btn) { flex: 1 1 auto; }')
+  it('removes every legacy pricing entry and its background loader from settings', () => {
+    const page = readSource(new URL('../UsagePage.tsx', import.meta.url))
+    for (const name of ['PricingIdentityMigrationCard', 'PricingCredentialDefaultsCard', 'PricingChannelsCard', 'PricingCredentialModelsCard', 'PricingChannelModelsCard', 'PricingCredentialsCard', 'PriceSettingsCard', 'usePricingData']) {
+      expect(page).not.toContain(name)
+    }
+    expect(page).toContain('<PricingMatrixSettings')
+    expect(page).toContain('<PricingOfficialCard')
   })
 
-  it('mounts model exceptions as a distinct card reusing narrow-screen wrapping styles', () => {
-    const card = readSource(new URL('../../components/usage/pricing/PricingCredentialModelsCard.tsx', import.meta.url))
+  it('mounts the matrix with explicit administrator capability and shared authentication recovery', () => {
     const page = readSource(new URL('../UsagePage.tsx', import.meta.url))
-    expect(page).toContain('<PricingCredentialModelsCard onChanged={handlePricingChanged} />')
-    expect(card).toContain("import styles from './PricingCredentialDefaultsCard.module.scss'")
-    expect(card).toContain('dropdownClassName={styles.options}')
-    expect(card).toContain('className={styles.readback}')
-    expect(card).toMatch(/className=\{styles.actions\}><div className=\{styles.selector\}>/)
+    const matrix = page.slice(page.indexOf('<PricingMatrixSettings'), page.indexOf('<PricingOfficialCard'))
+    expect(matrix).toContain('canManage={true}')
+    expect(matrix).toContain('onAuthRequired={onAuthRequired}')
+    expect(matrix).toContain('onChanged={handlePricingChanged}')
+    expect(matrix).toContain('refreshRevision={pricingSettingsRevision}')
   })
 
-  it('mounts channel model exceptions only in the existing admin settings surface with shared mobile styles', () => {
-    const card = readSource(new URL('../../components/usage/pricing/PricingChannelModelsCard.tsx', import.meta.url))
+  it('mounts official maintenance only in the administrator settings surface', () => {
     const page = readSource(new URL('../UsagePage.tsx', import.meta.url))
-    const app = readSource(new URL('../../App.tsx', import.meta.url))
     const settingsStart = page.indexOf("{activeTab === 'settings' && (\n              <div className={styles.settingsSections}>")
     expect(settingsStart).toBeGreaterThan(0)
-    expect(page.indexOf('<PricingChannelModelsCard onChanged={handlePricingChanged} />')).toBeGreaterThan(settingsStart)
-    expect(app).toMatch(/else if \(authRole === 'api_key_viewer'\)[\s\S]*KeyOverviewPage[\s\S]*else\s*\{\s*page = <UsagePage/)
-    expect(card).toContain("import styles from './PricingCredentialDefaultsCard.module.scss'")
-    expect(card).toContain('dropdownClassName={styles.options}')
-    expect(card).toContain('className={styles.readback}'); expect(card).toContain('className={styles.fixedRates}')
-    expect(card).toContain('inputMode="decimal"')
-    expect(card).toContain('count: choice.member_subject_ids.length')
-    expect(card).not.toContain('fetchCredentialPricingSubjects')
-    expect(card).not.toContain('updatePricing(')
-    expect(credentialDefaultsStyles).toMatch(/\.options\s*\[role='option'\]\s*>\s*span\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/)
-    expect(credentialDefaultsStyles).toMatch(/@media\s*\(max-width:\s*600px\)[\s\S]*\.fixedRates\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+    const officialStart = page.indexOf('<PricingOfficialCard')
+    expect(officialStart).toBeGreaterThan(settingsStart)
+    const official = page.slice(officialStart, page.indexOf('/>', officialStart))
+    expect(official).toContain('canManage={true}')
+    expect(official).toContain('onAuthRequired={onAuthRequired}')
+    expect(official).toContain('onChanged={handlePricingChanged}')
+    expect(official).toContain('onNotice={showTopNotice}')
   })
 
   it('keeps fixed tariff fields responsive with four labeled decimal inputs', () => {

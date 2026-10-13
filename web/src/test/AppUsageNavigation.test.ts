@@ -32,6 +32,11 @@ describe('App usage-page route authorization', () => {
     expect(shouldNormalizeRolePath('api_key_viewer', '/key-analysis')).toBe(false);
     expect(getRoleTargetPath('api_key_viewer', '/key-ranking')).toBe('/key-ranking');
     expect(shouldNormalizeRolePath('api_key_viewer', '/key-ranking')).toBe(false);
+    expect(getRoleTargetPath('api_key_viewer', '/key-pricing')).toBe('/key-pricing');
+    expect(shouldNormalizeRolePath('api_key_viewer', '/key-pricing')).toBe(false);
+    expect(getRoleTargetPath('api_key_viewer', '/key-pricing', true)).toBe('/key-pricing');
+    expect(getRoleTargetPath('api_key_viewer', '/key-pricing/')).toBe('/key-overview');
+    expect(getRoleTargetPath('api_key_viewer', '//example.com/key-pricing')).toBe('/key-overview');
     expect(getRoleTargetPath('api_key_viewer', '/key-analysis/')).toBe('/key-overview');
     expect(getRoleTargetPath('api_key_viewer', '//example.com/key-analysis')).toBe('/key-overview');
   });

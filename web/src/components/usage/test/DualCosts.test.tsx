@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DualCosts, PriceEstimate, PricingSelection } from '@/lib/types';
-import { DualCostsDisplay, PricingExplanation } from '../DualCosts';
+import { dualCostLines, DualCostsDisplay, PricingExplanation } from '../DualCosts';
 import { fetchUsageEvents } from '@/lib/api';
 import { StatCards } from '../StatCards';
 vi.mock('react-i18next', async (importOriginal) => ({ ...await importOriginal<typeof import('react-i18next')>(), useTranslation: () => ({ t: (key: string) => key }) }));
@@ -29,6 +29,45 @@ describe('authoritative dual cost display', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('api_key_id=safe-id');
     expect(container.textContent).toContain('$2.00'); expect(container.textContent).toContain('$10.00');
     expect(container.textContent).toContain('cost_estimates.partial');
+  });
+  it('shows resolved source, match scope, and snapshot while keeping missing prices unavailable', () => {
+    const costs: DualCosts = {
+      configured: { ...estimate(null), unavailable_reason: 'missing_segments', source: 'unavailable', matched_model: 'vendor/model-a', matched_by: 'model', snapshot_id: 'pricing-snapshot-a' },
+      reference: { ...estimate(2), source: 'openrouter', matched_model: 'vendor/model-a', matched_by: 'model_alias', snapshot_id: 'pricing-snapshot-b' },
+    };
+    const selection: PricingSelection = { snapshot_id: 'usage-snapshot-a', scope: 'unavailable', mode: 'unavailable', pricing_source: 'unavailable', pricing_status: 'unavailable', pricing_snapshot_id: 'pricing-snapshot-a', baseline_model: 'vendor/model-a', baseline_by: 'model', dual_costs: costs };
+    act(() => root.render(<><DualCostsDisplay costs={costs} /><PricingExplanation selection={selection} /></>));
+    expect(container.querySelector('[data-cost-estimate="configured"] strong')?.textContent).toBe('cost_estimates.unavailable');
+    expect(container.querySelector('[data-cost-estimate="reference"] strong')?.textContent).toBe('$2.00');
+    expect(container.textContent).toContain('cost_estimates.sources.unavailable');
+    expect(container.textContent).toContain('cost_estimates.sources.openrouter');
+    expect(container.textContent).toContain('vendor/model-a');
+    expect(container.textContent).toContain('pricing-snapshot-a');
+    expect(container.textContent).toContain('cost_estimates.reasons.missing_segments');
+  });
+  it('keeps tooltips aligned with source evidence and hides absent legacy pricing fields', () => {
+    const costs: DualCosts = {
+      configured: { ...estimate(2), source: 'credential_matrix', matched_model: 'model-a', matched_by: 'model', snapshot_id: 'matrix-snapshot' },
+      reference: { ...estimate(1), source: 'official', matched_model: 'model-a', matched_by: 'model_alias', snapshot_id: 'official-snapshot' },
+    };
+    const lines = dualCostLines(costs, key => key);
+    expect(lines[0]).toContain('cost_estimates.sources.credential_matrix');
+    expect(lines[0]).toContain('cost_estimates.matched_by: cost_estimates.model');
+    expect(lines[0]).toContain('cost_estimates.matched_model: model-a');
+    expect(lines[0]).toContain('cost_estimates.pricing_snapshot: matrix-snapshot');
+
+    const selection: PricingSelection = {
+      snapshot_id: 'usage-snapshot', scope: 'credential_matrix', mode: 'fixed',
+      pricing_source: 'credential_matrix', pricing_status: 'complete', pricing_snapshot_id: 'matrix-snapshot',
+      baseline_model: 'model-a', baseline_by: 'model', dual_costs: costs,
+    };
+    act(() => root.render(<PricingExplanation selection={selection} />));
+    const labels = Array.from(container.querySelectorAll('details dl dt')).map(node => node.textContent);
+    expect(labels).toContain('cost_estimates.scope');
+    expect(labels).toContain('cost_estimates.source');
+    expect(labels).not.toContain('cost_estimates.channel');
+    expect(labels).not.toContain('cost_estimates.multiplier');
+    expect(labels).not.toContain('cost_estimates.legacy_model_multiplier');
   });
   it('keeps a zero multiplier unavailable without a baseline, while fixed zero is known', () => {
     const missing = { ...estimate(null), unavailable_reason: 'missing_baseline' };
@@ -77,11 +116,11 @@ describe('authoritative dual cost display', () => {
     for (const group of container.querySelectorAll('[data-cost-estimate="configured"]')) {
       expect(group.textContent).toContain('cost_estimates.reasons.retained_evidence_incomplete');
       expect(group.textContent).toContain(`cost_estimates.${status}`);
-      expect(group.querySelector('strong')?.textContent).toBe(amount === null ? '—' : '$2.00');
+      expect(group.querySelector('strong')?.textContent).toBe(amount === null ? 'cost_estimates.unavailable' : '$2.00');
     }
     for (const group of container.querySelectorAll('[data-cost-estimate="reference"]')) {
       expect(group.textContent).toContain('cost_estimates.reasons.missing_baseline');
-      expect(group.querySelector('strong')?.textContent).toBe('—');
+      expect(group.querySelector('strong')?.textContent).toBe('cost_estimates.unavailable');
     }
     const explanationReasons = Array.from(container.querySelectorAll('details > p')).map(node => node.textContent);
     expect(explanationReasons).toContain('cost_estimates.reasons.retained_evidence_incomplete');

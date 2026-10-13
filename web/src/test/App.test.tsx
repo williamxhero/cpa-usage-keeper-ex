@@ -36,6 +36,7 @@ vi.mock('../pages/KeyOverviewPage', () => ({
 }));
 vi.mock('../pages/KeyAnalysisPage', () => ({ KeyAnalysisPage: () => <div>Analysis</div> }));
 vi.mock('../pages/KeyRankingPage', () => ({ KeyRankingPage: () => <div>Ranking</div> }));
+vi.mock('../pages/KeyPricingPage', () => ({ KeyPricingPage: () => <div>Pricing</div> }));
 
 describe('App session and navigation', () => {
   let container: HTMLDivElement;
@@ -68,6 +69,14 @@ describe('App session and navigation', () => {
     expect(useUsageStatsStore.getState()).toMatchObject({ error: '', realtimeError: '' });
     expect(container.querySelector('[data-key-login]')).not.toBeNull();
     expect(container.querySelector('footer')!.dataset.loadVersion).toBe('false');
+  });
+
+  it('renders the readonly pricing page from a direct API key viewer link', async () => {
+    window.history.replaceState(null, '', '/cpa/key-pricing?embed=cpamc');
+    api.getSession.mockResolvedValue({ authenticated: true, role: 'api_key_viewer' });
+    await act(async () => root.render(<App />));
+    expect(container.textContent).toContain('Pricing');
+    expect(window.location.pathname + window.location.search).toBe('/cpa/key-pricing?embed=cpamc');
   });
 
   it('preserves the embed query through session normalization and viewer navigation', async () => {
