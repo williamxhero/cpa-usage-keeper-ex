@@ -379,6 +379,27 @@ func TestCredentialMatrixConcurrentReadersSeeCompleteOldOrNewSnapshot(t *testing
 		if len(page.Cells) != 2 || page.TotalModels != 2 || page.TotalCredentials != 2 || page.SnapshotID == "" {
 			return false
 		}
+		if len(page.EffectiveCells) != 4 {
+			return false
+		}
+		for _, effective := range page.EffectiveCells {
+			if effective.SnapshotID != page.SnapshotID {
+				return false
+			}
+			if effective.Covered {
+				matched := false
+				for _, sparse := range page.Cells {
+					if sparse.SubjectID == effective.SubjectID && sparse.CanonicalModelID == effective.CanonicalModelID {
+						matched = reflect.DeepEqual(effective.CredentialMatrixCell, sparse)
+					}
+				}
+				if !matched || effective.Status != "complete" {
+					return false
+				}
+			} else if effective.Status != "unavailable" || effective.PromptPricePer1M != nil {
+				return false
+			}
+		}
 		cellMatches := func(cell service.CredentialMatrixCell, subject, model, style string, values [4]float64) bool {
 			fixed := pricing.FixedTariff{PricingStyle: cell.PricingStyle, PromptPricePer1M: cell.PromptPricePer1M, CompletionPricePer1M: cell.CompletionPricePer1M, CacheReadPricePer1M: cell.CacheReadPricePer1M, CacheWritePricePer1M: cell.CacheWritePricePer1M}
 			return cell.SubjectID == subject && cell.CanonicalModelID == model && cell.Covered && cell.Mode == "fixed" && cell.Source == pricing.CredentialMatrixSource && cell.SnapshotID == page.SnapshotID && matches(fixed, style, values)

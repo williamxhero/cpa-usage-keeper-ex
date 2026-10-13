@@ -176,6 +176,16 @@ describe('CredentialRequestEventsList', () => {
     vi.useRealTimers()
   })
 
+  it.each([[3, 'complete', '$3.00'], [0, 'complete', '$0'], [2, 'partial', '$2.00'], [null, 'unavailable', '—']] as const)('shows one configured amount in credential requests for %s/%s', async (amount, status, expected) => {
+    const configured = { total_cost_usd: amount, uncached_input_cost_usd: amount ?? 0, output_cost_usd: 0, cache_read_cost_usd: 0, cache_write_cost_usd: 0, complete: status === 'complete', has_known: amount !== null, status };
+    await act(async () => root.render(<CredentialRequestEventsList {...credentialEventListDefaults} events={[{ ...event, dual_costs: { configured, reference: { ...configured, total_cost_usd: 99, has_known: true, status: 'complete' } } }]} />));
+    const cell = container.querySelector('[data-request-cost]')?.closest('td');
+    expect(cell?.textContent).toBe(expected);
+    expect(cell?.textContent).not.toContain('reference');
+    expect(cell?.querySelector('details')).toBeNull();
+    expect(container.textContent).not.toContain('$99.00');
+  });
+
   it('renders the compact credential event columns with stacked request metadata', async () => {
     await act(async () => root.render(
       <CredentialRequestEventsList
@@ -201,7 +211,7 @@ describe('CredentialRequestEventsList', () => {
     expect(container.textContent).not.toContain('usage_stats.credentials_detail_cache_write')
     expect(container.textContent).not.toContain('usage_stats.reasoning_tokens 80')
     expect(container.textContent).toContain('42.5 t/s')
-    expect(container.textContent).toContain('usage_stats.credentials_detail_pricing_style_openai')
+    expect(container.querySelector('[data-request-cost]')?.closest('td')?.textContent).toBe('$0.0123')
     expect(container.textContent).not.toContain('usage_stats.model_price_style usage_stats.model_price_style_openai')
     expect(container.querySelector('[data-credential-request-timestamp="1"]')?.textContent)
       .toBe('10:00:002026/08/17')

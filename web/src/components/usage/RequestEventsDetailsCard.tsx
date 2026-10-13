@@ -52,7 +52,7 @@ import {
 } from './requestEventColumns';
 import { RequestEventsColumnSettingsModal } from './RequestEventsColumnSettingsModal';
 import { RequestEventLogModal } from './RequestEventLogModal';
-import { DualCostsDisplay, PricingExplanation } from './DualCosts';
+import { RequestCost } from './RequestCost';
 import { RequestEventResultBadge } from './RequestEventResultBadge';
 
 export { splitRequestLogVirtualChunks } from './RequestEventLogModal';
@@ -1114,10 +1114,8 @@ export function RequestEventsDetailsCard({
         label: t('usage_stats.request_events_cost'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.request_events_cost')}</th>,
         renderCell: (row) => (
-          <td className={styles.requestEventsStackedCell} title={!row.event.dual_costs && !row.costAvailable ? t('usage_stats.cost_need_price') : undefined}>
-            <DualCostsDisplay costs={row.event.dual_costs} configuredFallback={row.cost} />
-            <span className={styles.requestEventsStackedSecondary}>{row.pricingStyle}</span>
-            <PricingExplanation selection={row.event.pricing_selection} />
+          <td className={styles.requestEventsNoWrapCell}>
+            <RequestCost costs={row.event.dual_costs} configuredFallback={row.cost} selection={row.event.pricing_selection} />
           </td>
         ),
       },
