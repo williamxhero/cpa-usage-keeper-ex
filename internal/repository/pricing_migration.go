@@ -195,15 +195,9 @@ func stagePricingMigration(db *gorm.DB, batch *entities.PricingMigrationBatch) e
 				if err != nil {
 					return err
 				}
-				if plan.TargetRef != "" {
-					var count int64
-					if err := tx.Model(&entities.PricingMigrationItem{}).Where("batch_id = ? AND target_ref = ?", batch.ID, plan.TargetRef).Count(&count).Error; err != nil {
-						return migrationError("input_read_failed")
-					}
-					if count > 1 {
-						plan.Outcome, plan.Reason = entities.PricingMigrationOutcomeRejected, "duplicate_canonical_target"
-					}
-				}
+				// Duplicate sources are classified against the retained target during
+				// final publication. Do not turn valid conflicts (or invalid source
+				// reasons) into batch-fatal duplicate rejections here.
 				if err := tx.Model(&entities.PricingMigrationItem{}).Where("id = ?", item.ID).Updates(map[string]any{"outcome": plan.Outcome, "reason": plan.Reason, "staged": true, "updated_at": time.Now()}).Error; err != nil {
 					return migrationError("stage_write_failed")
 				}
@@ -284,17 +278,27 @@ func publishPricingMigration(ctx context.Context, db *gorm.DB, batch *entities.P
 }
 
 func classifyMigrationOfficial(db *gorm.DB, plan migrationPlan, publish bool) (migrationPlan, error) {
-	var rows []entities.OfficialModelPrice
-	if err := db.Where("LOWER(TRIM(canonical_model_id)) = ?", canonicalCredentialModelID(plan.Official.CanonicalModelID)).Limit(2).Find(&rows).Error; err != nil {
+	var found bool
+	matches := true
+	query := db.Where("LOWER(TRIM(canonical_model_id)) = ?", canonicalCredentialModelID(plan.Official.CanonicalModelID))
+	if err := migrationSourcePages[entities.OfficialModelPrice](query, defaultPricingMigrationBatchSize, "canonical_model_id asc, id asc", nil, func(rows []entities.OfficialModelPrice) error {
+		for _, row := range rows {
+			if !found {
+				plan.TargetFP = migrationFingerprint(safeMigrationOfficial(row))
+				found = true
+			}
+			matches = matches && sameOfficialMigrationPrice(row, *plan.Official)
+		}
+		return nil
+	}); err != nil {
 		return plan, migrationError("target_read_failed")
 	}
-	if len(rows) > 1 {
-		return plan, migrationError("duplicate_canonical_target")
-	}
-	if len(rows) == 1 {
-		plan.TargetFP = migrationFingerprint(safeMigrationOfficial(rows[0]))
+	if found {
+		// Startup seeds can contain case/whitespace variants of one canonical
+		// target. Preserve every existing tariff; a differing row is a conflict,
+		// even if another existing row matches the proposed import.
 		plan.Outcome, plan.Reason = entities.PricingMigrationOutcomeConflict, "target_conflict"
-		if sameOfficialMigrationPrice(rows[0], *plan.Official) {
+		if matches {
 			plan.Outcome, plan.Reason = entities.PricingMigrationOutcomeSkipped, "target_exists"
 		}
 		return plan, nil

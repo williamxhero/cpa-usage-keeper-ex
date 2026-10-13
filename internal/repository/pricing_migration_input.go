@@ -2,6 +2,7 @@ package repository
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,8 +54,8 @@ func freezePricingMigration(db *gorm.DB, batch *entities.PricingMigrationBatch) 
 		var sequence int64
 		add := func(plan migrationPlan) error {
 			sequence++
-			// The source ordinal disambiguates physically duplicated malformed rows,
-			// while TargetRef retains normalized identity for fatal duplicate detection.
+			// The source ordinal disambiguates physically duplicated rows, while
+			// TargetRef retains normalized identity for conflict auditing.
 			plan.SourceRef = safeMigrationRef(plan.Category, plan.SourceRef+fmt.Sprintf("\x00%d", sequence))
 			if plan.Outcome == "" {
 				plan.Outcome = entities.PricingMigrationOutcomeMigrated
@@ -69,12 +70,17 @@ func freezePricingMigration(db *gorm.DB, batch *entities.PricingMigrationBatch) 
 			return nil
 		}
 		official := map[string]entities.OfficialModelPrice{}
-		duplicateOfficial := false
+		ambiguousOfficial := map[string]bool{}
+		targetConflicts := map[string]migrationPlan{}
 		if err := migrationSourcePages[entities.OfficialModelPrice](tx, batch.BatchSize, "canonical_model_id asc, id asc", nil, func(rows []entities.OfficialModelPrice) error {
 			for _, row := range rows {
 				key := canonicalCredentialModelID(row.CanonicalModelID)
-				if _, ok := official[key]; ok {
-					duplicateOfficial = true
+				if old, ok := official[key]; ok {
+					if !sameOfficialMigrationPrice(old, row) && !ambiguousOfficial[key] {
+						ambiguousOfficial[key] = true
+						targetConflicts[key] = migrationPlan{Category: entities.PricingMigrationCategoryModelPrices, SourceRef: "target_catalog\x00" + key, TargetRef: safeMigrationRef("official", key), Outcome: entities.PricingMigrationOutcomeConflict, Reason: "target_conflict", SourceFP: migrationFingerprint(safeMigrationOfficial(row)), TargetFP: migrationFingerprint(old)}
+					}
+					continue
 				}
 				official[key] = safeMigrationOfficial(row)
 			}
@@ -82,14 +88,15 @@ func freezePricingMigration(db *gorm.DB, batch *entities.PricingMigrationBatch) 
 		}); err != nil {
 			return err
 		}
-		if duplicateOfficial {
-			if err := add(migrationPlan{Category: entities.PricingMigrationCategoryModelPrices, SourceRef: "target_catalog", Outcome: entities.PricingMigrationOutcomeRejected, Reason: "duplicate_canonical_target"}); err != nil {
-				return err
-			}
-		}
+		// Official rows (including legacy-seed) are retained targets and multiplier
+		// bases, never extra source items. Duplicate targets must not synthesize a
+		// model_price_settings rejection when the legacy source table is empty.
 		if err := migrationSourcePages[entities.ModelPriceSetting](tx, batch.BatchSize, "model asc, id asc", modelPriceSettingColumns, func(rows []entities.ModelPriceSetting) error {
 			for _, row := range rows {
 				model := strings.TrimSpace(row.Model)
+				// A source row already audits this target; do not add a second
+				// catalog-only conflict for the same canonical group.
+				delete(targetConflicts, canonicalCredentialModelID(model))
 				style, e := normalizeModelPricingStyle(row.PricingStyle)
 				plan := migrationPlan{Category: entities.PricingMigrationCategoryModelPrices, SourceRef: fmt.Sprintf("%d", row.ID), TargetRef: safeMigrationRef("official", canonicalCredentialModelID(model))}
 				price := entities.OfficialModelPrice{CanonicalModelID: model, DisplayModelID: model, Source: entities.OfficialModelPriceSourceLegacySeed, PricingStyle: style, PromptPricePer1M: floatPtr(row.PromptPricePer1M), CompletionPricePer1M: floatPtr(row.CompletionPricePer1M), CacheReadPricePer1M: floatPtr(row.CacheReadPricePer1M), CacheWritePricePer1M: floatPtr(row.CacheWritePricePer1M)}
@@ -106,7 +113,7 @@ func freezePricingMigration(db *gorm.DB, batch *entities.PricingMigrationBatch) 
 					if old, ok := official[canonicalCredentialModelID(model)]; ok {
 						plan.Outcome, plan.Reason = entities.PricingMigrationOutcomeConflict, "target_conflict"
 						plan.TargetFP = migrationFingerprint(old)
-						if sameOfficialMigrationPrice(old, price) {
+						if sameOfficialMigrationPrice(old, price) && !ambiguousOfficial[canonicalCredentialModelID(model)] {
 							plan.Outcome, plan.Reason = entities.PricingMigrationOutcomeSkipped, "target_exists"
 						}
 					} else {
@@ -120,6 +127,18 @@ func freezePricingMigration(db *gorm.DB, batch *entities.PricingMigrationBatch) 
 			return nil
 		}); err != nil {
 			return err
+		}
+		// Differing existing targets still need an audit when there is no legacy
+		// source for that group. These conflict-only items never import a seed.
+		keys := make([]string, 0, len(targetConflicts))
+		for key := range targetConflicts {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if err := add(targetConflicts[key]); err != nil {
+				return err
+			}
 		}
 		subjects := map[string]bool{}
 		if err := migrationSourcePages[entities.CredentialPricingSubject](tx, batch.BatchSize, "id asc", []string{"id"}, func(rows []entities.CredentialPricingSubject) error {
@@ -162,6 +181,9 @@ func freezePricingMigration(db *gorm.DB, batch *entities.PricingMigrationBatch) 
 					base, known := official[model]
 					if !known {
 						plan.Outcome, plan.Reason = entities.PricingMigrationOutcomeSkipped, "missing_official_model"
+					} else if ambiguousOfficial[model] {
+						plan.Outcome, plan.Reason = entities.PricingMigrationOutcomeConflict, "target_conflict"
+						plan.TargetFP = migrationFingerprint(base)
 					} else if !completeMigrationOfficial(base) {
 						plan.Outcome, plan.Reason = entities.PricingMigrationOutcomeSkipped, "official_price_missing_segment"
 					} else {
@@ -293,14 +315,13 @@ func validateCurrentMigrationTargets(db *gorm.DB, size int) error {
 	if size < 1 {
 		size = defaultPricingMigrationBatchSize
 	}
-	seen := map[string]bool{}
 	if err := migrationSourcePages[entities.OfficialModelPrice](db, size, "canonical_model_id asc, id asc", nil, func(rows []entities.OfficialModelPrice) error {
 		for _, row := range rows {
-			key := canonicalCredentialModelID(row.CanonicalModelID)
-			if key == "" || seen[key] {
-				return migrationError("duplicate_canonical_target")
+			if canonicalCredentialModelID(row.CanonicalModelID) == "" {
+				return migrationError("candidate_invalid")
 			}
-			seen[key] = true
+			// The official snapshot can retain alias-duplicate targets. Validate
+			// every value, but leave ambiguity handling to the existing resolver.
 			if !finiteNonNegativePrices(row) {
 				return migrationError("candidate_invalid")
 			}
@@ -312,7 +333,7 @@ func validateCurrentMigrationTargets(db *gorm.DB, size int) error {
 	}); err != nil {
 		return err
 	}
-	seen = map[string]bool{}
+	seen := map[string]bool{}
 	return migrationSourcePages[entities.CredentialModelPriceOverride](db, size, "subject_id asc, canonical_model_id asc", nil, func(rows []entities.CredentialModelPriceOverride) error {
 		for _, row := range rows {
 			key := row.SubjectID + "\x00" + canonicalCredentialModelID(row.CanonicalModelID)

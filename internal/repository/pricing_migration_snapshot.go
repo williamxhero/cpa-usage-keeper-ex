@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
+	"strings"
 
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/pricing"
@@ -31,6 +33,58 @@ type migrationSavedSnapshot struct {
 	Matrix    []pricing.CredentialMatrixConfig
 }
 
+// Only migration's frozen rollback snapshot normalizes trim-equivalent legacy
+// duplicates. Ordinary snapshot/API compilation remains strict. Validate dropped
+// rows independently so deduplication cannot hide invalid prices or model rules.
+func compileMigrationPreviousSnapshot(models []pricing.ModelConfig, bindings []pricing.CredentialBinding, defaults []pricing.CredentialConfig, extra ...pricing.OverrideConfig) (*pricing.Snapshot, error) {
+	sort.SliceStable(models, func(i, j int) bool {
+		if models[i].Pricing.Model == models[j].Pricing.Model {
+			return models[i].Pricing.ID < models[j].Pricing.ID
+		}
+		return models[i].Pricing.Model < models[j].Pricing.Model
+	})
+	seen := map[string]bool{}
+	unique := make([]pricing.ModelConfig, 0, len(models))
+	for _, config := range models {
+		key := strings.TrimSpace(config.Pricing.Model)
+		if seen[key] {
+			if _, err := pricing.CompileSnapshot([]pricing.ModelConfig{config}); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		seen[key] = true
+		unique = append(unique, config)
+	}
+	if len(extra) == 1 {
+		options := extra[0]
+		sort.SliceStable(options.CredentialModels, func(i, j int) bool {
+			a, b := options.CredentialModels[i], options.CredentialModels[j]
+			if a.SubjectID == b.SubjectID {
+				return a.Model < b.Model
+			}
+			return a.SubjectID < b.SubjectID
+		})
+		type modelKey struct{ subject, model string }
+		seen := map[modelKey]bool{}
+		rows := make([]pricing.CredentialModelConfig, 0, len(options.CredentialModels))
+		for _, config := range options.CredentialModels {
+			key := modelKey{config.SubjectID, strings.TrimSpace(config.Model)}
+			if seen[key] {
+				if _, err := pricing.CompileSnapshotWithCredentials(unique, bindings, defaults, pricing.OverrideConfig{CredentialModels: []pricing.CredentialModelConfig{config}}); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			seen[key] = true
+			rows = append(rows, config)
+		}
+		options.CredentialModels = rows
+		extra[0] = options
+	}
+	return pricing.CompileSnapshotWithCredentials(unique, bindings, defaults, extra...)
+}
+
 func migrationPrivateHash(value string) string { return hex.EncodeToString(hashBytes(value)) }
 func captureMigrationPreviousSnapshot(db *gorm.DB, mode string) (string, error) {
 	pointer, err := pricingMigrationSnapshotBatch(db)
@@ -44,7 +98,7 @@ func captureMigrationPreviousSnapshot(db *gorm.DB, mode string) (string, error) 
 		}
 		return previous.PreviousSnapshotJSON, nil
 	}
-	snapshot, err := LoadPricingSnapshot(db.Statement.Context, db)
+	snapshot, err := loadPricingSnapshot(db.Statement.Context, db, true)
 	if err != nil {
 		return "", migrationError("snapshot_capture_failed")
 	}

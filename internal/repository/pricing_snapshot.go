@@ -15,6 +15,10 @@ var ErrInvalidPricingSnapshot = errors.New("invalid pricing snapshot")
 
 // LoadPricingSnapshot 从传入的 DB/transaction 一次加载并编译完整价格快照。
 func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, error) {
+	return loadPricingSnapshot(ctx, db, false)
+}
+
+func loadPricingSnapshot(ctx context.Context, db *gorm.DB, migrationPrevious bool) (*pricing.Snapshot, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database is nil")
 	}
@@ -109,7 +113,13 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 		}
 		channelModels = append(channelModels, config)
 	}
-	snapshot, err := pricing.CompileSnapshotWithCredentials(configs, compileCredentialBindings(identities, subjects), credentialConfigs, pricing.OverrideConfig{Channels: channels, CredentialModels: modelConfigs, ChannelModels: channelModels})
+	bindings := compileCredentialBindings(identities, subjects)
+	overrides := pricing.OverrideConfig{Channels: channels, CredentialModels: modelConfigs, ChannelModels: channelModels}
+	compile := pricing.CompileSnapshotWithCredentials
+	if migrationPrevious {
+		compile = compileMigrationPreviousSnapshot
+	}
+	snapshot, err := compile(configs, bindings, credentialConfigs, overrides)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
 	}
