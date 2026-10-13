@@ -144,7 +144,7 @@ describe('AnalysisPanel token chart data', () => {
   it.each([
     { amount: 0, status: 'complete' as const, expected: '$0.0000 · cost_estimates.complete · cost_estimates.known_zero' },
     { amount: 4, status: 'partial' as const, expected: '$4.00 · cost_estimates.partial' },
-    { amount: null, status: 'unavailable' as const, expected: '— · cost_estimates.unavailable' },
+    { amount: null, status: 'unavailable' as const, expected: 'cost_estimates.unavailable · cost_estimates.unavailable' },
   ])('renders backend $status estimates in summaries, rankings and token tooltip without changing chart values', ({ amount, status, expected }) => {
     const dualCosts = { configured: estimate(amount, status), reference: estimate(7) };
     const analysis: AnalysisResponse = {
@@ -156,7 +156,7 @@ describe('AnalysisPanel token chart data', () => {
     };
     const container = renderAnalysisPanel({ analysis, compositionDimensions: ['model'] });
     const summary = container.querySelector('[class*="analysisSummary"]')!;
-    expect(summary.querySelector('[data-cost-estimate="configured"] strong')?.textContent).toBe(amount === null ? '—' : amount === 0 ? '$0.0000' : '$4.00');
+    expect(summary.querySelector('[data-cost-estimate="configured"] strong')?.textContent).toBe(amount === null ? 'cost_estimates.unavailable' : amount === 0 ? '$0.0000' : '$4.00');
     expect(summary.querySelector('[data-cost-estimate="reference"] strong')?.textContent).toBe('$7.00');
     for (const ranking of container.querySelectorAll('[class*="rankingList"]')) {
       expect(ranking.querySelector('[data-cost-estimate="configured"]')?.textContent).toContain(`cost_estimates.${status}`);
@@ -190,7 +190,7 @@ describe('AnalysisPanel token chart data', () => {
     expect(costCell.getAttribute('aria-label')).toContain('cost_estimates.configured: $11.00 · cost_estimates.partial');
     expect(costCell.getAttribute('aria-label')).toContain('cost_estimates.reference: $22.00 · cost_estimates.complete');
     expect(row.querySelector('[class*="heatmapCell"]')?.getAttribute('data-tooltip')).toContain('cost_estimates.reference: $2.00 · cost_estimates.complete');
-    expect(container.querySelector('[data-full-name="gpt-4o"]')?.getAttribute('aria-label')).toBe('gpt-4o, cost_estimates.configured: $33.00 · cost_estimates.complete, cost_estimates.reference: — · cost_estimates.unavailable');
+    expect(container.querySelector('[data-full-name="gpt-4o"]')?.getAttribute('aria-label')).toBe('gpt-4o, cost_estimates.configured: $33.00 · cost_estimates.complete, cost_estimates.reference: cost_estimates.unavailable · cost_estimates.unavailable');
     expect(container.textContent).not.toContain(key);
   });
 

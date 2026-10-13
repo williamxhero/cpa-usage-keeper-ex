@@ -1,10 +1,6 @@
 import { CredentialEditModal } from '@/components/usage/credentials/CredentialEditModal';
-import { PricingCredentialsCard } from '@/components/usage/pricing/PricingCredentialsCard';
-import { PricingIdentityMigrationCard } from '@/components/usage/pricing/PricingIdentityMigrationCard';
-import { PricingCredentialDefaultsCard } from '@/components/usage/pricing/PricingCredentialDefaultsCard';
-import { PricingChannelsCard } from '@/components/usage/pricing/PricingChannelsCard';
-import { PricingCredentialModelsCard } from '@/components/usage/pricing/PricingCredentialModelsCard';
-import { PricingChannelModelsCard } from '@/components/usage/pricing/PricingChannelModelsCard';
+import { PricingMatrixSettings } from '@/components/usage/pricing/PricingMatrixSettings';
+import { PricingOfficialCard } from '@/components/usage/pricing/PricingOfficialCard';
 import { UsageComparisonCharts } from '@/components/usage/UsageComparisonCharts';
 import { useState, useMemo, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -31,7 +27,6 @@ import {
   AnalysisPanel,
   ApiKeySettingsCard,
   SessionSettingsCard,
-  PriceSettingsCard,
   AuthFileCredentialsSection,
   AiProviderCredentialsSection,
   CredentialDetailDrawer,
@@ -42,7 +37,6 @@ import {
   useRecentActivityWindow,
   useUsageActivityData,
   useOverviewRealtimeData,
-  usePricingData,
   useSparklines,
   useCredentialsTabData,
   type CredentialDetailSelection,
@@ -895,23 +889,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const handlePricingChanged = useCallback(() => {
     void refreshAllPricingCostsRef.current?.().catch(() => {});
   }, []);
-  const {
-    modelNames,
-    modelPrices,
-    loading: pricingLoading,
-    error: pricingError,
-    loadPricing,
-    saveModelPrice,
-    deleteModelPrice,
-    loadPricingRules,
-    savePricingRules,
-    syncModelPrices,
-    previewPricingSync,
-  } = usePricingData({
-    onAuthRequired,
-    onChanged: handlePricingChanged,
-    enabled: activeTab === 'settings',
-  });
+  const [pricingSettingsRevision, setPricingSettingsRevision] = useState(0);
   const [apiKeySettings, setApiKeySettings] = useState<CpaApiKeySettingsItem[]>([]);
   const [apiKeySettingsLoading, setApiKeySettingsLoading] = useState(false);
   const [apiKeySettingsError, setApiKeySettingsError] = useState('');
@@ -1856,11 +1834,12 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
       return;
     }
     if (activeTab === 'settings') {
-      await Promise.all([loadAuthSessions(), loadApiKeySettings(), loadPricing()]);
+      setPricingSettingsRevision((revision) => revision + 1);
+      await Promise.all([loadAuthSessions(), loadApiKeySettings()]);
       return;
     }
     await Promise.all([loadUsage(), loadActivity(), loadComparisons()]);
-  }, [activeTab, apiKeyFilterReady, credentialSectionVisibility.enabled, loadActivity, loadAnalysis, loadApiKeySettings, loadAuthSessions, loadComparisons, loadEventFilterOptions, loadEvents, loadPricing, loadRealtime, loadUsage, refreshCredentialDetail, refreshCredentials, refreshRanking]);
+  }, [activeTab, apiKeyFilterReady, credentialSectionVisibility.enabled, loadActivity, loadAnalysis, loadApiKeySettings, loadAuthSessions, loadComparisons, loadEventFilterOptions, loadEvents, loadRealtime, loadUsage, refreshCredentialDetail, refreshCredentials, refreshRanking]);
 
   const refreshAutoRefreshTab = useCallback(async () => {
     if (!apiKeyFilterReady && shouldShowApiKeyFilter(activeTab)) return;
@@ -2335,10 +2314,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
             />}
 
             {activeTab === 'overview' && (error || comparisonsError) && <div className={styles.errorBox}>{(error || comparisonsError) === 'AUTH_REQUIRED' ? t('auth.session_expired') : t('cost_estimates.load_failed')}</div>}
-            {activeTab === 'settings' && pricingError && <div className={styles.errorBox}>{pricingError === 'AUTH_REQUIRED' ? t('auth.session_expired') : pricingError}</div>}
             {activeTab === 'settings' && authSessionsError && <div className={styles.errorBox}>{authSessionsError}</div>}
             {activeTab === 'settings' && apiKeySettingsError && <div className={styles.errorBox}>{apiKeySettingsError}</div>}
-            {!(activeTab === 'overview' ? error : activeTab === 'settings' ? (pricingError || authSessionsError || apiKeySettingsError) : '') && displayStatusError && <div className={styles.errorBox}>{displayStatusError}</div>}
+            {!(activeTab === 'overview' ? error : activeTab === 'settings' ? (authSessionsError || apiKeySettingsError) : '') && displayStatusError && <div className={styles.errorBox}>{displayStatusError}</div>}
 
             {(overviewSnapshotMismatch || analysisSnapshotMismatch || eventsRelatedSnapshotMismatch || (activeTab === 'events' && eventsSnapshotMismatch)) && (
               <div className={styles.errorBox} role="status" data-pricing-snapshot-notice>
@@ -2564,23 +2542,19 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                   onSaveAlias={handleSaveApiKeyAlias}
                   onNotice={showTopNotice}
                 />
-                <PricingCredentialsCard onChanged={handlePricingChanged} />
-                <PricingIdentityMigrationCard onChanged={handlePricingChanged} />
-                <PricingCredentialDefaultsCard onChanged={handlePricingChanged} />
-                <PricingChannelsCard onChanged={handlePricingChanged} />
-                <PricingCredentialModelsCard onChanged={handlePricingChanged} />
-                <PricingChannelModelsCard onChanged={handlePricingChanged} />
-                <PriceSettingsCard
-                  modelNames={modelNames}
-                  modelPrices={modelPrices}
-                  onPriceSave={saveModelPrice}
-                  onPriceDelete={deleteModelPrice}
-                  onRulesLoad={loadPricingRules}
-                  onRulesSave={savePricingRules}
-                  onSyncPricesChange={syncModelPrices}
-                  onSyncPreview={previewPricingSync}
+                <PricingMatrixSettings
+                  canManage={true}
+                  onAuthRequired={onAuthRequired}
+                  onChanged={handlePricingChanged}
                   onNotice={showTopNotice}
-                  loading={pricingLoading}
+                  refreshRevision={pricingSettingsRevision}
+                />
+                <PricingOfficialCard
+                  canManage={true}
+                  onAuthRequired={onAuthRequired}
+                  onChanged={handlePricingChanged}
+                  onNotice={showTopNotice}
+                  refreshRevision={pricingSettingsRevision}
                 />
               </div>
             )}

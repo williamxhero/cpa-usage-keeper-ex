@@ -1,5 +1,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { matrixPricingResources } from './matrixPricing';
 
 const LANGUAGE_STORAGE_KEY = 'cpa-usage-keeper-language';
 const DEFAULT_LANGUAGE = 'en';
@@ -19,15 +20,17 @@ const getInitialLanguage = (): SupportedLanguage => {
 
 const resources = {
   en: {
+    matrix_pricing: matrixPricingResources.en,
     translation: {
       cost_estimates: {
         configured: 'Configured-price estimated cost', reference: 'Baseline reference cost', complete: 'Complete', partial: 'Partial · known subtotal', unavailable: 'Unavailable', known_zero: 'Known zero', not_provided: 'Not provided by this server',
         explanation: 'Pricing explanation', history_warning: 'Current prices recalculate historical estimates; these are not frozen invoices. USD; rates are per 1 million tokens.', replacement_warning: 'This override replaces ALL legacy model multipliers and matching rules; they are not multiplied on top.',
-        scope: 'Scope', subject: 'Credential', channel: 'Channel', selected_model: 'Selected model / alias', baseline_model: 'Baseline model / alias', model: 'Request model', model_alias: 'Model alias', mode: 'Mode', multiplier: 'Multiplier', style: 'Pricing style', snapshot: 'Pricing snapshot', legacy_model_multiplier: 'Legacy model multiplier', legacy_rule_multiplier: 'Legacy rule multiplier', final_multiplier: 'Final multiplier', matched_rules: 'Safe matched rules',
+        scope: 'Scope', source: 'Pricing source', pricing_status: 'Pricing status', match_method: 'Matched by', matched_model: 'Matched model', pricing_snapshot: 'Pricing snapshot ID', subject: 'Credential', channel: 'Channel', selected_model: 'Selected model / alias', baseline_model: 'Baseline model / alias', model: 'Request model', model_alias: 'Model alias', matched_by: 'Matched by', mode: 'Mode', multiplier: 'Multiplier', style: 'Pricing style', snapshot: 'Pricing snapshot', legacy_model_multiplier: 'Legacy model multiplier', legacy_rule_multiplier: 'Legacy rule multiplier', final_multiplier: 'Final multiplier', matched_rules: 'Safe matched rules',
+        sources: { credential_matrix: 'Credential matrix', official: 'Official price', 'models-dev': 'Models.dev', litellm: 'LiteLLM catalog', openrouter: 'OpenRouter fallback', 'legacy-seed': 'Migrated official price', unavailable: 'Unavailable', mixed: 'Mixed sources', none: 'Unavailable' },
         snapshot_mismatch: 'Pricing snapshots differ. Refresh all related costs before comparing them.', refresh: 'Refresh all costs', load_failed: 'Unable to load current costs. Please refresh.',
         prompt_price_per_1m: 'Ordinary input rate / 1M', completion_price_per_1m: 'Output rate / 1M', cache_read_price_per_1m: 'Cache read rate / 1M', cache_write_price_per_1m: 'Cache write rate / 1M', uncached_input_cost_usd: 'Uncached input cost', output_cost_usd: 'Output cost', cache_read_cost_usd: 'Cache read cost', cache_write_cost_usd: 'Cache write cost',
-        scopes: { credential_model: 'Credential model', credential_default: 'Credential default', channel_model: 'Channel model', channel_default: 'Channel default', legacy: 'Legacy pricing' }, modes: { multiplier: 'Multiplier', fixed: 'Fixed four rates', legacy: 'Legacy pricing' },
-        reasons: { missing_baseline: 'Baseline price is missing', reference_overflow: 'Baseline reference exceeds the supported range', retained_evidence_incomplete: 'Retained pricing evidence is incomplete', missing_price: 'Configured price is missing', unknown_identity: 'Upstream identity is unknown', unresolved_identity: 'Upstream identity could not be resolved', unbound_channel: 'Credential is not bound to a channel' },
+        scopes: { credential_matrix: 'Credential matrix', official: 'Official price', openrouter: 'OpenRouter fallback', unavailable: 'Unavailable', credential_model: 'Credential model', credential_default: 'Credential default', channel_model: 'Channel model', channel_default: 'Channel default', legacy: 'Legacy pricing' }, modes: { multiplier: 'Multiplier', fixed: 'Fixed four rates', official: 'Official price', unavailable: 'Unavailable', legacy: 'Legacy pricing' },
+        reasons: { missing_baseline: 'Baseline price is missing', reference_overflow: 'Baseline reference exceeds the supported range', retained_evidence_incomplete: 'Retained pricing evidence is incomplete', missing_price: 'Configured price is missing', unknown_identity: 'Upstream identity is unknown', unresolved_identity: 'Upstream identity could not be resolved', unbound_channel: 'Credential is not bound to a channel', no_match: 'No price matched this model', ambiguous_match: 'Model match is ambiguous', missing_segments: 'A required price segment is missing' },
       },
       pricing_identity_migration: {
         title: 'Identity migration and correction', scope_help: 'Associate exact observed upstream identities with saved Keeper subjects. Names, endpoints, provider types and directory positions never merge accounts automatically.',
@@ -1066,15 +1069,17 @@ const resources = {
     }
   },
   zh: {
+    matrix_pricing: matrixPricingResources.zh,
     translation: {
       cost_estimates: {
         configured: '配置价估算费用', reference: '基准参考费用', complete: '完整', partial: '部分可用 · 已知小计', unavailable: '不可用', known_zero: '已知为零', not_provided: '服务器未提供此信息',
         explanation: '计价说明', history_warning: '当前价格会重新计算历史估算；这不是冻结账单。币种为 USD；费率按每百万 Token 计。', replacement_warning: '此覆盖会替换全部旧模型倍率和命中规则，而非与旧调整叠乘。',
-        scope: '作用域', subject: '凭证', channel: '渠道', selected_model: '选中模型 / 别名', baseline_model: '基准模型 / 别名', model: '请求模型', model_alias: '模型别名', mode: '模式', multiplier: '倍率', style: '计价风格', snapshot: '计价快照', legacy_model_multiplier: '旧模型倍率', legacy_rule_multiplier: '旧规则倍率', final_multiplier: '最终倍率', matched_rules: '安全的命中规则',
+        scope: '作用域', source: '价格来源', pricing_status: '价格状态', match_method: '匹配方式', matched_model: '命中模型', pricing_snapshot: '计价快照 ID', subject: '凭证', channel: '渠道', selected_model: '选中模型 / 别名', baseline_model: '基准模型 / 别名', model: '请求模型', model_alias: '模型别名', matched_by: '匹配方式', mode: '模式', multiplier: '倍率', style: '计价风格', snapshot: '计价快照', legacy_model_multiplier: '旧模型倍率', legacy_rule_multiplier: '旧规则倍率', final_multiplier: '最终倍率', matched_rules: '安全的命中规则',
+        sources: { credential_matrix: '凭证矩阵', official: '官方价格', 'models-dev': 'Models.dev', litellm: 'LiteLLM 目录', openrouter: 'OpenRouter 兜底', 'legacy-seed': '迁移的官方价格', unavailable: '不可用', mixed: '混合来源', none: '不可用' },
         snapshot_mismatch: '计价快照不一致。请刷新全部相关费用后再比较。', refresh: '刷新全部费用', load_failed: '无法加载当前费用，请刷新重试。',
         prompt_price_per_1m: '普通输入费率 / 百万', completion_price_per_1m: '输出费率 / 百万', cache_read_price_per_1m: '缓存读取费率 / 百万', cache_write_price_per_1m: '缓存写入费率 / 百万', uncached_input_cost_usd: '未缓存输入费用', output_cost_usd: '输出费用', cache_read_cost_usd: '缓存读取费用', cache_write_cost_usd: '缓存写入费用',
-        scopes: { credential_model: '凭证模型', credential_default: '凭证默认', channel_model: '渠道模型', channel_default: '渠道默认', legacy: '旧计价' }, modes: { multiplier: '倍率', fixed: '固定四项费率', legacy: '旧计价' },
-        reasons: { missing_baseline: '缺少基准价格', reference_overflow: '基准参考费用超出支持范围', retained_evidence_incomplete: '保留的计价证据不完整', missing_price: '缺少配置价格', unknown_identity: '上游身份未知', unresolved_identity: '无法解析上游身份', unbound_channel: '凭证未绑定渠道' },
+        scopes: { credential_matrix: '凭证矩阵', official: '官方价格', openrouter: 'OpenRouter 兜底', unavailable: '不可用', credential_model: '凭证模型', credential_default: '凭证默认', channel_model: '渠道模型', channel_default: '渠道默认', legacy: '旧计价' }, modes: { multiplier: '倍率', fixed: '固定四项费率', official: '官方价格', unavailable: '不可用', legacy: '旧计价' },
+        reasons: { missing_baseline: '缺少基准价格', reference_overflow: '基准参考费用超出支持范围', retained_evidence_incomplete: '保留的计价证据不完整', missing_price: '缺少配置价格', unknown_identity: '上游身份未知', unresolved_identity: '无法解析上游身份', unbound_channel: '凭证未绑定渠道', no_match: '没有匹配的价格', ambiguous_match: '模型匹配存在歧义', missing_segments: '价格缺少所需分段' },
       },
       pricing_identity_migration: {
         title: '身份迁移与纠错', scope_help: '将精确的上游观测身份关联至已保存的 Keeper 主体。名称、端点、provider 类型和目录位置都不会自动合并账号。',
@@ -2113,15 +2118,17 @@ const resources = {
     }
   },
   'zh-TW': {
+    matrix_pricing: matrixPricingResources['zh-TW'],
     translation: {
       cost_estimates: {
         configured: '配置價估算費用', reference: '基準參考費用', complete: '完整', partial: '部分可用 · 已知小計', unavailable: '不可用', known_zero: '已知為零', not_provided: '伺服器未提供此資訊',
         explanation: '計價說明', history_warning: '目前價格會重新計算歷史估算；這不是凍結帳單。幣別為 USD；費率按每百萬 Token 計。', replacement_warning: '此覆寫會取代全部舊模型倍率和命中規則，而非與舊調整疊乘。',
-        scope: '作用域', subject: '憑證', channel: '渠道', selected_model: '選中模型 / 別名', baseline_model: '基準模型 / 別名', model: '請求模型', model_alias: '模型別名', mode: '模式', multiplier: '倍率', style: '計價風格', snapshot: '計價快照', legacy_model_multiplier: '舊模型倍率', legacy_rule_multiplier: '舊規則倍率', final_multiplier: '最終倍率', matched_rules: '安全的命中規則',
+        scope: '作用域', source: '價格來源', pricing_status: '價格狀態', match_method: '匹配方式', matched_model: '命中模型', pricing_snapshot: '計價快照 ID', subject: '憑證', channel: '渠道', selected_model: '選中模型 / 別名', baseline_model: '基準模型 / 別名', model: '請求模型', model_alias: '模型別名', matched_by: '匹配方式', mode: '模式', multiplier: '倍率', style: '計價風格', snapshot: '計價快照', legacy_model_multiplier: '舊模型倍率', legacy_rule_multiplier: '舊規則倍率', final_multiplier: '最終倍率', matched_rules: '安全的命中規則',
+        sources: { credential_matrix: '憑證矩陣', official: '官方價格', 'models-dev': 'Models.dev', litellm: 'LiteLLM 目錄', openrouter: 'OpenRouter 備援', 'legacy-seed': '遷移的官方價格', unavailable: '不可用', mixed: '混合來源', none: '不可用' },
         snapshot_mismatch: '計價快照不一致。請重新整理全部相關費用後再比較。', refresh: '重新整理全部費用', load_failed: '無法載入目前費用，請重新整理重試。',
         prompt_price_per_1m: '普通輸入費率 / 百萬', completion_price_per_1m: '輸出費率 / 百萬', cache_read_price_per_1m: '快取讀取費率 / 百萬', cache_write_price_per_1m: '快取寫入費率 / 百萬', uncached_input_cost_usd: '未快取輸入費用', output_cost_usd: '輸出費用', cache_read_cost_usd: '快取讀取費用', cache_write_cost_usd: '快取寫入費用',
-        scopes: { credential_model: '憑證模型', credential_default: '憑證預設', channel_model: '渠道模型', channel_default: '渠道預設', legacy: '舊計價' }, modes: { multiplier: '倍率', fixed: '固定四項費率', legacy: '舊計價' },
-        reasons: { missing_baseline: '缺少基準價格', reference_overflow: '基準參考費用超出支援範圍', retained_evidence_incomplete: '保留的計價證據不完整', missing_price: '缺少配置價格', unknown_identity: '上游身分未知', unresolved_identity: '無法解析上游身分', unbound_channel: '憑證未綁定渠道' },
+        scopes: { credential_matrix: '憑證矩陣', official: '官方價格', openrouter: 'OpenRouter 備援', unavailable: '不可用', credential_model: '憑證模型', credential_default: '憑證預設', channel_model: '渠道模型', channel_default: '渠道預設', legacy: '舊計價' }, modes: { multiplier: '倍率', fixed: '固定四項費率', official: '官方價格', unavailable: '不可用', legacy: '舊計價' },
+        reasons: { missing_baseline: '缺少基準價格', reference_overflow: '基準參考費用超出支援範圍', retained_evidence_incomplete: '保留的計價證據不完整', missing_price: '缺少配置價格', unknown_identity: '上游身分未知', unresolved_identity: '無法解析上游身分', unbound_channel: '憑證未綁定渠道', no_match: '沒有匹配的價格', ambiguous_match: '模型匹配有歧義', missing_segments: '價格缺少所需部分' },
       },
       pricing_identity_migration: {
         title: '身分遷移與更正', scope_help: '將精確的上游觀測身分關聯至已儲存的 Keeper 主體。名稱、端點、provider 類型和目錄位置都不會自動合併帳號。',

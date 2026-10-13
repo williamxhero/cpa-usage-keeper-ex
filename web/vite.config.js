@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { configDefaults } from 'vitest/config'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -11,6 +12,9 @@ function getApiProxyTarget() {
 
 export default defineConfig(({ command }) => ({
   base: './',
+  // Preview must never inherit the development API proxy.
+  preview: { proxy: {} },
+  test: { exclude: [...configDefaults.exclude, 'e2e/**'] },
   plugins: [react()],
   resolve: {
     alias: {

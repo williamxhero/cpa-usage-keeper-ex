@@ -1,4 +1,5 @@
 import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingChannel, type PricingChannelInput, type PricingChannelModel, type PricingChannelModelsResponse, type PricingChannelsResponse, type PricingIdentityState, type PricingIdentityMigrationInput, type PricingIdentityCorrectionInput, type PricingIdentityMutationResult, type PricingCredential, type PricingCredentialDefault, type PricingCredentialFixedInput, type PricingCredentialModel, type PricingCredentialModelsResponse, type PricingCredentialsResponse, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
+import type { PricingCredentialSyncStatus, PricingFourPrices, PricingMatrixCellInput, PricingMatrixMutationResponse, PricingMatrixQuery, PricingMatrixResponse, PricingOfficialEntry, PricingOfficialInput, PricingOfficialPreviewResponse, PricingOfficialRefreshSource, PricingOfficialResponse } from './types'
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed'
 import { resolveUsageRequestRange } from '@/utils/usage/rangeQuery'
 
@@ -1189,6 +1190,86 @@ export async function replacePricingRules(
   if (!response.ok) {
     await parseApiError(response, `Failed to update pricing rules: ${response.status}`)
   }
+  return response.json()
+}
+
+const safePricingError = (message: string, status: number): ApiError => new ApiError(message, status)
+
+export async function fetchCredentialPricingMatrix(query: PricingMatrixQuery = {}, signal?: AbortSignal, keyViewer = false): Promise<PricingMatrixResponse> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries({
+    credential_page: query.credentialPage,
+    credential_page_size: query.credentialPageSize,
+    model_page: query.modelPage,
+    model_page_size: query.modelPageSize,
+  })) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) params.set(key, String(Math.floor(value)))
+  }
+  const credential = query.credential?.trim()
+  const model = query.model?.trim()
+  if (credential) params.set('credential', credential)
+  if (model) params.set('model', model)
+  const path = keyViewer ? '/key/pricing/credential-model-matrix' : '/pricing/credential-model-matrix'
+  const queryString = params.toString()
+  const response = await apiFetch(`${apiPath(path)}${queryString ? `?${queryString}` : ''}`, { signal, cache: 'no-store' })
+  if (!response.ok) throw safePricingError('Unable to load pricing matrix', response.status)
+  return response.json()
+}
+
+export async function updateCredentialPricingMatrix(cells: PricingMatrixCellInput[], signal?: AbortSignal): Promise<PricingMatrixMutationResponse> {
+  const response = await apiFetch(apiPath('/pricing/credential-model-matrix'), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cells }), signal,
+  })
+  if (!response.ok) throw safePricingError('Unable to save pricing matrix', response.status)
+  return response.json()
+}
+
+export async function fetchPricingCredentialSyncStatus(signal?: AbortSignal): Promise<PricingCredentialSyncStatus> {
+  const response = await apiFetch(apiPath('/pricing/credentials/sync-status'), { signal, cache: 'no-store' })
+  if (!response.ok) throw safePricingError('Unable to load credential sync status', response.status)
+  return response.json()
+}
+
+export async function refreshPricingCredentials(signal?: AbortSignal): Promise<PricingCredentialSyncStatus> {
+  const response = await apiFetch(apiPath('/pricing/credentials/refresh'), { method: 'POST', signal })
+  if (!response.ok) throw safePricingError('Unable to refresh credentials', response.status)
+  return response.json()
+}
+
+export async function fetchOfficialPricing(signal?: AbortSignal): Promise<PricingOfficialResponse> {
+  const response = await apiFetch(apiPath('/pricing/official'), { signal, cache: 'no-store' })
+  if (!response.ok) throw safePricingError('Unable to load official pricing', response.status)
+  return response.json()
+}
+
+export async function saveOfficialPricing(input: PricingOfficialInput, signal?: AbortSignal): Promise<PricingOfficialEntry> {
+  const response = await apiFetch(apiPath('/pricing/official'), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
+  })
+  if (!response.ok) throw safePricingError('Unable to save official pricing', response.status)
+  return response.json()
+}
+
+export async function saveOfficialPricingBatch(pricing: PricingOfficialInput[], signal?: AbortSignal): Promise<PricingOfficialResponse> {
+  const response = await apiFetch(apiPath('/pricing/official/batch'), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pricing }), signal,
+  })
+  if (!response.ok) throw safePricingError('Unable to save official pricing', response.status)
+  return response.json()
+}
+
+export async function previewOfficialPricingRefresh(source: PricingOfficialRefreshSource, signal?: AbortSignal): Promise<PricingOfficialPreviewResponse> {
+  const params = new URLSearchParams({ source })
+  const response = await apiFetch(`${apiPath('/pricing/official/refresh/preview')}?${params.toString()}`, { signal, cache: 'no-store' })
+  if (!response.ok) throw safePricingError('Unable to preview official pricing refresh', response.status)
+  return response.json()
+}
+
+export async function commitOfficialPricingRefresh(previewId: string, signal?: AbortSignal): Promise<PricingOfficialResponse> {
+  const response = await apiFetch(apiPath('/pricing/official/refresh/commit'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preview_id: previewId }), signal,
+  })
+  if (!response.ok) throw safePricingError('Unable to commit official pricing refresh', response.status)
   return response.json()
 }
 

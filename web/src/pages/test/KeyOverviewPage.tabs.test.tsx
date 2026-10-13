@@ -18,8 +18,11 @@ it('routes and loads only the selected Key Viewer tab and cancels inactive reque
   const container = document.createElement('div'); document.body.appendChild(container);
   const root = createRoot(container);
   try {
-    expect(Object.keys(KEY_VIEWER_PAGE_PATHS).slice(0, 2)).toEqual(['overview', 'realtime']);
+    expect(Object.keys(KEY_VIEWER_PAGE_PATHS)).toEqual(['overview', 'realtime', 'analysis', 'ranking', 'pricing']);
+    expect(KEY_VIEWER_PAGE_PATHS.pricing).toBe('/key-pricing');
     expect(isKeyViewerPath('/key-realtime')).toBe(true);
+    expect(isKeyViewerPath('/key-pricing')).toBe(true);
+    expect(isKeyViewerPath('/key-pricing/')).toBe(false);
     await act(async () => root.render(<KeyOverviewPage onNavigate={() => undefined} />));
     expect(api.fetchKeyOverview).toHaveBeenCalledOnce();
     expect(api.fetchKeyOverviewRealtime).not.toHaveBeenCalled();

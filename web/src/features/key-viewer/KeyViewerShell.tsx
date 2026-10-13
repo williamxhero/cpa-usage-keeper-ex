@@ -13,6 +13,7 @@ const KEY_VIEWER_PAGE_LABEL_KEYS: Record<KeyViewerPage, string> = {
   realtime: 'usage_stats.tab_realtime',
   analysis: 'usage_stats.tab_analysis',
   ranking: 'usage_stats.tab_ranking',
+  pricing: 'matrix_pricing:title',
 };
 
 interface KeyViewerShellProps {
