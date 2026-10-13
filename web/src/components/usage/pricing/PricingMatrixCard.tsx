@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import type { PricingCredential, PricingCredentialSyncStatus, PricingMatrixCell, PricingMatrixCellInput, PricingMatrixQuery, PricingMatrixResponse, PricingStyle } from '@/lib/types';
+import type { PricingCredential, PricingCredentialSyncStatus, PricingMatrixCell, PricingMatrixEffectiveCell, PricingMatrixCellInput, PricingMatrixQuery, PricingMatrixResponse, PricingStyle } from '@/lib/types';
 import styles from './PricingMatrixCard.module.scss';
 
 const rateFields = ['prompt_price_per_1m', 'completion_price_per_1m', 'cache_read_price_per_1m', 'cache_write_price_per_1m'] as const;
@@ -16,7 +16,14 @@ const pairKey = (pair: Pair) => JSON.stringify([pair.subject_id, pair.canonical_
 const emptyRates = (): Record<RateField, string> => ({ prompt_price_per_1m: '', completion_price_per_1m: '', cache_read_price_per_1m: '', cache_write_price_per_1m: '' });
 const EMPTY_CREDENTIALS: PricingCredential[] = [];
 const EMPTY_MODELS: string[] = [];
-const credentialName = (credential: PricingCredential) => credential.alias || credential.name;
+const abbreviatedName = (value: string) => {
+  const characters = Array.from(value.trim());
+  if (!characters.length) return '—';
+  if (characters.length < 16) return characters.slice(0, Math.min(3, characters.length - 1)).join('') + '....';
+  return characters.slice(0, 4).join('') + '....' + characters.slice(-4).join('');
+};
+const credentialName = (credential: PricingCredential) => credential.alias?.trim() || credential.key_hint?.trim() || abbreviatedName(credential.name);
+const officialSources = new Set(['official', 'models-dev', 'litellm', 'openrouter', 'legacy-seed']);
 
 export interface PricingMatrixCardProps {
   matrix: PricingMatrixResponse | null;
@@ -36,7 +43,7 @@ export interface PricingMatrixCardProps {
   onCheckSync?: () => void;
 }
 
-/** Renders only server-provided matrix values; empty cells do not resolve official prices. */
+/** Renders only server-provided values; inheritance is resolved in the pinned backend snapshot. */
 export function PricingMatrixCard(props: PricingMatrixCardProps) {
   const { query, canManage = false, onSaveCells } = props;
   const credentialContext = JSON.stringify([query.credential ?? '', query.credentialPage ?? 1, query.credentialPageSize ?? 50]);
@@ -66,7 +73,10 @@ function MatrixCardContent({ matrix, query, onQueryChange, canManage = false, lo
   const maxCells = 5000;
   const credentials = matrix?.credentials ?? EMPTY_CREDENTIALS;
   const models = matrix?.models ?? EMPTY_MODELS;
-  const cells = useMemo(() => new Map((matrix?.cells ?? []).map(cell => [pairKey(cell), cell])), [matrix]);
+  const cells = useMemo(() => new Map<string, PricingMatrixCell | PricingMatrixEffectiveCell>([
+    ...(matrix?.effective_cells ?? []).map(cell => [pairKey(cell), cell] as const),
+    ...(matrix?.cells ?? []).map(cell => [pairKey(cell), cell] as const),
+  ]), [matrix]);
   const visiblePairs = useMemo(() => new Set(credentials.flatMap(credential => credential.subject_id ? models.map(model => pairKey({ subject_id: credential.subject_id!, canonical_model_id: model })) : [])), [credentials, models]);
   const selection = selected.filter(pair => visiblePairs.has(pairKey(pair)));
   const chosenCredential = credentials.find(credential => credential.subject_id === mobileCredential);
@@ -83,16 +93,20 @@ function MatrixCardContent({ matrix, query, onQueryChange, canManage = false, lo
     if (!selectedKeys.has(pairKey(pair)) && selection.length >= maxCells) { setMutationError('batch_limit'); return; }
     setSelected(previous => selectedKeys.has(pairKey(pair)) ? previous.filter(item => pairKey(item) !== pairKey(pair)) : [...selection, pair]);
   };
-  const edit = (targets: Pair[], cell?: PricingMatrixCell) => {
+  const edit = (targets: Pair[]) => {
     if (!permissionRef.current || writeBlocked || !onSaveCells || targets.length === 0) return;
     if (targets.length > maxCells) { setMutationError('batch_limit'); return; }
     if (targets.some(pair => !visiblePairs.has(pairKey(pair)))) return;
+    const targetCells = targets.map(pair => cells.get(pairKey(pair)));
+    const first = targetCells[0];
     const rates = emptyRates();
+    // Never choose one target's price for a batch of different effective prices.
     for (const field of rateFields) {
-      const value = cell?.[field];
-      if (value !== undefined && value !== null && Number.isFinite(value) && value >= 0) rates[field] = String(value);
+      const value = first?.[field];
+      if (value !== undefined && value !== null && Number.isFinite(value) && value >= 0 && targetCells.every(cell => cell?.[field] === value)) rates[field] = String(value);
     }
-    setDraft({ targets, rates, style: cell?.pricing_style ?? '' });
+    const style = first?.pricing_style ?? '';
+    setDraft({ targets, rates, style: targetCells.every(cell => cell?.pricing_style === style) ? style : '' });
     setFieldError(''); setMutationError(''); setNotice('');
   };
   const mutate = async (targets: Pair[], clear: boolean) => {
@@ -142,8 +156,11 @@ function MatrixCardContent({ matrix, query, onQueryChange, canManage = false, lo
     const pair = { subject_id: credential.subject_id ?? '', canonical_model_id: model };
     const cell = cells.get(pairKey(pair));
     const covered = cell?.covered === true && cell.mode === 'fixed';
+    const unavailable = cell && 'status' in cell ? cell.status === 'unavailable' : !cell && Boolean(matrix?.effective_cells);
     return <div className={styles.cell}>
-      <strong>{t(`${covered ? 'matrix' : 'inherited'}`)}</strong>
+      <strong>{t(covered ? 'matrix' : unavailable ? 'official_unavailable' : 'inherited')}</strong>
+      {cell && 'status' in cell && cell.status === 'partial' && <span className={styles.hint}>{t('cost_estimates.partial', { ns: 'translation' })}</span>}
+      {cell?.source && officialSources.has(cell.source) && <span className={styles.hint}>{t('official_source')}: {t(`official_source_${cell.source.replaceAll('-', '_')}`)}</span>}
       <dl className={styles.prices}>{rateFields.map(field => {
         const value = cell?.[field];
         // A known zero is displayed; a missing segment is never converted to zero.
@@ -152,7 +169,7 @@ function MatrixCardContent({ matrix, query, onQueryChange, canManage = false, lo
       {cell?.pricing_style && <span className={styles.hint}>{t('style')}: {t(`style_${cell.pricing_style}`)}</span>}
       {canManage && onSaveCells && credential.subject_id && <div className={styles.cellActions}>
         <label className={styles.check}><input type="checkbox" aria-label={t('select_cell', { credential: credentialName(credential), model })} checked={selectedKeys.has(pairKey(pair))} disabled={busy} onChange={() => toggle(pair)} />{t('select_cell', { credential: credentialName(credential), model })}</label>
-        <Button type="button" size="sm" variant="secondary" aria-label={t('edit_cell', { credential: credentialName(credential), model })} disabled={busy} onClick={() => edit([pair], cell)}>{t('edit')}</Button>
+        <Button type="button" size="sm" variant="secondary" aria-label={t('edit_cell', { credential: credentialName(credential), model })} disabled={busy} onClick={() => edit([pair])}>{t('edit')}</Button>
       </div>}
     </div>;
   };
@@ -160,7 +177,7 @@ function MatrixCardContent({ matrix, query, onQueryChange, canManage = false, lo
   return <Card title={t('title')} subtitle={t('subtitle')}>
     <div className={styles.body} aria-busy={busy}>
       <p className={styles.hint}>{t('history_warning')}</p>
-      <p className={styles.hint}>{t('effective_summary_unavailable')}</p>
+      {matrix && !matrix.effective_cells && <p className={styles.hint}>{t('effective_summary_unavailable')}</p>}
       <p className={styles.hint}>{t('units')}</p>
       {canManage && <p className={styles.hint}>{t('batch_help')}</p>}
       {!canManage && <p className={styles.hint}>{t('readonly')}</p>}

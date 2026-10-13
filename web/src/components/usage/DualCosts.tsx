@@ -63,7 +63,7 @@ const byLabel = (by: string | undefined, t: Translate) => by === 'model' || by =
 const numeric = (value: number | undefined) => typeof value === 'number' && Number.isFinite(value) ? String(value) : '—';
 const COMPONENTS = ['uncached_input_cost_usd', 'output_cost_usd', 'cache_read_cost_usd', 'cache_write_cost_usd'] as const;
 const RATES = ['prompt_price_per_1m', 'completion_price_per_1m', 'cache_read_price_per_1m', 'cache_write_price_per_1m'] as const;
-export function PricingExplanation({ selection }: { selection?: PricingSelection }) {
+export function PricingExplanation({ selection, hideDualCosts = false }: { selection?: PricingSelection; hideDualCosts?: boolean }) {
   const { t } = useTranslation();
   if (!selection) return null;
   const fields: Array<[string, string, boolean?]> = [
@@ -88,7 +88,7 @@ export function PricingExplanation({ selection }: { selection?: PricingSelection
     {selection.legacy_adjustments_replaced && <p>{t('cost_estimates.replacement_warning')}</p>}
     <dl>{fields.filter(([, , show = true]) => show).map(([key, value]) => <div key={key}><dt>{t(`cost_estimates.${key}`)}</dt><dd>{value}</dd></div>)}</dl>
     {selection.fixed && <dl>{RATES.map(key => <div key={key}><dt>{t(`cost_estimates.${key}`)}</dt><dd>{numeric(selection.fixed?.[key])}</dd></div>)}</dl>}
-    <DualCostsDisplay costs={selection.dual_costs} />
+    {!hideDualCosts && <DualCostsDisplay costs={selection.dual_costs} />}
     {selection.dual_costs && <dl>{(['configured', 'reference'] as const).flatMap(kind => COMPONENTS.map(key => <div key={`${kind}-${key}`}><dt>{t(`cost_estimates.${kind}`)} · {t(`cost_estimates.${key}`)}</dt><dd>{selection.dual_costs![kind].has_known ? formatUsd(selection.dual_costs![kind][key]) : '—'}</dd></div>))}</dl>}
     {(['legacy_model_multiplier', 'legacy_rule_multiplier', 'final_multiplier'] as const).filter(key => typeof selection[key] === 'number' && Number.isFinite(selection[key])).length > 0 && <dl>{(['legacy_model_multiplier', 'legacy_rule_multiplier', 'final_multiplier'] as const).filter(key => typeof selection[key] === 'number' && Number.isFinite(selection[key])).map(key => <div key={key}><dt>{t(`cost_estimates.${key}`)}</dt><dd>{numeric(selection[key])}</dd></div>)}</dl>}
     {!!selection.matched_rules?.length && <div><strong>{t('cost_estimates.matched_rules')}</strong><ul>{selection.matched_rules.map((rule, index) => <li key={index}>{rule.key} · {numeric(rule.multiplier)}</li>)}</ul></div>}

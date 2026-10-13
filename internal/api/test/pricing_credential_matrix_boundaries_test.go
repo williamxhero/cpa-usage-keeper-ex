@@ -143,6 +143,14 @@ func TestCredentialMatrixViewerSeesOnlyExactAuthorizedPairs(t *testing.T) {
 	if len(page.Cells) != 2 || page.TotalCredentials != 2 || page.TotalModels != 2 {
 		t.Fatalf("scope totals: cells=%d credentials=%d models=%d", len(page.Cells), page.TotalCredentials, page.TotalModels)
 	}
+	if len(page.EffectiveCells) != 2 {
+		t.Fatalf("effective viewer pairs=%d, want 2", len(page.EffectiveCells))
+	}
+	for _, cell := range page.EffectiveCells {
+		if !((cell.SubjectID == "cred_viewer_a" && cell.CanonicalModelID == "m1") || (cell.SubjectID == "cred_viewer_b" && cell.CanonicalModelID == "m2")) || cell.SnapshotID != page.SnapshotID {
+			t.Fatalf("unauthorized or mixed effective pair: %+v", cell)
+		}
+	}
 	for _, cell := range page.Cells {
 		if !((cell.SubjectID == "cred_viewer_a" && cell.CanonicalModelID == "m1") || (cell.SubjectID == "cred_viewer_b" && cell.CanonicalModelID == "m2")) {
 			t.Fatalf("unauthorized cross-pair: %+v", cell)

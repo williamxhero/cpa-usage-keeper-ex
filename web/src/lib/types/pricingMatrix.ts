@@ -33,11 +33,18 @@ export interface PricingMatrixCell {
   snapshot_id: string
 }
 
-/** Only persisted overrides are returned. Missing cells do not establish availability. */
+export interface PricingMatrixEffectiveCell extends PricingMatrixCell {
+  status: 'complete' | 'partial' | 'unavailable'
+  unavailable_reason?: string
+  matched_model?: string
+}
+
+/** Sparse cells remain persisted overrides; effective cells are page-scoped projections. */
 export interface PricingMatrixResponse {
   credentials: PricingCredential[]
   models: string[]
   cells: PricingMatrixCell[]
+  effective_cells?: PricingMatrixEffectiveCell[]
   credential_page: number
   credential_page_size: number
   model_page: number

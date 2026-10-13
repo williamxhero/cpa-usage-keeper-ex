@@ -73,7 +73,9 @@ describe('PricingMatrixCard', () => {
 
   it('validates all four explicit rates and style before sending atomic complete cells', async () => {
     const saveCells = vi.fn(async () => true)
-    await render(baseProps({ onSaveCells: saveCells }))
+    // Missing style must still be rejected; SPEC-004 now prefills any supplied style.
+    const withoutStyle = { ...matrix, cells: matrix.cells.map(cell => ({ ...cell, pricing_style: undefined })) }
+    await render(baseProps({ onSaveCells: saveCells, matrix: withoutStyle as unknown as PricingMatrixCardProps['matrix'] }))
     await selectCell('Synthetic Alpha', models[0])
     await click(button('batch_edit'))
     await enter(input('prompt_price_per_1m'), '0')

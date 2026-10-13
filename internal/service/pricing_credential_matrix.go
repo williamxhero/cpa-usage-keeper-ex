@@ -62,16 +62,17 @@ type CredentialMatrixCell struct {
 }
 
 type CredentialMatrixPage struct {
-	Credentials        []dto.PricingCredential `json:"credentials"`
-	Models             []string                `json:"models"`
-	Cells              []CredentialMatrixCell  `json:"cells"`
-	CredentialPage     int                     `json:"credential_page"`
-	CredentialPageSize int                     `json:"credential_page_size"`
-	ModelPage          int                     `json:"model_page"`
-	ModelPageSize      int                     `json:"model_page_size"`
-	TotalCredentials   int                     `json:"total_credentials"`
-	TotalModels        int                     `json:"total_models"`
-	SnapshotID         string                  `json:"snapshot_id"`
+	Credentials        []dto.PricingCredential         `json:"credentials"`
+	Models             []string                        `json:"models"`
+	Cells              []CredentialMatrixCell          `json:"cells"`
+	EffectiveCells     []CredentialMatrixEffectiveCell `json:"effective_cells"`
+	CredentialPage     int                             `json:"credential_page"`
+	CredentialPageSize int                             `json:"credential_page_size"`
+	ModelPage          int                             `json:"model_page"`
+	ModelPageSize      int                             `json:"model_page_size"`
+	TotalCredentials   int                             `json:"total_credentials"`
+	TotalModels        int                             `json:"total_models"`
+	SnapshotID         string                          `json:"snapshot_id"`
 }
 
 type CredentialModelMatrixProvider interface {
@@ -224,7 +225,7 @@ func (s *pricingService) ListCredentialModelMatrix(ctx context.Context, query Cr
 		}
 		return cells[i].SubjectID < cells[j].SubjectID
 	})
-	return CredentialMatrixPage{Credentials: credentialsPage, Models: modelsPage, Cells: cells, CredentialPage: query.CredentialPage, CredentialPageSize: query.CredentialPageSize, ModelPage: query.ModelPage, ModelPageSize: query.ModelPageSize, TotalCredentials: len(credentials), TotalModels: len(models), SnapshotID: snapshot.ID()}, nil
+	return CredentialMatrixPage{Credentials: credentialsPage, Models: modelsPage, Cells: cells, EffectiveCells: matrixEffectiveCells(snapshot, credentialsPage, modelsPage, query.allowedPairs, secrets), CredentialPage: query.CredentialPage, CredentialPageSize: query.CredentialPageSize, ModelPage: query.ModelPage, ModelPageSize: query.ModelPageSize, TotalCredentials: len(credentials), TotalModels: len(models), SnapshotID: snapshot.ID()}, nil
 }
 
 func (s *pricingService) UpdateCredentialModelMatrix(ctx context.Context, inputs []CredentialMatrixCellInput) ([]CredentialMatrixCell, error) {
