@@ -88,6 +88,10 @@ func (s *pricingService) UpdateOfficialPricing(ctx context.Context, input Offici
 }
 
 func (s *pricingService) UpdateOfficialPricingBatch(ctx context.Context, inputs []OfficialPricingInput) ([]entities.OfficialModelPrice, error) {
+	return s.updateOfficialPricingBatch(ctx, inputs, false)
+}
+
+func (s *pricingService) updateOfficialPricingBatch(ctx context.Context, inputs []OfficialPricingInput, refresh bool) ([]entities.OfficialModelPrice, error) {
 	if len(inputs) > maxOfficialPricingBatch {
 		return nil, fmt.Errorf("%w: maximum is %d", ErrOfficialPricingBatchTooLarge, maxOfficialPricingBatch)
 	}
@@ -116,6 +120,34 @@ func (s *pricingService) UpdateOfficialPricingBatch(ctx context.Context, inputs 
 	var rows []entities.OfficialModelPrice
 	var candidate *pricing.Snapshot
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if refresh {
+			// A preview may predate an administrator's official-price edit.
+			// Recheck fallback protection inside the commit transaction.
+			protected, err := repository.ListOfficialModelPrices(tx)
+			if err != nil {
+				return err
+			}
+			protectedOfficial := make(map[string]struct{}, len(protected))
+			for _, row := range protected {
+				if row.Source != entities.OfficialModelPriceSourceOpenRouter {
+					protectedOfficial[strings.ToLower(strings.TrimSpace(row.CanonicalModelID))] = struct{}{}
+				}
+			}
+			filtered := normalized[:0]
+			for _, row := range normalized {
+				if row.Source == entities.OfficialModelPriceSourceOpenRouter {
+					if _, exists := protectedOfficial[strings.ToLower(row.CanonicalModelID)]; exists {
+						continue
+					}
+				}
+				filtered = append(filtered, row)
+			}
+			normalized = filtered
+			if len(normalized) == 0 {
+				rows = []entities.OfficialModelPrice{}
+				return nil
+			}
+		}
 		var err error
 		rows, err = repository.UpsertOfficialModelPrices(tx, normalized)
 		if err != nil {
@@ -132,7 +164,9 @@ func (s *pricingService) UpdateOfficialPricingBatch(ctx context.Context, inputs 
 	}
 	// The transaction has committed; publish the complete immutable snapshot
 	// only after both legacy and official catalog inputs were loaded together.
-	s.catalog.Replace(candidate)
+	if candidate != nil {
+		s.catalog.Replace(candidate)
+	}
 	return rows, nil
 }
 
@@ -245,6 +279,22 @@ func (s *pricingService) PreviewOfficialPricingRefresh(ctx context.Context, sour
 		}
 	}
 	entries, ambiguousModels := uniqueRefreshEntries(catalog.Entries)
+	if catalog.Source.ID != pricingmetadata.SourceOpenRouter {
+		existingByID := make(map[string]entities.OfficialModelPrice, len(existing))
+		for _, row := range existing {
+			existingByID[strings.ToLower(strings.TrimSpace(row.CanonicalModelID))] = row
+		}
+		for _, entry := range entries {
+			id := strings.ToLower(strings.TrimSpace(entry.Model.ID))
+			if previous, ok := existingByID[id]; ok && officialRefreshDropsKnownSegment(previous, entry.Model.Cost) {
+				s.markOfficialPricingStale(ctx)
+				return OfficialPricingRefreshPreview{}, fmt.Errorf("official pricing source omitted a previously known segment for %q", strings.TrimSpace(entry.Model.ID))
+			}
+		}
+	}
+	for _, model := range ambiguousModels {
+		blockedFallback[strings.ToLower(strings.TrimSpace(model))] = struct{}{}
+	}
 	var fallbackCatalog *pricingmetadata.Catalog
 	if catalog.Source.ID != pricingmetadata.SourceOpenRouter {
 		// OpenRouter is a fallback catalog only. A failed fallback does not
@@ -267,6 +317,10 @@ func (s *pricingService) PreviewOfficialPricingRefresh(ctx context.Context, sour
 			filtered = append(filtered, entry)
 		}
 		entries = filtered
+	}
+	if len(entries) > maxOfficialPricingBatch {
+		s.markOfficialPricingStale(ctx)
+		return OfficialPricingRefreshPreview{}, fmt.Errorf("%w: maximum is %d", ErrOfficialPricingBatchTooLarge, maxOfficialPricingBatch)
 	}
 	prices := make([]entities.OfficialModelPrice, 0, len(entries))
 	for _, entry := range entries {
@@ -399,6 +453,9 @@ func (s *pricingService) markOfficialPricingStale(ctx context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// Persist failure state even if the upstream request used up its deadline.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
 	var candidate *pricing.Snapshot
@@ -428,7 +485,7 @@ func (s *pricingService) CommitOfficialPricingRefresh(ctx context.Context, previ
 	for index, row := range candidate.preview.Prices {
 		inputs[index] = OfficialPricingInput{CanonicalModelID: row.CanonicalModelID, DisplayModelID: row.DisplayModelID, Source: row.Source, PricingStyle: row.PricingStyle, SourceURL: row.SourceURL, FetchedAt: row.FetchedAt, ResponseHash: row.ResponseHash, SourceVersion: row.SourceVersion, PromptPricePer1M: row.PromptPricePer1M, CompletionPricePer1M: row.CompletionPricePer1M, CacheReadPricePer1M: row.CacheReadPricePer1M, CacheWritePricePer1M: row.CacheWritePricePer1M}
 	}
-	rows, err := s.UpdateOfficialPricingBatch(ctx, inputs)
+	rows, err := s.updateOfficialPricingBatch(ctx, inputs, true)
 	if err != nil {
 		return nil, err
 	}
@@ -436,6 +493,13 @@ func (s *pricingService) CommitOfficialPricingRefresh(ctx context.Context, previ
 	delete(s.officialPreviews, previewID)
 	s.officialMu.Unlock()
 	return rows, nil
+}
+
+func officialRefreshDropsKnownSegment(previous entities.OfficialModelPrice, current pricingmetadata.Cost) bool {
+	return (previous.PromptPricePer1M != nil && current.Input == nil) ||
+		(previous.CompletionPricePer1M != nil && current.Output == nil) ||
+		(previous.CacheReadPricePer1M != nil && current.CacheRead == nil) ||
+		(previous.CacheWritePricePer1M != nil && current.CacheWrite == nil)
 }
 
 func officialMissingSegments(price entities.OfficialModelPrice) string {

@@ -308,14 +308,15 @@ func validateOfficialAliasConflicts(db *gorm.DB, inputs []entities.OfficialModel
 	if err != nil {
 		return err
 	}
-	updating := make(map[string]struct{}, len(inputs))
+	updating := make(map[string]entities.OfficialModelPrice, len(inputs))
 	for _, input := range inputs {
-		updating[strings.ToLower(input.CanonicalModelID)] = struct{}{}
+		updating[strings.ToLower(input.CanonicalModelID)] = input
 	}
 	owners := make(map[string]string)
 	for _, price := range prices {
 		canonical := strings.ToLower(strings.TrimSpace(price.CanonicalModelID))
-		if _, replaced := updating[canonical]; replaced {
+		input, replaced := updating[canonical]
+		if replaced && input.Aliases != nil {
 			continue
 		}
 		if canonical != "" {
@@ -330,6 +331,9 @@ func validateOfficialAliasConflicts(db *gorm.DB, inputs []entities.OfficialModel
 	}
 	for _, input := range inputs {
 		canonical := strings.ToLower(input.CanonicalModelID)
+		if owner, exists := owners[canonical]; exists && !strings.EqualFold(owner, input.CanonicalModelID) {
+			return fmt.Errorf("canonical model %q conflicts with model %q", input.CanonicalModelID, owner)
+		}
 		owners[canonical] = input.CanonicalModelID
 	}
 	for _, input := range inputs {
