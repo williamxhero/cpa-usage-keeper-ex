@@ -137,6 +137,29 @@ func TestOfficialPricingRefreshDoesNotFillAmbiguousPrimaryFromFallback(t *testin
 	}
 }
 
+func TestOfficialPricingPartialPrimaryRefreshPreservesKnownSnapshotAndMarksStale(t *testing.T) {
+	db := openUsageServiceTestDatabase(t)
+	prompt, completion, cacheRead, cacheWrite := 3.0, 15.0, 0.3, 3.75
+	if _, err := repository.UpsertOfficialModelPrice(db, entities.OfficialModelPrice{
+		CanonicalModelID: "stable-model", Source: entities.OfficialModelPriceSourceOfficial,
+		PromptPricePer1M: &prompt, CompletionPricePer1M: &completion, CacheReadPricePer1M: &cacheRead, CacheWritePricePer1M: &cacheWrite,
+	}); err != nil {
+		t.Fatalf("seed official price: %v", err)
+	}
+	client := pricingmetadata.NewClient(&http.Client{Transport: officialRefreshTransport{
+		primary:  `{"primary":{"models":{"stable":{"id":"stable-model","cost":{"input":1,"output":2}}}}}`,
+		fallback: `{"data":[]}`,
+	}})
+	provider := service.NewPricingServiceWithMetadataClient(db, pricing.NewCatalog(pricing.EmptySnapshot()), client).(service.OfficialPricingProvider)
+	if _, err := provider.PreviewOfficialPricingRefresh(context.Background(), "models-dev"); err == nil {
+		t.Fatal("expected partial primary refresh to be rejected")
+	}
+	rows, err := provider.ListOfficialPricing(context.Background())
+	if err != nil || len(rows) != 1 || !rows[0].Stale || rows[0].PromptPricePer1M == nil || *rows[0].PromptPricePer1M != 3 || rows[0].CacheReadPricePer1M == nil || *rows[0].CacheReadPricePer1M != 0.3 || rows[0].CacheWritePricePer1M == nil || *rows[0].CacheWritePricePer1M != 3.75 {
+		t.Fatalf("partial refresh erased known snapshot values: %+v, err=%v", rows, err)
+	}
+}
+
 func TestOfficialPricingRefreshDeadlineStillMarksSnapshotStale(t *testing.T) {
 	db := openUsageServiceTestDatabase(t)
 	catalog := pricing.NewCatalog(pricing.EmptySnapshot())
@@ -168,16 +191,26 @@ func TestOfficialPricingRefreshRejectsOversizedPreview(t *testing.T) {
 		models[i] = fmt.Sprintf(`{"id":"model-%d","pricing":{"prompt":"0.000001","completion":"0.000002"}}`, i)
 	}
 	client := pricingmetadata.NewClient(&http.Client{Transport: officialRefreshTransport{fallback: `{"data":[` + strings.Join(models, ",") + `]}`}})
-	provider := service.NewPricingServiceWithMetadataClient(db, pricing.NewCatalog(pricing.EmptySnapshot()), client).(service.OfficialPricingProvider)
+	catalog := pricing.NewCatalog(pricing.EmptySnapshot())
+	provider := service.NewPricingServiceWithMetadataClient(db, catalog, client).(service.OfficialPricingProvider)
 	preview, err := provider.PreviewOfficialPricingRefresh(context.Background(), "openrouter")
 	if !errors.Is(err, service.ErrOfficialPricingBatchTooLarge) || preview.PreviewID != "" {
 		t.Fatalf("oversized refresh issued an uncommittable preview: id=%q, err=%v", preview.PreviewID, err)
 	}
 	client = pricingmetadata.NewClient(&http.Client{Transport: officialRefreshTransport{fallback: `{"data":[` + strings.Join(models[:5000], ",") + `]}`}})
-	provider = service.NewPricingServiceWithMetadataClient(db, pricing.NewCatalog(pricing.EmptySnapshot()), client).(service.OfficialPricingProvider)
+	provider = service.NewPricingServiceWithMetadataClient(db, catalog, client).(service.OfficialPricingProvider)
 	preview, err = provider.PreviewOfficialPricingRefresh(context.Background(), "openrouter")
 	if err != nil || preview.PreviewID == "" || len(preview.Prices) != 5000 {
 		t.Fatalf("maximum-sized preview was rejected: count=%d, err=%v", len(preview.Prices), err)
+	}
+	rows, err := provider.CommitOfficialPricingRefresh(context.Background(), preview.PreviewID)
+	if err != nil || len(rows) != 5000 {
+		t.Fatalf("maximum-sized preview could not commit atomically: rows=%d, err=%v", len(rows), err)
+	}
+	persisted, err := provider.ListOfficialPricing(context.Background())
+	published := catalog.Snapshot().OfficialPrices()
+	if err != nil || len(persisted) != 5000 || len(published) != 5000 {
+		t.Fatalf("maximum-sized commit did not persist and publish all rows: persisted=%d published=%d err=%v", len(persisted), len(published), err)
 	}
 }
 

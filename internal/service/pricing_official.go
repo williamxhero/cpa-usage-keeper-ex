@@ -279,6 +279,19 @@ func (s *pricingService) PreviewOfficialPricingRefresh(ctx context.Context, sour
 		}
 	}
 	entries, ambiguousModels := uniqueRefreshEntries(catalog.Entries)
+	if catalog.Source.ID != pricingmetadata.SourceOpenRouter {
+		existingByID := make(map[string]entities.OfficialModelPrice, len(existing))
+		for _, row := range existing {
+			existingByID[strings.ToLower(strings.TrimSpace(row.CanonicalModelID))] = row
+		}
+		for _, entry := range entries {
+			id := strings.ToLower(strings.TrimSpace(entry.Model.ID))
+			if previous, ok := existingByID[id]; ok && officialRefreshDropsKnownSegment(previous, entry.Model.Cost) {
+				s.markOfficialPricingStale(ctx)
+				return OfficialPricingRefreshPreview{}, fmt.Errorf("official pricing source omitted a previously known segment for %q", strings.TrimSpace(entry.Model.ID))
+			}
+		}
+	}
 	for _, model := range ambiguousModels {
 		blockedFallback[strings.ToLower(strings.TrimSpace(model))] = struct{}{}
 	}
@@ -480,6 +493,13 @@ func (s *pricingService) CommitOfficialPricingRefresh(ctx context.Context, previ
 	delete(s.officialPreviews, previewID)
 	s.officialMu.Unlock()
 	return rows, nil
+}
+
+func officialRefreshDropsKnownSegment(previous entities.OfficialModelPrice, current pricingmetadata.Cost) bool {
+	return (previous.PromptPricePer1M != nil && current.Input == nil) ||
+		(previous.CompletionPricePer1M != nil && current.Output == nil) ||
+		(previous.CacheReadPricePer1M != nil && current.CacheRead == nil) ||
+		(previous.CacheWritePricePer1M != nil && current.CacheWrite == nil)
 }
 
 func officialMissingSegments(price entities.OfficialModelPrice) string {
