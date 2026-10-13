@@ -232,8 +232,19 @@ func TestOfficialPricingCommitSnapshotFailureRollsBackAndCanRetry(t *testing.T) 
 	previous := catalog.Snapshot()
 	const callback = "test:official-refresh-snapshot-failure"
 	failure := errors.New("synthetic snapshot load failure")
+	injected := false
 	if err := db.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
-		if tx.Statement.Table == "model_price_rules" {
+		// Strict snapshots bypass legacy rules; the matrix is loaded after the
+		// official-price writes, inside the transaction and before publication.
+		if tx.Statement.Table == "credential_model_price_overrides" {
+			injected = true
+			rows, err := repository.ListOfficialModelPrices(tx.Session(&gorm.Session{NewDB: true}))
+			if err != nil || len(rows) != 2 || rows[0].CanonicalModelID != "new-model" || rows[0].PromptPricePer1M == nil || *rows[0].PromptPricePer1M != 1 || rows[0].CompletionPricePer1M == nil || *rows[0].CompletionPricePer1M != 2 {
+				t.Errorf("snapshot failure must occur after official-price writes: %+v, err=%v", rows, err)
+			}
+			if catalog.Snapshot() != previous {
+				t.Error("snapshot was published before snapshot loading completed")
+			}
 			tx.AddError(failure)
 		}
 	}); err != nil {
@@ -242,6 +253,9 @@ func TestOfficialPricingCommitSnapshotFailureRollsBackAndCanRetry(t *testing.T) 
 	t.Cleanup(func() { _ = db.Callback().Query().Remove(callback) })
 	if _, err := provider.CommitOfficialPricingRefresh(context.Background(), preview.PreviewID); !errors.Is(err, failure) {
 		t.Fatalf("expected snapshot load failure, got %v", err)
+	}
+	if !injected {
+		t.Fatal("snapshot load failure was not injected")
 	}
 	rows, err := provider.ListOfficialPricing(context.Background())
 	if err != nil || len(rows) != 1 || rows[0].CanonicalModelID != "stable-model" || *rows[0].PromptPricePer1M != 3 || catalog.Snapshot() != previous {
