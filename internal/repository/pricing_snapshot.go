@@ -110,6 +110,26 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 		}
 		snapshot.SetOfficialPrices(officialPrices)
 	}
+	if query.Migrator().HasTable(&entities.CredentialModelPriceOverride{}) {
+		overrides, loadErr := ListCredentialModelPriceOverrides(query)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load credential model price overrides: %w", loadErr)
+		}
+		matrix := make([]pricing.CredentialMatrixConfig, len(overrides))
+		for index, row := range overrides {
+			matrix[index] = pricing.CredentialMatrixConfig{
+				SubjectID: row.SubjectID, CanonicalModelID: row.CanonicalModelID,
+				Fixed: pricing.FixedTariff{
+					PromptPricePer1M: &row.PromptPricePer1M, CompletionPricePer1M: &row.CompletionPricePer1M,
+					CacheReadPricePer1M: &row.CacheReadPricePer1M, CacheWritePricePer1M: &row.CacheWritePricePer1M,
+					PricingStyle: row.PricingStyle,
+				}, Source: row.Source,
+			}
+		}
+		if err := snapshot.SetCredentialMatrix(matrix); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
+		}
+	}
 	return snapshot, nil
 }
 

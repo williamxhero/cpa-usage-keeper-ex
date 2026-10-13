@@ -135,6 +135,7 @@ func registerPricingRoutes(router gin.IRoutes, pricingProvider service.PricingPr
 	registerPricingChannelRoutes(router, pricingProvider)
 	registerPricingChannelModelRoutes(router, pricingProvider)
 	registerPricingCredentialModelRoutes(router, pricingProvider)
+	registerPricingCredentialMatrixRoutes(router, pricingProvider)
 	registerPricingIdentityMigrationRoutes(router, pricingProvider)
 	registerOfficialPricingRoutes(router, pricingProvider)
 

@@ -51,6 +51,7 @@ type Snapshot struct {
 	subjectChannels    map[string]string
 	channelModels      map[channelModelKey]ChannelModelConfig
 	officialPrices     []entities.OfficialModelPrice
+	matrixOverrides    map[credentialModelKey]CredentialMatrixConfig
 }
 
 // CompileSnapshot 规范化并校验完整价格集合，只有整个候选集合安全时才返回快照。
