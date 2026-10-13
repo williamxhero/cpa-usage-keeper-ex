@@ -9,7 +9,10 @@ func (s *Snapshot) SetOfficialPrices(prices []entities.OfficialModelPrice) {
 	if s == nil {
 		return
 	}
+	// Attaching the catalog is also the explicit version switch: an empty
+	// catalog means strict pricing with no public matches, never legacy fallback.
 	s.officialPrices = cloneOfficialPrices(prices)
+	s.threeLayerPricing = true
 }
 
 // OfficialPrices returns the official catalog captured by this immutable

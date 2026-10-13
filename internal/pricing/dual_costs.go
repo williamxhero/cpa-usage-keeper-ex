@@ -14,6 +14,10 @@ type PriceEstimate struct {
 	HasKnown             bool     `json:"has_known"`
 	Status               string   `json:"status"`
 	UnavailableReason    string   `json:"unavailable_reason,omitempty"`
+	Source               string   `json:"source,omitempty"`
+	MatchedModel         string   `json:"matched_model,omitempty"`
+	MatchedBy            string   `json:"matched_by,omitempty"`
+	SnapshotID           string   `json:"snapshot_id,omitempty"`
 }
 
 type DualCosts struct {
@@ -72,6 +76,15 @@ func (p *PriceEstimate) Merge(other PriceEstimate) {
 		*p = other.Normalized()
 		return
 	}
+	if p.Source != "" && other.Source != "" && p.Source != other.Source {
+		p.Source = "mixed"
+	}
+	if p.MatchedModel != "" && other.MatchedModel != "" && p.MatchedModel != other.MatchedModel {
+		p.MatchedModel = ""
+	}
+	if p.SnapshotID != "" && other.SnapshotID != "" && p.SnapshotID != other.SnapshotID {
+		p.SnapshotID = "mixed"
+	}
 	p.Complete = p.Complete && other.Complete
 	if p.UnavailableReason == "" {
 		p.UnavailableReason = other.UnavailableReason
@@ -114,6 +127,9 @@ func (result CostResult) DualCosts() DualCosts {
 	if configured.Status == "" {
 		configured = estimate(result.Cost, result.Available, reason)
 	}
+	configured.Source, configured.MatchedModel, configured.MatchedBy = result.PricingSource, result.MatchedModel, result.MatchedBy
+	configured.SnapshotID = result.PricingSnapshotID
+	reference.SnapshotID = result.PricingSnapshotID
 	return DualCosts{configured, reference}
 }
 func finiteBreakdown(cost helper.UsageTokenCostBreakdown) bool {

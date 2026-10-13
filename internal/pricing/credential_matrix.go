@@ -54,6 +54,9 @@ func (s *Snapshot) SetCredentialMatrix(configs []CredentialMatrixConfig) error {
 		compiled[key] = config
 	}
 	s.matrixOverrides = compiled
+	// Calling the setter explicitly is the version switch, including an empty
+	// catalog: strict pricing must not fall back to legacy layers.
+	s.threeLayerPricing = true
 	return nil
 }
 

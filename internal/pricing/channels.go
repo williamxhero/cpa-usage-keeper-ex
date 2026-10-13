@@ -151,6 +151,9 @@ func (r Resolver) EvidenceFields() ActiveFields {
 
 func (r Resolver) HasChannels() bool { return r.snapshot != nil && len(r.snapshot.channels) > 0 }
 func (r Resolver) HasPricingOverrides() bool {
+	if r.threeLayerPricing() && r.snapshot != nil && len(r.snapshot.matrixOverrides) > 0 {
+		return true
+	}
 	if r.HasCredentialDefaults() || (r.snapshot != nil && (len(r.snapshot.credentialModels) > 0 || len(r.snapshot.channelModels) > 0)) {
 		return true
 	}
@@ -164,6 +167,15 @@ func (r Resolver) HasPricingOverrides() bool {
 	return false
 }
 func (r Resolver) UsesPricingOverride(subject CostSubject) bool {
+	if r.threeLayerPricing() {
+		if _, selected := r.matrixForSubjectModel(subject, subject.Dimensions.Model); selected {
+			return true
+		}
+		if _, selected := r.matrixForSubjectModel(subject, subject.Dimensions.ModelAlias); selected {
+			return true
+		}
+		return false
+	}
 	if _, _, selected := r.credentialModel(subject); selected {
 		return true
 	}
@@ -178,6 +190,20 @@ func (r Resolver) UsesPricingOverride(subject CostSubject) bool {
 }
 func (r Resolver) MayUsePricingOverride(subject CostSubject) bool {
 	if r.snapshot == nil {
+		return false
+	}
+	if r.threeLayerPricing() {
+		for key, id := range r.snapshot.credentials {
+			if strings.TrimSpace(key.authIndex) != subject.Dimensions.AuthIndex {
+				continue
+			}
+			if _, ok := r.snapshot.CredentialMatrixConfig(id, subject.Dimensions.Model); ok {
+				return true
+			}
+			if _, ok := r.snapshot.CredentialMatrixConfig(id, subject.Dimensions.ModelAlias); ok {
+				return true
+			}
+		}
 		return false
 	}
 	for key, id := range r.snapshot.credentials {
@@ -210,6 +236,9 @@ func (r Resolver) MayUsePricingOverride(subject CostSubject) bool {
 
 // ChannelAttribution never equates a provider, name, or endpoint to a channel.
 func (r Resolver) ChannelAttribution(subject CostSubject) (string, string, string) {
+	if r.threeLayerPricing() {
+		return "", "", ""
+	}
 	if r.snapshot == nil || (!r.HasChannels() && !r.HasPricingOverrides()) {
 		return "", "", ""
 	}

@@ -55,7 +55,7 @@ func MatchOfficialPriceWithPrefixes(prices []entities.OfficialModelPrice, model 
 	// otherwise the result would depend on how the caller capitalized the ID.
 	if candidates := filterOfficialPrices(prices, func(price entities.OfficialModelPrice) bool {
 		return strings.EqualFold(price.CanonicalModelID, model)
-	}); len(candidates) > 1 {
+	}); officialCandidateStatus(candidates) == OfficialMatchAmbiguous {
 		return OfficialMatch{Status: OfficialMatchAmbiguous, Reason: "ambiguous_match"}
 	}
 
@@ -95,13 +95,13 @@ func MatchOfficialPriceWithPrefixes(prices []entities.OfficialModelPrice, model 
 	)
 
 	for _, candidates := range tiers {
-		if len(candidates) == 0 {
-			continue
-		}
-		if len(candidates) != 1 {
+		price, ok, status := selectOfficialCandidate(candidates)
+		if status == OfficialMatchAmbiguous {
 			return OfficialMatch{Status: OfficialMatchAmbiguous, Reason: "ambiguous_match"}
 		}
-		price := candidates[0]
+		if !ok {
+			continue
+		}
 		missing := missingOfficialPriceSegments(price, required)
 		result := OfficialMatch{Price: &price, Status: OfficialMatchAvailable}
 		if len(missing) > 0 {
@@ -153,6 +153,41 @@ func filterOfficialPrices(prices []entities.OfficialModelPrice, matches func(ent
 		}
 	}
 	return result
+}
+
+// OpenRouter records are fallback facts. A primary official record wins within
+// an identity tier; conflicting primary records remain ambiguous.
+func officialCandidateStatus(candidates []entities.OfficialModelPrice) OfficialMatchStatus {
+	_, ok, status := selectOfficialCandidate(candidates)
+	if status == OfficialMatchAmbiguous {
+		return status
+	}
+	if ok {
+		return OfficialMatchAvailable
+	}
+	return OfficialMatchUnavailable
+}
+
+func selectOfficialCandidate(candidates []entities.OfficialModelPrice) (entities.OfficialModelPrice, bool, OfficialMatchStatus) {
+	if len(candidates) == 0 {
+		return entities.OfficialModelPrice{}, false, ""
+	}
+	primary := make([]entities.OfficialModelPrice, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Source != entities.OfficialModelPriceSourceOpenRouter {
+			primary = append(primary, candidate)
+		}
+	}
+	if len(primary) > 1 {
+		return entities.OfficialModelPrice{}, false, OfficialMatchAmbiguous
+	}
+	if len(primary) == 1 {
+		return primary[0], true, OfficialMatchAvailable
+	}
+	if len(candidates) == 1 {
+		return candidates[0], true, OfficialMatchAvailable
+	}
+	return entities.OfficialModelPrice{}, false, OfficialMatchAmbiguous
 }
 
 func filterOfficialAliases(prices []entities.OfficialModelPrice, model string, fold bool) []entities.OfficialModelPrice {
