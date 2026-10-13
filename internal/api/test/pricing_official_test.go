@@ -1,9 +1,7 @@
 package test
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -163,7 +161,9 @@ func TestOfficialPricingRefreshPreviewAndCommitUseSafePreviewSerialization(t *te
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})})
-	provider := &officialRefreshProvider{client: metadataClient}
+	db := openAPITestDatabase(t)
+	catalog := pricing.NewCatalog(pricing.EmptySnapshot())
+	provider := service.NewPricingServiceWithMetadataClient(db, catalog, metadataClient)
 	harness := newOfficialAuthHarness(t, provider)
 	preview := serveOfficialPricing(harness, http.MethodGet, "/api/v1/pricing/official/refresh/preview?source=openrouter", "", harness.admin)
 	if preview.Code != http.StatusOK {
@@ -190,6 +190,11 @@ func TestOfficialPricingRefreshPreviewAndCommitUseSafePreviewSerialization(t *te
 		t.Fatalf("missing cache prices were not preserved in preview: %s", preview.Body.String())
 	}
 
+	before := serveOfficialPricing(harness, http.MethodGet, "/api/v1/pricing/official", "", harness.admin)
+	if before.Code != http.StatusOK || strings.Contains(before.Body.String(), `"canonical_model_id"`) || len(catalog.Snapshot().OfficialPrices()) != 0 {
+		t.Fatalf("preview changed persisted or published prices: %d %s", before.Code, before.Body.String())
+	}
+
 	commitBody := `{"preview_id":"` + previewPayload.PreviewID + `"}`
 	commit := serveOfficialPricing(harness, http.MethodPost, "/api/v1/pricing/official/refresh/commit", commitBody, harness.admin)
 	if commit.Code != http.StatusOK {
@@ -199,51 +204,10 @@ func TestOfficialPricingRefreshPreviewAndCommitUseSafePreviewSerialization(t *te
 	if stored.Code != http.StatusOK || !strings.Contains(stored.Body.String(), `"canonical_model_id":"openai/gpt-4o-mini"`) || !strings.Contains(stored.Body.String(), `"cache_read_price_per_1m":null`) {
 		t.Fatalf("refresh commit did not persist expected row: %d %s", stored.Code, stored.Body.String())
 	}
-}
-
-type officialRefreshProvider struct {
-	service.PricingProvider
-	client    *pricingmetadata.Client
-	preview   service.OfficialPricingRefreshPreview
-	committed []entities.OfficialModelPrice
-}
-
-func (provider *officialRefreshProvider) ListOfficialPricing(context.Context) ([]entities.OfficialModelPrice, error) {
-	return provider.committed, nil
-}
-
-func (provider *officialRefreshProvider) UpdateOfficialPricing(context.Context, service.OfficialPricingInput) (*entities.OfficialModelPrice, error) {
-	return nil, errors.New("unexpected single official pricing update")
-}
-
-func (provider *officialRefreshProvider) UpdateOfficialPricingBatch(context.Context, []service.OfficialPricingInput) ([]entities.OfficialModelPrice, error) {
-	return nil, errors.New("unexpected batch official pricing update")
-}
-
-func (provider *officialRefreshProvider) PreviewOfficialPricingRefresh(ctx context.Context, source string) (service.OfficialPricingRefreshPreview, error) {
-	catalog, err := provider.client.Fetch(ctx, source)
-	if err != nil {
-		return service.OfficialPricingRefreshPreview{}, err
+	published := catalog.Snapshot().OfficialPrices()
+	if len(published) != 1 || published[0].Source != entities.OfficialModelPriceSourceOpenRouter || published[0].SourceURL != "https://openrouter.ai/api/v1/models" || published[0].FetchedAt == nil || published[0].ResponseHash == "" || published[0].PromptPricePer1M == nil || *published[0].PromptPricePer1M != 1 || published[0].CompletionPricePer1M == nil || *published[0].CompletionPricePer1M != 2 || published[0].MissingSegments != "cache_read,cache_write" {
+		t.Fatalf("commit published incorrect prices or provenance: %+v", published)
 	}
-	entry := catalog.Entries[0]
-	provider.preview = service.OfficialPricingRefreshPreview{
-		PreviewID: "fake-preview-id", SourceID: catalog.Source.ID, Source: catalog.Source.Name,
-		SourceURL: catalog.Source.URL, FetchedAt: catalog.FetchedAt, ResponseHash: catalog.ResponseHash,
-		Prices: []entities.OfficialModelPrice{{CanonicalModelID: entry.Model.ID, DisplayModelID: entry.Model.Name,
-			Source: entities.OfficialModelPriceSourceOpenRouter, PricingStyle: entities.ModelPricingStyleOpenAI,
-			SourceURL: catalog.Source.URL, FetchedAt: &catalog.FetchedAt, ResponseHash: catalog.ResponseHash,
-			PromptPricePer1M: entry.Model.Cost.Input, CompletionPricePer1M: entry.Model.Cost.Output,
-			CacheReadPricePer1M: entry.Model.Cost.CacheRead, CacheWritePricePer1M: entry.Model.Cost.CacheWrite}},
-	}
-	return provider.preview, nil
-}
-
-func (provider *officialRefreshProvider) CommitOfficialPricingRefresh(_ context.Context, previewID string) ([]entities.OfficialModelPrice, error) {
-	if previewID != provider.preview.PreviewID {
-		return nil, service.ErrOfficialPricingPreviewNotFound
-	}
-	provider.committed = append([]entities.OfficialModelPrice(nil), provider.preview.Prices...)
-	return provider.committed, nil
 }
 
 type officialCatalogTransport func(*http.Request) (*http.Response, error)

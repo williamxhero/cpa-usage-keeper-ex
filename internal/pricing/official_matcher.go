@@ -2,7 +2,6 @@ package pricing
 
 import (
 	"strings"
-	"unicode"
 
 	"cpa-usage-keeper/internal/entities"
 )
@@ -74,25 +73,7 @@ func MatchOfficialPriceWithPrefixes(prices []entities.OfficialModelPrice, model 
 			return false
 		}))
 	}
-	modelKey := normalizeOfficialModelKey(model)
-	if modelKey != "" {
-		tiers = append(tiers, filterOfficialPrices(prices, func(price entities.OfficialModelPrice) bool {
-			return normalizeOfficialModelKey(price.CanonicalModelID) == modelKey
-		}))
-	}
-	for _, candidate := range stripped {
-		candidateKey := normalizeOfficialModelKey(candidate)
-		if candidateKey == "" || candidateKey == modelKey {
-			continue
-		}
-		tiers = append(tiers, filterOfficialPrices(prices, func(price entities.OfficialModelPrice) bool {
-			return normalizeOfficialModelKey(price.CanonicalModelID) == candidateKey
-		}))
-	}
-	tiers = append(tiers,
-		filterOfficialAliases(prices, model, false),
-		filterOfficialAliases(prices, model, true),
-	)
+	tiers = append(tiers, filterOfficialAliases(prices, model))
 
 	for _, candidates := range tiers {
 		price, ok, status := selectOfficialCandidate(candidates)
@@ -115,13 +96,6 @@ func MatchOfficialPriceWithPrefixes(prices []entities.OfficialModelPrice, model 
 }
 
 func officialPrefixCandidates(model string, prefixes []string) []string {
-	if prefixes == nil {
-		stripped := stripOfficialPricingModelPrefix(model)
-		if stripped != model {
-			return []string{stripped}
-		}
-		return nil
-	}
 	candidates := make([]string, 0, len(prefixes))
 	for _, prefix := range prefixes {
 		prefix = strings.TrimSpace(prefix)
@@ -133,16 +107,6 @@ func officialPrefixCandidates(model string, prefixes []string) []string {
 		}
 	}
 	return candidates
-}
-
-func normalizeOfficialModelKey(value string) string {
-	var builder strings.Builder
-	for _, char := range value {
-		if unicode.IsLetter(char) || unicode.IsDigit(char) {
-			builder.WriteRune(unicode.ToLower(char))
-		}
-	}
-	return builder.String()
 }
 
 func filterOfficialPrices(prices []entities.OfficialModelPrice, matches func(entities.OfficialModelPrice) bool) []entities.OfficialModelPrice {
@@ -190,12 +154,12 @@ func selectOfficialCandidate(candidates []entities.OfficialModelPrice) (entities
 	return entities.OfficialModelPrice{}, false, OfficialMatchAmbiguous
 }
 
-func filterOfficialAliases(prices []entities.OfficialModelPrice, model string, fold bool) []entities.OfficialModelPrice {
+func filterOfficialAliases(prices []entities.OfficialModelPrice, model string) []entities.OfficialModelPrice {
 	result := make([]entities.OfficialModelPrice, 0, 1)
 	for _, price := range prices {
 		matched := false
 		for _, alias := range price.Aliases {
-			if (fold && strings.EqualFold(alias.Alias, model)) || (!fold && alias.Alias == model) {
+			if strings.EqualFold(alias.Alias, model) {
 				matched = true
 				break
 			}
@@ -228,63 +192,4 @@ func missingOfficialPriceSegments(price entities.OfficialModelPrice, required []
 		}
 	}
 	return missing
-}
-
-// Keep this convention local to the new official matcher so the legacy matcher
-// and its prioritization behavior remain unchanged.
-func stripOfficialPricingModelPrefix(model string) string {
-	trimmed := strings.TrimSpace(model)
-	if trimmed == "" {
-		return ""
-	}
-	for index := 0; index+len("ft:") <= len(trimmed); index++ {
-		if (index == 0 || trimmed[index-1] == '/' || trimmed[index-1] == ':') && strings.EqualFold(trimmed[index:index+len("ft:")], "ft:") {
-			return trimmed[index:]
-		}
-	}
-	for end := len(trimmed); end > 0; {
-		index := strings.LastIndexAny(trimmed[:end], "/:")
-		if index < 0 || index == len(trimmed)-1 {
-			return trimmed
-		}
-		if trimmed[index] == ':' && isOfficialModelVersion(trimmed[index+1:end]) {
-			end = index
-			continue
-		}
-		prefix := strings.TrimSpace(trimmed[:index])
-		// A provider/model ID is already a complete identity. Do not split it
-		// into a bare model and accidentally select another provider's price.
-		// CPA-specific prefixes remain supported for namespaces that are not a
-		// known provider namespace; explicit aliases are preferred when unsure.
-		if isOfficialProviderNamespace(prefix) {
-			return trimmed
-		}
-		return strings.TrimSpace(trimmed[index+1:])
-	}
-	return trimmed
-}
-
-func isOfficialProviderNamespace(value string) bool {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if slash := strings.LastIndexByte(value, '/'); slash >= 0 {
-		value = value[slash+1:]
-	}
-	switch value {
-	case "provider", "openai", "azure", "anthropic", "google", "google-vertex", "vertex", "amazon-bedrock", "bedrock", "deepseek", "mistral", "cohere", "xai", "x-ai", "qwen", "alibaba", "alibaba-cn", "zai", "zhipuai", "moonshot", "moonshotai", "minimax", "llama", "meta", "openrouter":
-		return true
-	default:
-		return false
-	}
-}
-
-func isOfficialModelVersion(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, char := range value {
-		if char < '0' || char > '9' {
-			return false
-		}
-	}
-	return true
 }

@@ -118,6 +118,36 @@ func TestUpsertOfficialModelPricesRejectsNonFinitePrice(t *testing.T) {
 	}
 }
 
+func TestUpsertOfficialModelPricesRejectsCanonicalAndPreservedAliasConflicts(t *testing.T) {
+	for _, scenario := range []string{"canonical takeover", "preserved alias conflict"} {
+		t.Run(scenario, func(t *testing.T) {
+			db := openTestDatabase(t)
+			prompt := 1.0
+			if _, err := repository.UpsertOfficialModelPrice(db, entities.OfficialModelPrice{
+				CanonicalModelID: "model-a", PromptPricePer1M: &prompt,
+				Aliases: []entities.OfficialModelPriceAlias{{Alias: "shared"}},
+			}); err != nil {
+				t.Fatalf("seed aliased price: %v", err)
+			}
+			inputs := []entities.OfficialModelPrice{{CanonicalModelID: "SHARED", PromptPricePer1M: &prompt}}
+			if scenario == "preserved alias conflict" {
+				changed := 9.0
+				inputs = []entities.OfficialModelPrice{
+					{CanonicalModelID: "model-a", PromptPricePer1M: &changed},
+					{CanonicalModelID: "model-b", PromptPricePer1M: &prompt, Aliases: []entities.OfficialModelPriceAlias{{Alias: "SHARED"}}},
+				}
+			}
+			if _, err := repository.UpsertOfficialModelPrices(db, inputs); err == nil {
+				t.Fatal("expected conflicting identity batch to be rejected")
+			}
+			rows, err := repository.ListOfficialModelPrices(db)
+			if err != nil || len(rows) != 1 || rows[0].CanonicalModelID != "model-a" || rows[0].PromptPricePer1M == nil || *rows[0].PromptPricePer1M != 1 || len(rows[0].Aliases) != 1 || rows[0].Aliases[0].Alias != "shared" {
+				t.Fatalf("conflicting batch changed catalog: %+v, err=%v", rows, err)
+			}
+		})
+	}
+}
+
 func TestUpsertOfficialModelPricePreservesAliasesWhenOmitted(t *testing.T) {
 	db := openTestDatabase(t)
 	prompt := 1.0
