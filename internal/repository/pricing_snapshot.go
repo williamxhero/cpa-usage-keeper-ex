@@ -22,6 +22,19 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 		ctx = context.Background()
 	}
 	query := db.WithContext(ctx)
+	previousBatch, err := pricingMigrationSnapshotBatch(query)
+	if err != nil {
+		return nil, err
+	}
+	if previousBatch != "" {
+		return LoadPricingMigrationPreviousSnapshot(ctx, query, previousBatch)
+	}
+	// Strict mode deliberately bypasses every legacy pricing layer. Loading the
+	// old tables here would make migration/rollback observability misleading and
+	// could let a future resolver path accidentally consume inactive data.
+	if strictPricingActivated(query) {
+		return loadStrictPricingSnapshot(ctx, query)
+	}
 	settings, err := ListModelPriceSettings(query)
 	if err != nil {
 		return nil, err
@@ -141,6 +154,49 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 				return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
 			}
 		}
+	}
+	return snapshot, nil
+}
+
+func loadStrictPricingSnapshot(ctx context.Context, query *gorm.DB) (*pricing.Snapshot, error) {
+	identities, subjects, err := LoadCredentialPricingDirectory(query)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := pricing.CompileSnapshotWithCredentials(nil, compileCredentialBindings(identities, subjects), nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
+	}
+	// Strict mode remains active even when the catalog is intentionally empty.
+	var officialPrices []entities.OfficialModelPrice
+	if query.Migrator().HasTable(&entities.OfficialModelPrice{}) {
+		officialPrices, err = ListOfficialModelPrices(query)
+		if err != nil {
+			return nil, fmt.Errorf("load official model prices: %w", err)
+		}
+	}
+	snapshot.SetOfficialPrices(officialPrices)
+	if query.Migrator().HasTable(&entities.CredentialModelPriceOverride{}) {
+		overrides, err := ListCredentialModelPriceOverrides(query)
+		if err != nil {
+			return nil, fmt.Errorf("load credential model price overrides: %w", err)
+		}
+		matrix := make([]pricing.CredentialMatrixConfig, len(overrides))
+		for index, row := range overrides {
+			matrix[index] = pricing.CredentialMatrixConfig{
+				SubjectID: row.SubjectID, CanonicalModelID: row.CanonicalModelID,
+				Fixed: pricing.FixedTariff{
+					PromptPricePer1M: &row.PromptPricePer1M, CompletionPricePer1M: &row.CompletionPricePer1M,
+					CacheReadPricePer1M: &row.CacheReadPricePer1M, CacheWritePricePer1M: &row.CacheWritePricePer1M,
+					PricingStyle: row.PricingStyle,
+				}, Source: row.Source,
+			}
+		}
+		if err := snapshot.SetCredentialMatrix(matrix); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
+		}
+	} else if err := snapshot.SetCredentialMatrix(nil); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
 	}
 	return snapshot, nil
 }
