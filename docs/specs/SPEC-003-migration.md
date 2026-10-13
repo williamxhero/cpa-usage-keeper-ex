@@ -35,6 +35,16 @@ A successful run freezes pricing-only source facts, stages them in bounded pages
 
 Existing target tariffs that differ from a proposed import are preserved and reported as conflicts. Conflicts are auditable and do not themselves abort adoption. Invalid source facts or a candidate that cannot compile fail the batch; the resolver state and target facts remain unchanged.
 
+### Canonical duplicates (issue #31)
+
+Migration identity follows the existing trim-and-lowercase canonical model rule; it does not strip arbitrary provider prefixes. Source rows are processed in the existing deterministic order (`model, id` for legacy model prices; `subject_id, model` for credential prices), across all staged pages. When no target exists, the first valid row establishes the target. Later equal tariffs are reported as skipped (`target_exists`), and differing tariffs as conflicts (`target_conflict`), without overwriting that target. Duplicate identity never replaces a genuinely invalid source's rejection reason.
+
+Official rows, including startup `source='legacy-seed'` rows, are existing targets and multiplier bases, not additional migration sources. Their presence must not synthesize a legacy model-price rejection when source tables are empty. Migration preserves all pre-existing official rows and their values rather than deleting or merging administrator-visible facts. A proposed source is skipped only if every existing row with that normalized canonical ID has the same tariff; any differing row makes it a conflict. A multiplier depending on differing existing official tariffs is also reported as a conflict and is not materialized against an arbitrarily selected base. If a differing existing canonical group has no legacy model-price source, one conflict-only catalog audit item records that group; it never imports an official seed as a source. Equal seed duplicates with empty source tables produce no items.
+
+For migration's frozen rollback snapshot only, trim-equivalent legacy model and credential rows are normalized to the same deterministic first-row policy. Every discarded row is still independently validated, including its model rules; ordinary snapshot compilation remains unchanged. This permits migration and rollback even when raw whitespace aliases made the old legacy snapshot uncompilable. Original source rows remain retained. A batch frozen by an older tool may retain its synthetic rejection; use a new batch ID rather than rewriting its frozen audit input.
+
+This repair deliberately does not change startup seeding, official API behavior, or runtime matching priorities. Retained duplicate official rows can therefore still produce the resolver's existing `ambiguous_match`; migration success is not a promise to resolve that ambiguity. Malformed existing credential matrix duplicates that cannot compile remain a candidate failure. Successful batch IDs remain idempotent, and a fresh migration over adopted facts preserves target rows and pricing mode (while recording a new audit batch and migration ownership).
+
 Read one report:
 
 ```text
