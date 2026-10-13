@@ -176,6 +176,7 @@ export function useMatrixPricingData(options: UseMatrixPricingDataOptions = {}):
       await updateCredentialPricingMatrix(cells, controller.signal)
       if (mutationRequest.current !== controller || !enabledRef.current || !canManageRef.current) return false
       await loadMatrix()
+      if (mutationRequest.current !== controller || !enabledRef.current || !canManageRef.current) return false
       notifyChanged()
       noticeRef.current?.('success', tRef.current('notifications.matrix_saved'))
       return true
@@ -318,6 +319,7 @@ export function useOfficialPricingData(options: UseOfficialPricingDataOptions = 
         : await saveOfficialPricingBatch(inputs, controller.signal)
       if (mutationRequest.current !== controller || !enabledRef.current || !canManageRef.current) return null
       await loadOfficialPricing()
+      if (mutationRequest.current !== controller || !enabledRef.current || !canManageRef.current) return null
       notifyChanged()
       noticeRef.current?.('success', tRef.current('notifications.official_saved'))
       return response
@@ -380,6 +382,7 @@ export function useOfficialPricingData(options: UseOfficialPricingDataOptions = 
       if (mutationRequest.current !== controller || !enabledRef.current || !canManageRef.current) return null
       setPreview(null)
       await loadOfficialPricing()
+      if (mutationRequest.current !== controller || !enabledRef.current || !canManageRef.current) return null
       notifyChanged()
       noticeRef.current?.('success', tRef.current('notifications.refresh_committed'))
       return response

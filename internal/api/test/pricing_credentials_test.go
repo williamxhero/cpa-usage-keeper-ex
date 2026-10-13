@@ -90,7 +90,7 @@ func TestPricingCredentialDirectoryAndErrorsUseSafeAllowlist(t *testing.T) {
 	}
 	for _, body := range []string{`{"directory_id":"synthetic-raw-key"}`, `{"directory_id":1,"lookup_key":"synthetic-raw-key"}`, `{"directory_id":-1}`, `{"directory_id":1} {"access_token":"query-token"}`} {
 		res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", body, cookie)
-		if res.Code != http.StatusBadRequest || strings.Contains(res.Body.String(), "synthetic-raw-key") || strings.Contains(res.Body.String(), "query-token") {
+		if res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse || strings.Contains(res.Body.String(), "synthetic-raw-key") || strings.Contains(res.Body.String(), "query-token") {
 			t.Fatalf("unsafe validation response: %d %s", res.Code, res.Body.String())
 		}
 	}
@@ -151,14 +151,8 @@ func TestPricingCredentialSavedSubjectSurvivesRotationWithoutAutoMigration(t *te
 	sync([]entities.UsageIdentity{identity})
 	router, cookie := credentialPricingRouter(t, db)
 	directory := credentialDirectory(t, router, cookie)
-	savedResponse := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID), cookie)
-	if savedResponse.Code != http.StatusCreated {
-		t.Fatal(savedResponse.Code)
-	}
-	var saved safeCredential
-	if err := json.Unmarshal(savedResponse.Body.Bytes(), &saved); err != nil {
-		t.Fatal(err)
-	}
+	assertPricingRemoved(t, serveCredentialMutation(router, "POST", "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID), cookie))
+	saved := bindPricingFixture(t, db, directory[0].DirectoryID)
 	identity.Identity = "rotated-index"
 	sync([]entities.UsageIdentity{identity})
 	router, cookie = credentialPricingRouter(t, db)
@@ -195,14 +189,8 @@ func TestPricingCredentialSavedSubjectRemainsVisibleButNeverResolvesAnAmbiguousI
 	sync([]entities.UsageIdentity{row})
 	router, cookie := credentialPricingRouter(t, db)
 	directory := credentialDirectory(t, router, cookie)
-	res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID), cookie)
-	var saved safeCredential
-	if res.Code != http.StatusCreated {
-		t.Fatal(res.Code)
-	}
-	if err := json.Unmarshal(res.Body.Bytes(), &saved); err != nil {
-		t.Fatal(err)
-	}
+	assertPricingRemoved(t, serveCredentialMutation(router, "POST", "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID), cookie))
+	saved := bindPricingFixture(t, db, directory[0].DirectoryID)
 	duplicate := row
 	duplicate.Name = "Second configuration"
 	sync([]entities.UsageIdentity{row, duplicate})
@@ -214,8 +202,8 @@ func TestPricingCredentialSavedSubjectRemainsVisibleButNeverResolvesAnAmbiguousI
 		if len(items) != 1 || items[0].BindingStatus != "ambiguous" || items[0].SubjectID != "" {
 			t.Fatalf("ambiguity must not assert saved attribution: %+v", items)
 		}
-		res = serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID), cookie)
-		if res.Code != http.StatusConflict {
+		res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID), cookie)
+		if res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse {
 			t.Fatalf("ambiguous save = %d", res.Code)
 		}
 		res = serveAPIGet(router, "/api/v1/pricing/credential-subjects", cookie)
@@ -279,7 +267,7 @@ func TestPricingCredentialMissingOrUnverifiedIdentityCannotBeBound(t *testing.T)
 			t.Fatalf("missing evidence became attribution: %+v", item)
 		}
 		res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, item.DirectoryID), cookie)
-		if res.Code != http.StatusConflict {
+		if res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse {
 			t.Fatalf("unverified save: %d %s", res.Code, res.Body.String())
 		}
 	}
@@ -297,7 +285,7 @@ func TestPricingCredentialConflictingTypeDeclarationCannotBeBound(t *testing.T) 
 	}
 	router, cookie := credentialPricingRouter(t, db)
 	res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, row.ID), cookie)
-	if res.Code != http.StatusConflict {
+	if res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse {
 		t.Fatalf("conflicting type declaration accepted: %d %s", res.Code, res.Body.String())
 	}
 	directory := credentialDirectory(t, router, cookie)
@@ -317,14 +305,7 @@ func TestPricingCredentialResolutionRequiresTrustedUpstreamIdentityType(t *testi
 	router, cookie := credentialPricingRouter(t, db)
 	subjects := map[string]string{}
 	for _, item := range credentialDirectory(t, router, cookie) {
-		res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, item.DirectoryID), cookie)
-		if res.Code != http.StatusCreated {
-			t.Fatalf("explicit typed selection rejected: %d %s", res.Code, res.Body.String())
-		}
-		var saved safeCredential
-		if err := json.Unmarshal(res.Body.Bytes(), &saved); err != nil {
-			t.Fatal(err)
-		}
+		saved := bindPricingFixture(t, db, item.DirectoryID)
 		subjects[item.AuthType] = saved.SubjectID
 	}
 	resolver, ok := service.NewPricingService(db, emptyPricingCatalogForTest()).(interface {
@@ -379,14 +360,8 @@ func TestPricingCredentialAdministratorCanSelectBindAndReadAfterRestart(t *testi
 	if len(directory) != 1 || directory[0].Name != "Friendly upstream" || directory[0].BindingStatus != "unbound" {
 		t.Fatalf("unexpected directory: %+v", directory)
 	}
-	res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID), cookie)
-	if res.Code != http.StatusCreated {
-		t.Fatalf("bind status = %d, want 201: %s", res.Code, res.Body.String())
-	}
-	var saved safeCredential
-	if err := json.Unmarshal(res.Body.Bytes(), &saved); err != nil {
-		t.Fatal(err)
-	}
+	assertPricingRemoved(t, serveCredentialMutation(router, "POST", "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID), cookie))
+	saved := bindPricingFixture(t, db, directory[0].DirectoryID)
 	if !strings.HasPrefix(saved.SubjectID, "cred_") || saved.BindingStatus != "bound" {
 		t.Fatalf("invalid saved subject: %+v", saved)
 	}
@@ -424,13 +399,7 @@ func TestPricingCredentialAdministratorCanSelectBindAndReadAfterRestart(t *testi
 				continue
 			}
 			if round == 0 {
-				res = serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, item.DirectoryID), cookie)
-				if res.Code != http.StatusCreated {
-					t.Fatalf("canonical bind: %d %s", res.Code, res.Body.String())
-				}
-				if err := json.Unmarshal(res.Body.Bytes(), &saved); err != nil {
-					t.Fatal(err)
-				}
+				saved = bindPricingFixture(t, db, item.DirectoryID)
 			} else if item.SubjectID != saved.SubjectID || item.BindingStatus != "bound" {
 				t.Fatalf("refresh changed binding: %+v", item)
 			}
@@ -469,7 +438,7 @@ func TestPricingCredentialBindingDoesNotChangeLegacyCostsOrRequestAttributes(t *
 	}
 	router, cookie := credentialPricingRouter(t, db, catalog)
 	query := url.Values{"range": {"custom"}, "unit": {"hour"}, "start": {now.Add(-5 * time.Hour).Format(time.RFC3339)}, "end": {now.Format(time.RFC3339)}}.Encode()
-	paths := []string{"/api/v1/usage/overview?" + query, "/api/v1/usage/overview/comparisons?" + query, "/api/v1/usage/events?" + query, "/api/v1/pricing", "/api/v1/pricing/rules?model=model-a"}
+	paths := []string{"/api/v1/usage/overview?" + query, "/api/v1/usage/overview/comparisons?" + query, "/api/v1/usage/events?" + query, "/api/v1/pricing"}
 	legacyPayload := func(body string) any {
 		t.Helper()
 		var payload any
@@ -588,20 +557,18 @@ func TestPricingCredentialBindingDoesNotChangeLegacyCostsOrRequestAttributes(t *
 		t.Fatal(err)
 	}
 	item := credentialDirectory(t, router, cookie)[0]
-	res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, item.DirectoryID), cookie)
-	if res.Code != http.StatusCreated {
-		t.Fatalf("save: %d %s", res.Code, res.Body.String())
-	}
-	var saved safeCredential
-	if err := json.Unmarshal(res.Body.Bytes(), &saved); err != nil || saved.SubjectID == "" {
-		t.Fatalf("missing saved credential subject: %+v, %v", saved, err)
+	assertPricingRemoved(t, serveCredentialMutation(router, "POST", "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, item.DirectoryID), cookie))
+	assertPricingRemoved(t, serveAPIGet(router, "/api/v1/pricing/rules?model=model-a", cookie))
+	saved := bindPricingFixture(t, db, item.DirectoryID, catalog)
+	if saved.SubjectID == "" {
+		t.Fatal("missing saved subject fixture")
 	}
 	afterSnapshotID := catalog.NewResolver().SnapshotID()
 	if afterSnapshotID == beforeSnapshotID {
 		t.Fatal("binding did not publish a new pricing snapshot")
 	}
 	for _, path := range paths {
-		res = serveAPIGet(router, path, cookie)
+		res := serveAPIGet(router, path, cookie)
 		if res.Code != http.StatusOK || !reflect.DeepEqual(legacyPayload(res.Body.String()), legacyPayload(before[path])) {
 			t.Fatalf("binding changed legacy response %s: %d %s", path, res.Code, res.Body.String())
 		}

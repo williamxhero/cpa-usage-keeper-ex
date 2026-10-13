@@ -3,7 +3,6 @@ package test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"net/http"
 	"net/url"
@@ -39,19 +38,12 @@ func TestCredentialOnlyAmbiguityServiceAndHTTPExplanation(t *testing.T) {
 				t.Fatal(err)
 			}
 			router, cookie := credentialPricingRouter(t, db, catalog)
-			bound := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identity.ID), cookie)
-			var credential safeCredential
-			if bound.Code != http.StatusCreated || json.Unmarshal(bound.Body.Bytes(), &credential) != nil {
-				t.Fatal(bound.Body.String())
-			}
+			credential := bindPricingFixture(t, db, identity.ID, catalog)
 			path := "/api/v1/pricing/credentials/" + credential.SubjectID + "/default"
 			if mode == "model" {
 				path = "/api/v1/pricing/credentials/" + credential.SubjectID + "/model?model=base"
 			}
-			saved := serveCredentialMutation(router, http.MethodPut, path, `{"multiplier":0.2}`, cookie)
-			if saved.Code != http.StatusOK {
-				t.Fatal(saved.Body.String())
-			}
+			applyLegacyPricingFixture(t, prices, "PUT", path, `{"multiplier":0.2}`)
 			start := time.Now().Truncate(time.Hour).Add(-6 * time.Hour)
 			end := start.Add(6 * time.Hour)
 			event := entities.UsageEvent{EventKey: "credential-only-explanation", Model: "base", AuthType: "apikey", AuthIndex: identity.Identity, Timestamp: start.Add(time.Minute), InputTokens: 1_000_000, TotalTokens: 1_000_000}
@@ -120,10 +112,7 @@ func TestCredentialOnlyAmbiguityServiceAndHTTPExplanation(t *testing.T) {
 			if prior.Cost.TotalCostUSD != 2 || prior.AttributionWarning != "" || old.SnapshotID() == catalog.Snapshot().ID() {
 				t.Fatal("old snapshot mutated")
 			}
-			readback := serveAPIGet(router, path, cookie)
-			if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"multiplier":0.2`) {
-				t.Fatalf("saved override lost %s", readback.Body.String())
-			}
+			assertPricingRemoved(t, serveAPIGet(router, path, cookie))
 		})
 	}
 }
@@ -151,19 +140,9 @@ func TestCredentialDefaultAdminHTTPPersistenceCostQueriesAndSafeValidation(t *te
 		t.Fatal(err)
 	}
 	router, cookie := credentialPricingRouter(t, db, catalog)
-	bound := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identity.ID), cookie)
-	if bound.Code != http.StatusCreated {
-		t.Fatalf("bind %d %s", bound.Code, bound.Body.String())
-	}
-	var credential safeCredential
-	if err := json.Unmarshal(bound.Body.Bytes(), &credential); err != nil {
-		t.Fatal(err)
-	}
+	credential := bindPricingFixture(t, db, identity.ID, catalog)
 	path := "/api/v1/pricing/credentials/" + credential.SubjectID + "/default"
-	inherited := serveAPIGet(router, path, cookie)
-	if inherited.Code != 200 || !strings.Contains(inherited.Body.String(), `"multiplier":null`) {
-		t.Fatalf("inherited %d %s", inherited.Code, inherited.Body.String())
-	}
+	assertPricingRemoved(t, serveAPIGet(router, path, cookie))
 	day := time.Now().Truncate(time.Hour).Add(-6 * time.Hour)
 	timestamp := day.Add(3 * time.Hour)
 	if _, _, err := repository.InsertUsageEvents(db, []entities.UsageEvent{{EventKey: "http-default-query", APIGroupKey: "synthetic-downstream", Model: "base", AuthType: "apikey", AuthIndex: identity.Identity, Timestamp: timestamp, ServiceTier: "priority", ReasoningEffort: "high", InputTokens: 1_000_000, TotalTokens: 1_000_000}}); err != nil {
@@ -214,64 +193,50 @@ func TestCredentialDefaultAdminHTTPPersistenceCostQueriesAndSafeValidation(t *te
 		}
 	}
 	assertHTTPPrice(30, false)
-	for _, body := range []string{`{"multiplier":".3"}`, `{"multiplier":"0.3x"}`, `{"multiplier":"30%"}`, `{"multiplier":0.3}`, `{"multiplier":3e-1}`} {
-		saved := serveCredentialMutation(router, http.MethodPut, path, body, cookie)
-		if saved.Code != 200 {
-			t.Fatalf("save %s: %d %s", body, saved.Code, saved.Body.String())
+	for _, test := range []struct{ body, multiplier string }{
+		{`{"multiplier":".3"}`, ".3"}, {`{"multiplier":"0.3x"}`, "0.3x"}, {`{"multiplier":"30%"}`, "30%"}, {`{"multiplier":0.3}`, "0.3"}, {`{"multiplier":3e-1}`, "0.3"},
+	} {
+		before := catalog.Snapshot()
+		assertPricingRemoved(t, serveCredentialMutation(router, "PUT", path, test.body, cookie))
+		if catalog.Snapshot() != before {
+			t.Fatal("retired valid request published")
 		}
-		var dto service.CredentialDefault
-		if err := json.Unmarshal(saved.Body.Bytes(), &dto); err != nil {
+		_, err := prices.(service.PricingCredentialDefaultsProvider).SetCredentialDefault(ctx, credential.SubjectID, test.multiplier)
+		if err != nil {
 			t.Fatal(err)
-		}
-		if dto.Multiplier == nil || *dto.Multiplier != .3 || dto.SubjectID != credential.SubjectID || dto.SnapshotID == "" {
-			t.Fatalf("direct canonical DTO %+v", dto)
-		}
-		for _, forbidden := range []string{identity.Identity, identity.LookupKey, "identity", "lookup_key", "data"} {
-			if strings.Contains(saved.Body.String(), forbidden) {
-				t.Fatalf("unsafe/non-direct save response %s", saved.Body.String())
-			}
 		}
 		assertHTTPPrice(3, true)
 	}
 	before := catalog.Snapshot()
 	for _, body := range []string{`{}`, `{"multiplier":null}`, `{"multiplier":""}`, `{"multiplier":" "}`, `{"multiplier":"-1"}`, `{"multiplier":"+1"}`, `{"multiplier":-0.1}`, `{"multiplier":1e999}`, `{"multiplier":"NaN"}`, `{"multiplier":"Inf"}`, `{"multiplier":"1e2"}`, `{"multiplier":"1 x"}`, `{"multiplier":"1x%"}`, `{"multiplier":true}`, `{"multiplier":{}}`, `{"multiplier":"synthetic-private-source-key"}`, `{"multiplier":1,"lookup_key":"synthetic-private-source-key"}`, `{"multiplier":1} {"credential":"synthetic-private-source-key"}`} {
-		res := serveCredentialMutation(router, http.MethodPut, path, body, cookie)
-		if res.Code != http.StatusBadRequest || !strings.Contains(res.Body.String(), `"field":"multiplier"`) || strings.Contains(res.Body.String(), identity.LookupKey) {
-			t.Fatalf("unsafe invalid response %s: %d %s", body, res.Code, res.Body.String())
-		}
+		assertPricingRemoved(t, serveCredentialMutation(router, "PUT", path, body, cookie))
 		if catalog.Snapshot() != before {
-			t.Fatal("invalid HTTP write published")
+			t.Fatal("retired write published")
 		}
 	}
 	for _, test := range []struct {
-		body string
-		cost float64
-	}{{`{"multiplier":0}`, 0}, {`{"multiplier":-0}`, 0}, {`{"multiplier":"1."}`, 10}, {`{"multiplier":"120%"}`, 12}, {`{"multiplier":"1.2X"}`, 12}} {
-		res := serveCredentialMutation(router, http.MethodPut, path, test.body, cookie)
-		if res.Code != 200 {
-			t.Fatalf("explicit save %d %s", res.Code, res.Body.String())
+		body, multiplier string
+		cost             float64
+	}{{`{"multiplier":0}`, "0", 0}, {`{"multiplier":-0}`, "0", 0}, {`{"multiplier":"1."}`, "1.", 10}, {`{"multiplier":"120%"}`, "120%", 12}, {`{"multiplier":"1.2X"}`, "1.2X", 12}} {
+		// Numeric JSON -0 formerly decoded to the service's canonical zero.
+		// The HTTP request is now rejected before decoding; the internal fixture
+		// still exercises the same known-zero cost compatibility assertion.
+		assertPricingRemoved(t, serveCredentialMutation(router, "PUT", path, test.body, cookie))
+		_, err := prices.(service.PricingCredentialDefaultsProvider).SetCredentialDefault(ctx, credential.SubjectID, test.multiplier)
+		if err != nil {
+			t.Fatal(err)
 		}
 		assertHTTPPrice(test.cost, true)
 	}
-	cleared := serveCredentialMutation(router, http.MethodDelete, path, "", cookie)
-	if cleared.Code != 200 || !strings.Contains(cleared.Body.String(), `"multiplier":null`) {
-		t.Fatalf("clear %d %s", cleared.Code, cleared.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "DELETE", path, "")
 	assertHTTPPrice(30, false)
-	// Persisted canonical default survives reconstructing the actual router/service.
-	saved := serveCredentialMutation(router, http.MethodPut, path, `{"multiplier":"20%"}`, cookie)
-	if saved.Code != 200 {
-		t.Fatal(saved.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, `{"multiplier":"20%"}`)
 	restartedSnapshot, err := repository.LoadPricingSnapshot(ctx, db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	router, cookie = credentialPricingRouter(t, db, pricing.NewCatalog(restartedSnapshot))
-	readback := serveAPIGet(router, path, cookie)
-	if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"multiplier":0.2`) {
-		t.Fatalf("restart %d %s", readback.Code, readback.Body.String())
-	}
+	assertPricingRemoved(t, serveAPIGet(router, path, cookie))
 	assertHTTPPrice(2, true)
 	// Rollups outlive retained requests: the API must explain that historical
 	// evidence cannot be recovered rather than claim a guessed complete fee.
@@ -284,11 +249,8 @@ func TestCredentialDefaultAdminHTTPPersistenceCostQueriesAndSafeValidation(t *te
 			t.Fatalf("missing public incompleteness: %d %s", response.Code, response.Body.String())
 		}
 	}
-	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		res := serveCredentialMutation(router, method, "/api/v1/pricing/credentials/cred_absent/default", `{"multiplier":1}`, cookie)
-		if res.Code != 404 {
-			t.Fatalf("missing subject %s %d %s", method, res.Code, res.Body.String())
-		}
+	for _, method := range []string{"GET", "PUT", "DELETE"} {
+		assertPricingRemoved(t, serveCredentialMutation(router, method, "/api/v1/pricing/credentials/cred_absent/default", `{"multiplier":1}`, cookie))
 	}
 }
 

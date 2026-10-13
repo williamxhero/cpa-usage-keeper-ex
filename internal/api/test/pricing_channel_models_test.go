@@ -43,15 +43,10 @@ func TestChannelModelsAdminHTTPFiveLayerMatrixReadbackSwitchClearRestart(t *test
 		t.Fatal(err)
 	}
 	router, cookie := credentialPricingRouter(t, db, catalog)
-	bound := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identity.ID), cookie)
-	var credential safeCredential
-	if bound.Code != 201 || json.Unmarshal(bound.Body.Bytes(), &credential) != nil {
-		t.Fatal(bound.Body.String())
-	}
-	created := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/channels", fmt.Sprintf(`{"name":"Channel model HTTP","member_subject_ids":[%q]}`, credential.SubjectID), cookie)
-	var channel service.PricingChannel
-	if created.Code != 200 || json.Unmarshal(created.Body.Bytes(), &channel) != nil {
-		t.Fatal(created.Body.String())
+	credential := bindPricingFixture(t, db, identity.ID, catalog)
+	channel, err := prices.(service.PricingChannelsProvider).CreatePricingChannel(ctx, service.PricingChannelInput{Name: "Channel model HTTP", MemberSubjectIDs: []string{credential.SubjectID}})
+	if err != nil {
+		t.Fatal(err)
 	}
 	channelPath := "/api/v1/pricing/channels/" + channel.ID
 	modelPath := channelPath + "/model?model=observed-model"
@@ -65,13 +60,7 @@ func TestChannelModelsAdminHTTPFiveLayerMatrixReadbackSwitchClearRestart(t *test
 	}
 	mutate := func(method, path, body string) {
 		t.Helper()
-		res := serveCredentialMutation(router, method, path, body, cookie)
-		if res.Code != 200 {
-			t.Fatalf("mutation %s %s %d %s", method, path, res.Code, res.Body.String())
-		}
-		if strings.Contains(res.Body.String(), identity.LookupKey) || strings.Contains(res.Body.String(), identity.Identity) {
-			t.Fatal("private evidence escaped")
-		}
+		applyLegacyPricingFixture(t, prices, method, path, body)
 	}
 	assertCosts := func(want float64, scope string) {
 		t.Helper()
@@ -170,6 +159,7 @@ func TestChannelModelsAdminHTTPFiveLayerMatrixReadbackSwitchClearRestart(t *test
 		t.Fatal(err)
 	}
 	catalog = pricing.NewCatalog(restarted)
+	prices = service.NewPricingService(db, catalog)
 	router, cookie = credentialPricingRouter(t, db, catalog)
 	assertCosts(12, "credential_model")
 	mutate("DELETE", credentialPath+"/model?model=observed-model", "")
@@ -180,10 +170,7 @@ func TestChannelModelsAdminHTTPFiveLayerMatrixReadbackSwitchClearRestart(t *test
 	mutate("PUT", modelPath, fixed)
 	assertCosts(4, "channel_model")
 	for _, path := range []string{modelPath, channelPath + "/models"} {
-		res := serveAPIGet(router, path, cookie)
-		if res.Code != 200 || !strings.Contains(res.Body.String(), `"mode":"fixed"`) || !strings.Contains(res.Body.String(), `"multiplier":null`) {
-			t.Fatalf("readback %s", res.Body.String())
-		}
+		assertPricingRemoved(t, serveAPIGet(router, path, cookie))
 	}
 	mutate("PUT", modelPath, `{"mode":"multiplier","multiplier":"0","fixed":"synthetic-private-source"}`)
 	assertCosts(0, "channel_model")
@@ -211,21 +198,15 @@ func TestChannelFixedAdminHTTPAtomicInvalidInputsNoBaselineAndInactiveFields(t *
 	}
 	catalog := pricing.NewCatalog(snapshot)
 	router, cookie := credentialPricingRouter(t, db, catalog)
-	bound := serveCredentialMutation(router, "POST", "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identity.ID), cookie)
-	var credential safeCredential
-	if bound.Code != 201 || json.Unmarshal(bound.Body.Bytes(), &credential) != nil {
-		t.Fatal(bound.Body.String())
-	}
-	created := serveCredentialMutation(router, "POST", "/api/v1/pricing/channels", fmt.Sprintf(`{"name":"Fixed channel HTTP","member_subject_ids":[%q]}`, credential.SubjectID), cookie)
-	var channel service.PricingChannel
-	if created.Code != 200 || json.Unmarshal(created.Body.Bytes(), &channel) != nil {
-		t.Fatal(created.Body.String())
+	prices := service.NewPricingService(db, catalog)
+	credential := bindPricingFixture(t, db, identity.ID, catalog)
+	channel, err := prices.(service.PricingChannelsProvider).CreatePricingChannel(ctx, service.PricingChannelInput{Name: "Channel model HTTP", MemberSubjectIDs: []string{credential.SubjectID}})
+	if err != nil {
+		t.Fatal(err)
 	}
 	path := "/api/v1/pricing/channels/" + channel.ID + "/model?model=unpriced"
 	fixed := `{"mode":"fixed","fixed":{"prompt_price_per_1m":1,"completion_price_per_1m":2,"cache_read_price_per_1m":3,"cache_write_price_per_1m":4,"pricing_style":"openai"}}`
-	if res := serveCredentialMutation(router, "PUT", path, fixed, cookie); res.Code != 200 {
-		t.Fatal(res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, fixed)
 	day := time.Now().Truncate(time.Hour).Add(-6 * time.Hour)
 	if _, _, err := repository.InsertUsageEvents(db, []entities.UsageEvent{{EventKey: "channel-fixed-http", APIGroupKey: "synthetic-downstream", Model: "unpriced", AuthType: "apikey", AuthIndex: identity.Identity, Timestamp: day.Add(time.Hour), InputTokens: 3_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000, CacheCreationTokens: 1_000_000, TotalTokens: 4_000_000}}); err != nil {
 		t.Fatal(err)
@@ -262,7 +243,8 @@ func TestChannelFixedAdminHTTPAtomicInvalidInputsNoBaselineAndInactiveFields(t *
 			target[field] = invalid
 			body, _ := json.Marshal(map[string]any{"mode": "fixed", "fixed": target})
 			res := serveCredentialMutation(router, "PUT", path, string(body), cookie)
-			if res.Code != 400 || catalog.Snapshot() != previous || strings.Contains(res.Body.String(), "synthetic-private-token") {
+			assertPricingRemoved(t, res)
+			if catalog.Snapshot() != previous || strings.Contains(res.Body.String(), "synthetic-private-token") {
 				t.Fatalf("invalid %s=%v %d %s", field, invalid, res.Code, res.Body.String())
 			}
 		}
@@ -273,53 +255,44 @@ func TestChannelFixedAdminHTTPAtomicInvalidInputsNoBaselineAndInactiveFields(t *
 			}
 		}
 		body, _ := json.Marshal(map[string]any{"mode": "fixed", "fixed": target})
-		if res := serveCredentialMutation(router, "PUT", path, string(body), cookie); res.Code != 400 || catalog.Snapshot() != previous {
+		if res := serveCredentialMutation(router, "PUT", path, string(body), cookie); res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse || catalog.Snapshot() != previous {
 			t.Fatalf("omitted %s %s", field, res.Body.String())
 		}
 	}
 	for _, body := range []string{`{"mode":"fixed"}`, `{"mode":"fixed","fixed":null}`, `{"mode":"invalid","multiplier":1}`, strings.Replace(fixed, `,"pricing_style":"openai"`, "", 1), strings.Replace(fixed, `"openai"`, `"guessed"`, 1), `{"mode":"fixed","fixed":{"prompt_price_per_1m":6e294,"completion_price_per_1m":6e294,"cache_read_price_per_1m":6e294,"cache_write_price_per_1m":6e294,"pricing_style":"openai"}}`, fixed + ` {}`, strings.Replace(fixed, `"mode":"fixed"`, `"unknown":"synthetic-private-token","mode":"fixed"`, 1)} {
 		res := serveCredentialMutation(router, "PUT", path, body, cookie)
-		if res.Code != 400 || catalog.Snapshot() != previous || strings.Contains(res.Body.String(), "synthetic-private-token") {
+		assertPricingRemoved(t, res)
+		if catalog.Snapshot() != previous || strings.Contains(res.Body.String(), "synthetic-private-token") {
 			t.Fatalf("invalid atomic %s", res.Body.String())
 		}
 	}
 	assertQueries(10, true, "channel_model")
 	credentialPath := "/api/v1/pricing/credentials/" + credential.SubjectID
 	for _, higher := range []string{credentialPath + "/default", credentialPath + "/model?model=unpriced"} {
-		if res := serveCredentialMutation(router, "PUT", higher, `{"multiplier":"0"}`, cookie); res.Code != 200 {
-			t.Fatal(res.Body.String())
-		}
+		applyLegacyPricingFixture(t, prices, "PUT", higher, `{"multiplier":"0"}`)
 		scope := "credential_default"
 		if strings.Contains(higher, "/model?") {
 			scope = "credential_model"
 		}
 		assertQueries(0, false, scope)
-		if res := serveCredentialMutation(router, "DELETE", higher, "", cookie); res.Code != 200 {
-			t.Fatal(res.Body.String())
-		}
+		applyLegacyPricingFixture(t, prices, "DELETE", higher, "")
 		assertQueries(10, true, "channel_model")
 	}
 	zero := `{"mode":"fixed","multiplier":"synthetic-private-token","fixed":{"prompt_price_per_1m":0,"completion_price_per_1m":"0","cache_read_price_per_1m":0,"cache_write_price_per_1m":0,"pricing_style":"claude"}}`
-	if res := serveCredentialMutation(router, "PUT", path, zero, cookie); res.Code != 200 || strings.Contains(res.Body.String(), "synthetic-private-token") {
-		t.Fatal(res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, zero)
 	assertQueries(0, true, "channel_model")
-	if res := serveCredentialMutation(router, "PUT", path, `{"mode":"multiplier","multiplier":"0x","fixed":"synthetic-private-token"}`, cookie); res.Code != 200 || strings.Contains(res.Body.String(), `"fixed"`) {
-		t.Fatal(res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, `{"mode":"multiplier","multiplier":"0x","fixed":"synthetic-private-token"}`)
 	assertQueries(0, false, "channel_model")
-	if res := serveCredentialMutation(router, "PUT", path, fixed, cookie); res.Code != 200 {
-		t.Fatal(res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, fixed)
 	restarted, err := repository.LoadPricingSnapshot(ctx, db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	router, cookie = credentialPricingRouter(t, db, pricing.NewCatalog(restarted))
+	catalog = pricing.NewCatalog(restarted)
+	prices = service.NewPricingService(db, catalog)
+	router, cookie = credentialPricingRouter(t, db, catalog)
 	assertQueries(10, true, "channel_model")
-	if res := serveCredentialMutation(router, "DELETE", path, "", cookie); res.Code != 200 || !strings.Contains(res.Body.String(), `"mode":"inherit"`) {
-		t.Fatal(res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "DELETE", path, "")
 	assertQueries(0, false, "")
 }
 
@@ -344,10 +317,10 @@ func TestChannelModelRoutesAdminAuthorizationAndSafeMissingTargets(t *testing.T)
 	}
 	adminRouter, cookie := credentialPricingRouter(t, db, emptyPricingCatalogForTest())
 	for _, method := range []string{"GET", "PUT", "DELETE"} {
-		if res := serveCredentialMutation(adminRouter, method, "/api/v1/pricing/channels/missing/model?model=base", `{"multiplier":1}`, cookie); res.Code != 404 {
+		if res := serveCredentialMutation(adminRouter, method, "/api/v1/pricing/channels/missing/model?model=base", `{"multiplier":1}`, cookie); res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse {
 			t.Fatalf("missing %s %d %s", method, res.Code, res.Body.String())
 		}
-		if res := serveCredentialMutation(adminRouter, method, "/api/v1/pricing/channels/missing/model?model=%20", `{"multiplier":1}`, cookie); res.Code != 400 {
+		if res := serveCredentialMutation(adminRouter, method, "/api/v1/pricing/channels/missing/model?model=%20", `{"multiplier":1}`, cookie); res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse {
 			t.Fatalf("blank %s %d", method, res.Code)
 		}
 	}

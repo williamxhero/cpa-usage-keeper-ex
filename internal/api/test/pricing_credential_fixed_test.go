@@ -13,6 +13,7 @@ import (
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository"
+	"cpa-usage-keeper/internal/service"
 )
 
 func TestCredentialFixedAdminHTTPNoBaselinePersisted(t *testing.T) {
@@ -30,17 +31,11 @@ func TestCredentialFixedAdminHTTPNoBaselinePersisted(t *testing.T) {
 	}
 	catalog := pricing.NewCatalog(snapshot)
 	router, cookie := credentialPricingRouter(t, db, catalog)
-	bound := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identity.ID), cookie)
-	var credential safeCredential
-	if bound.Code != 201 || json.Unmarshal(bound.Body.Bytes(), &credential) != nil {
-		t.Fatal(bound.Body.String())
-	}
+	prices := service.NewPricingService(db, catalog)
+	credential := bindPricingFixture(t, db, identity.ID, catalog)
 	path := "/api/v1/pricing/credentials/" + credential.SubjectID + "/model?model=unpriced"
 	fixed := `{"mode":"fixed","fixed":{"prompt_price_per_1m":1,"completion_price_per_1m":2,"cache_read_price_per_1m":3,"cache_write_price_per_1m":4,"pricing_style":"openai"}}`
-	saved := serveCredentialMutation(router, http.MethodPut, path, fixed, cookie)
-	if saved.Code != 200 {
-		t.Fatalf("fixed save %d %s", saved.Code, saved.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, fixed)
 	day := time.Now().Truncate(time.Hour).Add(-6 * time.Hour)
 	if _, _, err := repository.InsertUsageEvents(db, []entities.UsageEvent{{EventKey: "http-fixed", APIGroupKey: "synthetic-downstream", Model: "unpriced", AuthType: "apikey", AuthIndex: identity.Identity, Timestamp: day.Add(time.Hour), InputTokens: 3_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000, CacheCreationTokens: 1_000_000, TotalTokens: 4_000_000}}); err != nil {
 		t.Fatal(err)
@@ -77,7 +72,8 @@ func TestCredentialFixedAdminHTTPNoBaselinePersisted(t *testing.T) {
 			target[field] = invalid
 			body, _ := json.Marshal(map[string]any{"mode": "fixed", "fixed": target})
 			res := serveCredentialMutation(router, http.MethodPut, path, string(body), cookie)
-			if res.Code != 400 || catalog.Snapshot() != previous {
+			assertPricingRemoved(t, res)
+			if catalog.Snapshot() != previous {
 				t.Fatalf("accepted %s=%v %d %s", field, invalid, res.Code, res.Body.String())
 			}
 		}
@@ -88,12 +84,12 @@ func TestCredentialFixedAdminHTTPNoBaselinePersisted(t *testing.T) {
 			}
 		}
 		body, _ := json.Marshal(map[string]any{"mode": "fixed", "fixed": target})
-		if res := serveCredentialMutation(router, http.MethodPut, path, string(body), cookie); res.Code != 400 || catalog.Snapshot() != previous {
+		if res := serveCredentialMutation(router, http.MethodPut, path, string(body), cookie); res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse || catalog.Snapshot() != previous {
 			t.Fatalf("omitted %s %d %s", field, res.Code, res.Body.String())
 		}
 	}
 	for _, body := range []string{`{"mode":"fixed"}`, `{"mode":"fixed","fixed":null}`, `{"mode":"invalid","multiplier":1}`, strings.Replace(fixed, `,"pricing_style":"openai"`, "", 1), strings.Replace(fixed, `"openai"`, `"guessed"`, 1), `{"mode":"fixed","fixed":{"prompt_price_per_1m":6e294,"completion_price_per_1m":6e294,"cache_read_price_per_1m":6e294,"cache_write_price_per_1m":6e294,"pricing_style":"openai"}}`} {
-		if res := serveCredentialMutation(router, http.MethodPut, path, body, cookie); res.Code != 400 || catalog.Snapshot() != previous {
+		if res := serveCredentialMutation(router, http.MethodPut, path, body, cookie); res.Code != http.StatusGone || strings.TrimSpace(res.Body.String()) != removedPricingResponse || catalog.Snapshot() != previous {
 			t.Fatalf("invalid mode/style/overflow %d %s", res.Code, res.Body.String())
 		}
 	}
@@ -102,28 +98,18 @@ func TestCredentialFixedAdminHTTPNoBaselinePersisted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	router, cookie = credentialPricingRouter(t, db, pricing.NewCatalog(restarted))
-	read := serveAPIGet(router, path, cookie)
-	if read.Code != 200 || !strings.Contains(read.Body.String(), `"mode":"fixed"`) || strings.Contains(read.Body.String(), identity.Identity) {
-		t.Fatalf("restart unsafe %d %s", read.Code, read.Body.String())
-	}
+	catalog = pricing.NewCatalog(restarted)
+	prices = service.NewPricingService(db, catalog)
+	router, cookie = credentialPricingRouter(t, db, catalog)
+	assertPricingRemoved(t, serveAPIGet(router, path, cookie))
 	assertQueries("10", true, "fixed")
-	// Hidden inactive fields are not parsed or charged, and target is complete.
 	zero := `{"mode":"fixed","multiplier":"synthetic-private-token","fixed":{"prompt_price_per_1m":0,"completion_price_per_1m":"0","cache_read_price_per_1m":0,"cache_write_price_per_1m":0,"pricing_style":"claude"}}`
-	if res := serveCredentialMutation(router, http.MethodPut, path, zero, cookie); res.Code != 200 || strings.Contains(res.Body.String(), "synthetic-private-token") {
-		t.Fatalf("zero %d %s", res.Code, res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, zero)
 	assertQueries("0", true, "fixed")
-	if res := serveCredentialMutation(router, http.MethodPut, path, `{"mode":"multiplier","multiplier":"0x","fixed":"synthetic-private-token"}`, cookie); res.Code != 200 || strings.Contains(res.Body.String(), `"fixed"`) {
-		t.Fatalf("switch multiplier %d %s", res.Code, res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, `{"mode":"multiplier","multiplier":"0x","fixed":"synthetic-private-token"}`)
 	assertQueries("0", false, "multiplier")
-	if res := serveCredentialMutation(router, http.MethodPut, path, fixed, cookie); res.Code != 200 {
-		t.Fatal(res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", path, fixed)
 	assertQueries("10", true, "fixed")
-	if res := serveCredentialMutation(router, http.MethodDelete, path, "", cookie); res.Code != 200 || !strings.Contains(res.Body.String(), `"mode":"inherit"`) {
-		t.Fatalf("clear %d %s", res.Code, res.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "DELETE", path, "")
 	assertQueries("0", false, "")
 }

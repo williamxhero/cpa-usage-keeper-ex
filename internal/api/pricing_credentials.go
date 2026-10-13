@@ -1,9 +1,7 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
 	"cpa-usage-keeper/internal/service"
@@ -61,31 +59,7 @@ func registerPricingCredentialRoutes(router gin.IRoutes, pricingProvider service
 			Credentials []servicedto.PricingCredential `json:"credentials"`
 		}{credentials})
 	})
-	router.POST("/pricing/credentials", func(c *gin.Context) {
-		if provider == nil {
-			c.JSON(http.StatusNotImplemented, gin.H{"error": "credential directory is not configured"})
-			return
-		}
-		var request struct {
-			DirectoryID int64 `json:"directory_id"`
-		}
-		decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 4096))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&request); err != nil || request.DirectoryID <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid credential selection"})
-			return
-		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid credential selection"})
-			return
-		}
-		credential, err := provider.BindPricingCredential(c.Request.Context(), request.DirectoryID)
-		if err != nil {
-			writeCredentialBindingError(c, err)
-			return
-		}
-		c.JSON(http.StatusCreated, credential)
-	})
+	router.POST("/pricing/credentials", pricingFeatureRemoved)
 }
 
 func writeCredentialBindingError(c *gin.Context, err error) {
