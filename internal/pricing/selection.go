@@ -34,6 +34,9 @@ type CostSelection struct {
 	BaselineCostUSD           *float64      `json:"baseline_cost_usd"`
 	BaselineAvailable         bool          `json:"baseline_available"`
 	BaselineUnavailableReason string        `json:"baseline_unavailable_reason,omitempty"`
+	PricingSource             string        `json:"pricing_source,omitempty"`
+	PricingStatus             string        `json:"pricing_status,omitempty"`
+	PricingSnapshotID         string        `json:"pricing_snapshot_id,omitempty"`
 }
 
 func (r Resolver) Selection(result CostResult) *CostSelection {
@@ -54,5 +57,5 @@ func (r Resolver) Selection(result CostResult) *CostSelection {
 		reason = result.ReferenceUnavailableReason
 	}
 	rules := append([]MatchedRule{}, result.matchedRules[:result.matchedRuleCount]...)
-	return &CostSelection{ChannelID: result.ChannelID, ChannelName: result.ChannelName, AttributionWarning: result.AttributionWarning, Legacy: scope == "legacy", LegacyAdjustmentsReplaced: scope != "legacy", LegacyModelMultiplier: result.LegacyModelMultiplier, LegacyRuleMultiplier: result.LegacyRuleMultiplier, FinalMultiplier: result.FinalMultiplier, MatchedRules: rules, DualCosts: result.DualCosts(), Mode: mode, Fixed: cloneFixed(result.Fixed), PricingStyle: result.PricingStyle, BaselineCostUSD: reference, BaselineAvailable: result.ReferenceAvailable, BaselineUnavailableReason: reason, Scope: scope, SubjectID: result.CredentialSubjectID, SubjectName: r.snapshot.CredentialName(result.CredentialSubjectID), SelectedModel: result.SelectedModel, SelectedBy: result.SelectedBy, BaselineModel: result.MatchedModel, BaselineBy: result.MatchedBy, Multiplier: result.Multiplier, UnavailableReason: result.UnavailableReason, SnapshotID: r.SnapshotID()}
+	return &CostSelection{ChannelID: result.ChannelID, ChannelName: result.ChannelName, AttributionWarning: result.AttributionWarning, Legacy: scope == "legacy", LegacyAdjustmentsReplaced: scope != "legacy", LegacyModelMultiplier: result.LegacyModelMultiplier, LegacyRuleMultiplier: result.LegacyRuleMultiplier, FinalMultiplier: result.FinalMultiplier, MatchedRules: rules, DualCosts: result.DualCosts(), Mode: mode, Fixed: cloneFixed(result.Fixed), PricingStyle: result.PricingStyle, BaselineCostUSD: reference, BaselineAvailable: result.ReferenceAvailable, BaselineUnavailableReason: reason, Scope: scope, SubjectID: result.CredentialSubjectID, SubjectName: r.snapshot.CredentialName(result.CredentialSubjectID), SelectedModel: result.SelectedModel, SelectedBy: result.SelectedBy, BaselineModel: result.MatchedModel, BaselineBy: result.MatchedBy, Multiplier: result.Multiplier, UnavailableReason: result.UnavailableReason, SnapshotID: r.SnapshotID(), PricingSnapshotID: r.SnapshotID(), PricingSource: result.PricingSource, PricingStatus: result.DualCosts().Configured.Status}
 }

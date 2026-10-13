@@ -121,6 +121,9 @@ func (s *pricingService) UpdateOfficialPricingBatch(ctx context.Context, inputs 
 		if err != nil {
 			return err
 		}
+		if err := repository.ActivateStrictPricing(tx); err != nil {
+			return err
+		}
 		candidate, err = repository.LoadPricingSnapshot(ctx, tx)
 		return err
 	})

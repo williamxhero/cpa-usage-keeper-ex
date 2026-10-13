@@ -108,7 +108,17 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 		if loadErr != nil {
 			return nil, fmt.Errorf("load official model prices: %w", loadErr)
 		}
-		snapshot.SetOfficialPrices(officialPrices)
+		// An adopted SPEC-003 database remains strict even after its last
+		// official row is cleared. Fresh legacy fixtures without the marker
+		// retain their historical compatibility path.
+		if len(officialPrices) > 0 || strictPricingActivated(query) {
+			snapshot.SetOfficialPrices(officialPrices)
+		}
+	}
+	// Keep the mode switch effective even on a database whose official-price
+	// table was introduced later than the adoption marker.
+	if strictPricingActivated(query) {
+		snapshot.SetOfficialPrices(snapshot.OfficialPrices())
 	}
 	if query.Migrator().HasTable(&entities.CredentialModelPriceOverride{}) {
 		overrides, loadErr := ListCredentialModelPriceOverrides(query)
@@ -126,8 +136,10 @@ func LoadPricingSnapshot(ctx context.Context, db *gorm.DB) (*pricing.Snapshot, e
 				}, Source: row.Source,
 			}
 		}
-		if err := snapshot.SetCredentialMatrix(matrix); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
+		if len(matrix) > 0 || strictPricingActivated(query) {
+			if err := snapshot.SetCredentialMatrix(matrix); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalidPricingSnapshot, err)
+			}
 		}
 	}
 	return snapshot, nil

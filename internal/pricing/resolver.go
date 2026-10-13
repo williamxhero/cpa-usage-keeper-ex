@@ -1,6 +1,9 @@
 package pricing
 
 import (
+	"strings"
+
+	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/helper"
 )
 
@@ -46,6 +49,8 @@ type CostResult struct {
 	ConfiguredEstimate         PriceEstimate
 	ReferenceEstimate          PriceEstimate
 	ReferenceUnavailableReason string
+	PricingSource              string
+	PricingSnapshotID          string
 	LegacyModelMultiplier      float64
 	LegacyRuleMultiplier       float64
 	FinalMultiplier            float64
@@ -66,6 +71,18 @@ func (r Resolver) ActiveFields() ActiveFields {
 }
 
 func (r Resolver) Calculate(subject CostSubject) CostResult {
+	if r.threeLayerPricing() {
+		result := r.calculateThreeLayer(subject)
+		return result
+	}
+	result := r.calculateLegacyConfigured(subject)
+	return result
+}
+
+// The pre-catalog path remains only for old snapshots that have no new fact
+// source. A published catalog containing official or matrix data never enters
+// this function, so legacy defaults/rules/channels cannot affect its costs.
+func (r Resolver) calculateLegacyConfigured(subject CostSubject) CostResult {
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
 	var result CostResult
 	if config, selectedBy, selected := r.credentialModel(subject); selected {
@@ -95,8 +112,6 @@ func (r Resolver) Calculate(subject CostSubject) CostResult {
 	result.LegacyRuleMultiplier = result.RuleMultiplier
 	result.FinalMultiplier = result.LegacyModelMultiplier * result.RuleMultiplier
 	if result.Scope != "" {
-		// Explain replaced adjustments from the same pinned baseline, without
-		// changing the selected configured result or its historical fields.
 		legacy := r.CalculateLegacy(subject)
 		result.LegacyRuleMultiplier = legacy.RuleMultiplier
 		result.matchedRules, result.matchedRuleCount = legacy.matchedRules, legacy.matchedRuleCount
@@ -107,6 +122,159 @@ func (r Resolver) Calculate(subject CostSubject) CostResult {
 	}
 	result.ChannelID, result.ChannelName, result.AttributionWarning = r.ChannelAttribution(subject)
 	return result
+}
+
+func (r Resolver) threeLayerPricing() bool {
+	return r.snapshot != nil && r.snapshot.threeLayerPricing
+}
+
+func (r Resolver) calculateThreeLayer(subject CostSubject) CostResult {
+	result := CostResult{
+		Available: !helper.UsageTokenInputRequiresPricing(subject.Tokens), RuleMultiplier: 1,
+		LegacyModelMultiplier: 1, LegacyRuleMultiplier: 1, FinalMultiplier: 1,
+		CredentialSubjectID: r.credentialSubject(subject), PricingSource: "unavailable", PricingSnapshotID: r.SnapshotID(),
+		Scope: "unavailable", Mode: ModeFixed,
+	}
+	required := requiredOfficialPriceSegments(subject.Tokens)
+	model, matchedBy := subject.Dimensions.Model, "model"
+	matrix, matrixFound := r.matrixForSubjectModel(subject, model)
+	if !matrixFound && strings.TrimSpace(subject.Dimensions.ModelAlias) != "" {
+		model, matchedBy = subject.Dimensions.ModelAlias, "model_alias"
+		matrix, matrixFound = r.matrixForSubjectModel(subject, model)
+	}
+	if matrixFound {
+		result.MatchedModel, result.MatchedBy = model, matchedBy
+		result.SelectedModel, result.SelectedBy = model, matchedBy
+		result.Scope, result.Mode, result.PricingSource = "credential_matrix", ModeFixed, CredentialMatrixSource
+		result.PricingStyle, result.Fixed = matrix.Fixed.PricingStyle, cloneFixed(&matrix.Fixed)
+		// Matrix rows are validated as complete four-segment fixed tariffs. A
+		// billable request is therefore priced whenever the exact subject/model
+		// row is selected; only a zero-token request starts as known zero.
+		result.Available = true
+		result.Cost = helper.CalculateUsageTokenCostBreakdown(subject.Tokens, matrix.Fixed.pricing(matrix.Fixed.PricingStyle))
+		result.ConfiguredEstimate = estimate(result.Cost, true, "")
+		result.ConfiguredEstimate.Source, result.ConfiguredEstimate.MatchedModel, result.ConfiguredEstimate.MatchedBy = CredentialMatrixSource, model, matchedBy
+		result = result.WithReference(r.referenceEstimate(subject, required))
+		return result
+	}
+
+	match := MatchOfficialPrice(r.snapshot.officialPrices, model, required)
+	if match.Status == OfficialMatchUnavailable && matchedBy == "model" && strings.TrimSpace(subject.Dimensions.ModelAlias) != "" {
+		aliasMatch := MatchOfficialPrice(r.snapshot.officialPrices, subject.Dimensions.ModelAlias, required)
+		if aliasMatch.Status != OfficialMatchUnavailable || aliasMatch.Reason != "no_match" {
+			match, model, matchedBy = aliasMatch, subject.Dimensions.ModelAlias, "model_alias"
+		}
+	}
+	result.MatchedModel, result.MatchedBy = model, matchedBy
+	if match.Status == OfficialMatchAvailable && match.Price != nil {
+		modelPricing := officialPriceSetting(*match.Price)
+		result.Available, result.PricingStyle = true, modelPricing.PricingStyle
+		result.Cost = helper.CalculateUsageTokenCostBreakdown(subject.Tokens, modelPricing)
+		result.PricingSource = match.Price.Source
+		if result.PricingSource == "" {
+			result.PricingSource = "official"
+		}
+		result.Scope, result.Mode = result.PricingSource, "official"
+		result.ConfiguredEstimate = estimate(result.Cost, true, "")
+		result.ConfiguredEstimate.Source, result.ConfiguredEstimate.MatchedModel, result.ConfiguredEstimate.MatchedBy = result.PricingSource, model, matchedBy
+		result = result.WithReference(result.ConfiguredEstimate)
+		return result
+	}
+	if !result.Available {
+		result.UnavailableReason = match.Reason
+		if result.UnavailableReason == "" {
+			result.UnavailableReason = "no_match"
+		}
+		result.ConfiguredEstimate = estimate(result.Cost, false, result.UnavailableReason)
+		result.ConfiguredEstimate.Source, result.ConfiguredEstimate.MatchedModel, result.ConfiguredEstimate.MatchedBy = "unavailable", model, matchedBy
+	} else {
+		result.ConfiguredEstimate = estimate(result.Cost, true, "")
+		result.ConfiguredEstimate.Source = "none"
+		result = result.WithReference(result.ConfiguredEstimate)
+	}
+	if result.ReferenceEstimate.Status == "" {
+		result.ReferenceEstimate = r.referenceEstimate(subject, required)
+	}
+	return result
+}
+
+func requiredOfficialPriceSegments(tokens helper.UsageTokenCostInput) []OfficialPriceSegment {
+	input, output, read, write := tokens.InputTokens, tokens.OutputTokens, tokens.CacheReadTokens, tokens.CacheCreationTokens
+	if input < 0 {
+		input = 0
+	}
+	if output < 0 {
+		output = 0
+	}
+	if read < 0 {
+		read = 0
+	}
+	if write < 0 {
+		write = 0
+	}
+	input -= read + write
+	if input < 0 {
+		input = 0
+	}
+	segments := make([]OfficialPriceSegment, 0, 4)
+	if input > 0 {
+		segments = append(segments, OfficialPricePrompt)
+	}
+	if output > 0 {
+		segments = append(segments, OfficialPriceCompletion)
+	}
+	if read > 0 {
+		segments = append(segments, OfficialPriceCacheRead)
+	}
+	if write > 0 {
+		segments = append(segments, OfficialPriceCacheWrite)
+	}
+	return segments
+}
+
+func officialPriceSetting(price entities.OfficialModelPrice) entities.ModelPriceSetting {
+	value := func(rate *float64) float64 {
+		if rate == nil {
+			return 0
+		}
+		return *rate
+	}
+	one := 1.0
+	return entities.ModelPriceSetting{Model: price.CanonicalModelID, PricingStyle: price.PricingStyle, PromptPricePer1M: value(price.PromptPricePer1M), CompletionPricePer1M: value(price.CompletionPricePer1M), CacheReadPricePer1M: value(price.CacheReadPricePer1M), CacheWritePricePer1M: value(price.CacheWritePricePer1M), PriceMultiplier: &one}
+}
+
+func (r Resolver) matrixForSubjectModel(subject CostSubject, model string) (CredentialMatrixConfig, bool) {
+	if r.snapshot == nil {
+		return CredentialMatrixConfig{}, false
+	}
+	id := r.credentialSubject(subject)
+	if id == "" {
+		return CredentialMatrixConfig{}, false
+	}
+	return r.snapshot.CredentialMatrixConfig(id, model)
+}
+
+func (r Resolver) referenceEstimate(subject CostSubject, required []OfficialPriceSegment) PriceEstimate {
+	if !helper.UsageTokenInputRequiresPricing(subject.Tokens) {
+		p := estimate(helper.UsageTokenCostBreakdown{}, true, "")
+		p.Source = "none"
+		return p
+	}
+	model := subject.Dimensions.Model
+	match := MatchOfficialPrice(r.snapshot.officialPrices, model, required)
+	if match.Status == OfficialMatchUnavailable && strings.TrimSpace(subject.Dimensions.ModelAlias) != "" {
+		aliasMatch := MatchOfficialPrice(r.snapshot.officialPrices, subject.Dimensions.ModelAlias, required)
+		if aliasMatch.Status != OfficialMatchUnavailable || aliasMatch.Reason != "no_match" {
+			match, model = aliasMatch, subject.Dimensions.ModelAlias
+		}
+	}
+	if match.Status != OfficialMatchAvailable || match.Price == nil {
+		return estimate(helper.UsageTokenCostBreakdown{}, false, match.Reason)
+	}
+	cost := helper.CalculateUsageTokenCostBreakdown(subject.Tokens, officialPriceSetting(*match.Price))
+	p := estimate(cost, true, "")
+	p.Source, p.MatchedModel = match.Price.Source, model
+	return p
 }
 
 // Scope selection precedes this shared calculator; missing baselines never
@@ -155,6 +323,10 @@ func calculateCredentialDefault(subject CostSubject, id string, multiplier float
 // CalculateLegacy preserves legacy grouping for subjects already rejected by
 // exact typed attribution. It never retries a type-less credential lookup.
 func (r Resolver) CalculateLegacy(subject CostSubject) CostResult {
+	if r.threeLayerPricing() {
+		result := r.calculateThreeLayer(subject)
+		return result
+	}
 	model, matchedModel, matchedBy, found := r.matchModel(subject.Dimensions)
 	if !found {
 		return withBaselineReference(CostResult{

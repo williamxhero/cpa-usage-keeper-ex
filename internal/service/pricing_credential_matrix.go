@@ -290,6 +290,9 @@ func (s *pricingService) UpdateCredentialModelMatrix(ctx context.Context, inputs
 		if err := repository.UpsertCredentialModelPriceOverrides(tx, rows); err != nil {
 			return err
 		}
+		if err := repository.ActivateStrictPricing(tx); err != nil {
+			return err
+		}
 		clears := make([]struct{ SubjectID, CanonicalModelID string }, 0)
 		for _, input := range inputs {
 			if input.Clear {
