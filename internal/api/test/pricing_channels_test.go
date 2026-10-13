@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -45,36 +44,16 @@ func TestPricingChannelsAdminHTTPRealPersistenceQueriesReadbackAndDeletion(t *te
 	channels := []service.PricingChannel{}
 	subjects := []string{}
 	for i, identity := range identities {
-		bound := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identity.ID), cookie)
-		if bound.Code != 201 {
-			t.Fatal(bound.Body.String())
-		}
-		var credential safeCredential
-		if err := json.Unmarshal(bound.Body.Bytes(), &credential); err != nil {
-			t.Fatal(err)
-		}
+		credential := bindPricingFixture(t, db, identity.ID, catalog)
 		subjects = append(subjects, credential.SubjectID)
-		body := fmt.Sprintf(`{"name":"Channel %c","member_subject_ids":[%q]}`, 'A'+i, credential.SubjectID)
-		created := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/channels", body, cookie)
-		if created.Code != 200 {
-			t.Fatalf("create %d %s", created.Code, created.Body.String())
-		}
-		var channel service.PricingChannel
-		if err := json.Unmarshal(created.Body.Bytes(), &channel); err != nil {
+		channel, err := prices.(service.PricingChannelsProvider).CreatePricingChannel(ctx, service.PricingChannelInput{Name: fmt.Sprintf("Channel %c", 'A'+i), MemberSubjectIDs: []string{credential.SubjectID}})
+		if err != nil {
 			t.Fatal(err)
-		}
-		if !strings.HasPrefix(channel.ID, "chan_") || channel.Multiplier != nil || len(channel.MemberSubjectIDs) != 1 {
-			t.Fatalf("created %+v", channel)
 		}
 		channels = append(channels, channel)
-		multiplier := []string{"20%", ".5x"}[i]
-		path := "/api/v1/pricing/channels/" + channel.ID + "/default"
-		saved := serveCredentialMutation(router, http.MethodPut, path, fmt.Sprintf(`{"multiplier":%q}`, multiplier), cookie)
-		if saved.Code != 200 {
-			t.Fatal(saved.Body.String())
-		}
-		if strings.Contains(saved.Body.String(), identity.LookupKey) || strings.Contains(saved.Body.String(), identity.Identity) {
-			t.Fatal("secret or raw identity in new DTO")
+		_, err = prices.(service.PricingChannelsProvider).SetChannelDefault(ctx, channel.ID, []string{"20%", ".5x"}[i])
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 	day := time.Now().Truncate(time.Hour).Add(-6 * time.Hour)
@@ -185,52 +164,33 @@ func TestPricingChannelsAdminHTTPRealPersistenceQueriesReadbackAndDeletion(t *te
 	}
 	assertCosts(2, 5)
 	defaultPath := "/api/v1/pricing/credentials/" + subjects[0] + "/default"
-	if response := serveCredentialMutation(router, http.MethodPut, defaultPath, `{"multiplier":0.3}`, cookie); response.Code != 200 {
-		t.Fatal(response.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "PUT", defaultPath, `{"multiplier":0.3}`)
 	assertCosts(3, 5)
-	if response := serveCredentialMutation(router, http.MethodDelete, defaultPath, "", cookie); response.Code != 200 {
-		t.Fatal(response.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "DELETE", defaultPath, "")
 	assertCosts(2, 5)
 	path := "/api/v1/pricing/channels/" + channels[0].ID
-	renamed := serveCredentialMutation(router, http.MethodPut, path, fmt.Sprintf(`{"name":"Renamed channel","member_subject_ids":[%q]}`, subjects[0]), cookie)
-	if renamed.Code != 200 {
-		t.Fatal(renamed.Body.String())
+	_, err = prices.(service.PricingChannelsProvider).UpdatePricingChannel(ctx, channels[0].ID, service.PricingChannelInput{Name: "Renamed channel", MemberSubjectIDs: []string{subjects[0]}})
+	if err != nil {
+		t.Fatal(err)
 	}
 	restartedSnapshot, err := repository.LoadPricingSnapshot(ctx, db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	router, cookie = credentialPricingRouter(t, db, pricing.NewCatalog(restartedSnapshot))
+	catalog = pricing.NewCatalog(restartedSnapshot)
+	prices = service.NewPricingService(db, catalog)
+	router, cookie = credentialPricingRouter(t, db, catalog)
 	assertCosts(2, 5)
-	readback := serveAPIGet(router, path, cookie)
-	if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"name":"Renamed channel"`) || !strings.Contains(readback.Body.String(), `"multiplier":0.2`) {
-		t.Fatal(readback.Body.String())
-	}
+	assertPricingRemoved(t, serveAPIGet(router, path, cookie))
 	for _, body := range []string{`{}`, `{"name":"Bad","member_subject_ids":null}`, fmt.Sprintf(`{"name":"Duplicate","member_subject_ids":[%q,%q]}`, subjects[0], subjects[0]), fmt.Sprintf(`{"name":"Conflict","member_subject_ids":[%q]}`, subjects[1]), `{"name":"Unknown","member_subject_ids":["missing"]}`, `{"name":"sk-synthetic-secret","member_subject_ids":[]}`, `{"name":"synthetic-private-source-a","member_subject_ids":[]}`, `{"name":"synthetic-a","member_subject_ids":[]}`, `{"name":"Safe","member_subject_ids":[],"api_key":"synthetic-private-source-a"}`} {
-		response := serveCredentialMutation(router, http.MethodPut, path, body, cookie)
-		if response.Code != 400 && response.Code != 409 {
-			t.Fatalf("invalid accepted %d %s", response.Code, response.Body.String())
-		}
-		if strings.Contains(response.Body.String(), "synthetic-private-source-a") || strings.Contains(response.Body.String(), "sk-synthetic-secret") {
-			t.Fatal("unsafe error")
-		}
+		assertPricingRemoved(t, serveCredentialMutation(router, "PUT", path, body, cookie))
 	}
 	assertCosts(2, 5)
-	response := serveCredentialMutation(router, http.MethodDelete, path, "", cookie)
-	if response.Code != 409 {
-		t.Fatalf("unsafe deletion %d %s", response.Code, response.Body.String())
-	}
-	if response := serveCredentialMutation(router, http.MethodDelete, path+"?confirm_dependencies=true", "", cookie); response.Code != 204 {
-		t.Fatalf("confirmed delete %d %s", response.Code, response.Body.String())
-	}
-	if response := serveAPIGet(router, path, cookie); response.Code != 404 {
-		t.Fatal(response.Body.String())
-	}
-	if response := serveAPIGet(router, "/api/v1/pricing/credentials/"+subjects[0]+"/default", cookie); response.Code != 200 {
-		t.Fatal("credential history deleted")
-	}
+	assertPricingRemoved(t, serveCredentialMutation(router, "DELETE", path, "", cookie))
+	assertPricingRemoved(t, serveCredentialMutation(router, "DELETE", path+"?confirm_dependencies=true", "", cookie))
+	assertPricingRemoved(t, serveAPIGet(router, path, cookie))
+	assertPricingRemoved(t, serveAPIGet(router, "/api/v1/pricing/credentials/"+subjects[0]+"/default", cookie))
+	assertCosts(2, 5)
 }
 
 func TestPricingChannelRoutesKeepAdminReadOnlyAndAnonymousBoundaries(t *testing.T) {

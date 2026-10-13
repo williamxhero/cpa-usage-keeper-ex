@@ -2,15 +2,10 @@ package test
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
+	"errors"
 	"testing"
 	"time"
 
-	keeperapi "cpa-usage-keeper/internal/api"
-	"cpa-usage-keeper/internal/auth"
 	"cpa-usage-keeper/internal/cpa/dto/providerconfig"
 	"cpa-usage-keeper/internal/cpa/dto/response"
 	"cpa-usage-keeper/internal/pricing"
@@ -35,20 +30,10 @@ func TestPricingCredentialDirectoryRejectsSharedUpstreamConfiguration(t *testing
 	if len(directory) != 1 || directory[0].BindingStatus != "ambiguous" || directory[0].SubjectID != "" {
 		t.Fatalf("first-item dedup falsely claims a unique configuration: %+v", directory)
 	}
-	sessions := auth.NewSessionManager(time.Hour)
-	token, _, err := sessions.Create()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := keeperapi.AuthConfig{Enabled: true, LoginPassword: "synthetic-password", SessionTTL: time.Hour}
-	router := keeperapi.NewRouter(nil, nil, nil, provider, cfg, keeperapi.NewAuthHandler(cfg, sessions), "")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/pricing/credentials", strings.NewReader(fmt.Sprintf(`{"directory_id":%d}`, directory[0].DirectoryID)))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-CPA-Usage-Keeper-Request", "fetch")
-	req.AddCookie(&http.Cookie{Name: "cpa_usage_keeper_session", Value: token})
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-	if res.Code != http.StatusConflict {
-		t.Fatalf("ambiguous save status = %d: %s", res.Code, res.Body.String())
+	// The HTTP registration route is retired; retained fixture/migration binding
+	// must still reject a directory row that is not uniquely attributable.
+	_, err = provider.(service.PricingCredentialProvider).BindPricingCredential(context.Background(), directory[0].DirectoryID)
+	if !errors.Is(err, service.ErrCredentialNotSelectable) {
+		t.Fatalf("ambiguous directory binding error = %v", err)
 	}
 }

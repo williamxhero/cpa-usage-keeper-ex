@@ -43,24 +43,11 @@ func TestIdentityMigrationAdminHTTPRealSaveQueriesCorrectionPrivacyAndCompletene
 		t.Fatal(err)
 	}
 	router, cookie := credentialPricingRouter(t, db, catalog)
-	res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identities[0].ID), cookie)
-	if res.Code != 201 {
-		t.Fatal(res.Body.String())
-	}
-	var credential safeCredential
-	if err := json.Unmarshal(res.Body.Bytes(), &credential); err != nil {
-		t.Fatal(err)
-	}
+	credential := bindPricingFixture(t, db, identities[0].ID, catalog)
 	subject := credential.SubjectID
-	if res := serveCredentialMutation(router, http.MethodPut, "/api/v1/pricing/credentials/"+subject+"/default", `{"multiplier":"20%"}`, cookie); res.Code != 200 {
-		t.Fatal(res.Body.String())
-	}
-	channel := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/channels", fmt.Sprintf(`{"name":"Saved contract","member_subject_ids":[%q]}`, subject), cookie)
-	if channel.Code != 200 {
-		t.Fatalf("channel %d %s", channel.Code, channel.Body.String())
-	}
-	var savedChannel service.PricingChannel
-	if err := json.Unmarshal(channel.Body.Bytes(), &savedChannel); err != nil {
+	applyLegacyPricingFixture(t, prices, "PUT", "/api/v1/pricing/credentials/"+subject+"/default", `{"multiplier":"20%"}`)
+	savedChannel, err := prices.(service.PricingChannelsProvider).CreatePricingChannel(ctx, service.PricingChannelInput{Name: "Saved contract", MemberSubjectIDs: []string{subject}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	day := time.Now().Truncate(time.Hour).Add(-6 * time.Hour)
@@ -120,27 +107,28 @@ func TestIdentityMigrationAdminHTTPRealSaveQueriesCorrectionPrivacyAndCompletene
 	}
 	state := func() service.PricingIdentityState {
 		t.Helper()
-		res := serveAPIGet(router, "/api/v1/pricing/identity-bindings", cookie)
-		if res.Code != 200 {
-			t.Fatal(res.Body.String())
+		assertPricingRemoved(t, serveAPIGet(router, "/api/v1/pricing/identity-bindings", cookie))
+		s, err := prices.(service.PricingIdentityMigrationProvider).GetPricingIdentityState(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
 		}
 		for _, secret := range []string{identities[0].Identity, identities[1].Identity, identities[0].LookupKey, identities[1].LookupKey, "lookup_key", "auth_index", "file_path", "raw_identity"} {
-			if strings.Contains(res.Body.String(), secret) {
-				t.Fatalf("unsafe state %s", res.Body.String())
+			if strings.Contains(string(encoded), secret) {
+				t.Fatal("unsafe internal read-only identity state")
 			}
-		}
-		var s service.PricingIdentityState
-		if err := json.Unmarshal(res.Body.Bytes(), &s); err != nil {
-			t.Fatal(err)
 		}
 		return s
 	}
 	costs(7)
 	before := catalog.Snapshot()
 	for _, body := range []string{`{}`, `{"confirmed":false}`, `{"raw_identity":"synthetic-private-key-new"}`, `{} {}`, `null`} {
-		res := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/identity-bindings/migrate", body, cookie)
-		if res.Code != 400 || strings.Contains(res.Body.String(), identities[1].LookupKey) || catalog.Snapshot() != before {
-			t.Fatalf("invalid mutation %d %s", res.Code, res.Body.String())
+		assertPricingRemoved(t, serveCredentialMutation(router, "POST", "/api/v1/pricing/identity-bindings/migrate", body, cookie))
+		if catalog.Snapshot() != before {
+			t.Fatal("retired migration published")
 		}
 	}
 	s := state()
@@ -150,36 +138,22 @@ func TestIdentityMigrationAdminHTTPRealSaveQueriesCorrectionPrivacyAndCompletene
 			ref = item.Ref
 		}
 	}
-	body := fmt.Sprintf(`{"subject_id":%q,"directory_ref":%q,"snapshot_id":%q,"confirmed":true}`, subject, ref, s.SnapshotID)
-	res = serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/identity-bindings/migrate", body, cookie)
-	if res.Code != 200 {
-		t.Fatal(res.Body.String())
-	}
-	var migrated service.PricingIdentityMutationResult
-	if err := json.Unmarshal(res.Body.Bytes(), &migrated); err != nil {
-		t.Fatal(err)
-	}
-	if migrated.SubjectID != subject || migrated.BindingRef == "" {
-		t.Fatalf("unstable migration %+v", migrated)
+	migrated, err := prices.(service.PricingIdentityMigrationProvider).MigratePricingIdentity(ctx, service.PricingIdentityMigrationInput{SubjectID: subject, DirectoryRef: ref, SnapshotID: s.SnapshotID, Confirmed: true})
+	if err != nil || migrated.SubjectID != subject || migrated.BindingRef == "" {
+		t.Fatalf("migration fixture: %+v %v", migrated, err)
 	}
 	costs(4)
-	read := serveAPIGet(router, "/api/v1/pricing/channels/"+savedChannel.ID, cookie)
-	if read.Code != 200 || !strings.Contains(read.Body.String(), subject) {
-		t.Fatalf("lost member %s", read.Body.String())
-	}
-	// Old exact history remains associated until this separately confirmed correction.
+	assertPricingRemoved(t, serveAPIGet(router, "/api/v1/pricing/channels/"+savedChannel.ID, cookie))
 	s = state()
-	correction := fmt.Sprintf(`{"expected_subject_id":%q,"action":"unbind","snapshot_id":%q,"confirmed":true}`, subject, s.SnapshotID)
-	res = serveCredentialMutation(router, http.MethodPut, "/api/v1/pricing/identity-bindings/binding_"+subject+"/correction", correction, cookie)
-	if res.Code != 200 {
-		t.Fatal(res.Body.String())
+	_, err = prices.(service.PricingIdentityMigrationProvider).CorrectPricingIdentity(ctx, service.PricingIdentityCorrectionInput{BindingRef: "binding_" + subject, ExpectedSubjectID: subject, Action: "unbind", SnapshotID: s.SnapshotID, Confirmed: true})
+	if err != nil {
+		t.Fatal(err)
 	}
 	costs(7)
 	s = state()
-	correction = fmt.Sprintf(`{"expected_subject_id":%q,"target_subject_id":%q,"action":"rebind","snapshot_id":%q,"confirmed":true}`, subject, subject, s.SnapshotID)
-	res = serveCredentialMutation(router, http.MethodPut, "/api/v1/pricing/identity-bindings/binding_"+subject+"/correction", correction, cookie)
-	if res.Code != 200 {
-		t.Fatal(res.Body.String())
+	_, err = prices.(service.PricingIdentityMigrationProvider).CorrectPricingIdentity(ctx, service.PricingIdentityCorrectionInput{BindingRef: "binding_" + subject, ExpectedSubjectID: subject, TargetSubjectID: subject, Action: "rebind", SnapshotID: s.SnapshotID, Confirmed: true})
+	if err != nil {
+		t.Fatal(err)
 	}
 	costs(4)
 	// No historical reconstruction promise after genuinely missing facts.

@@ -11,19 +11,20 @@ import (
 	servicedto "cpa-usage-keeper/internal/service/dto"
 )
 
-func TestPricingRulesGETReturnsModelAndNormalizedRules(t *testing.T) {
+func TestPricingRulesGETReturnsModelAndNormalizedRulesRemoved(t *testing.T) {
 	provider := &pricingStub{rules: []servicedto.PricingRule{{Key: "service_tier", Value: "priority", Multiplier: 2}}}
 	router := NewRouter(nil, nil, nil, provider, AuthConfig{}, nil, "")
 	req := newPricingRequest(http.MethodGet, "/api/v1/pricing/rules?model=openai%2Fgpt-5.6", "")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK || !contains(resp.Body.String(), `"model":"openai/gpt-5.6"`) || !contains(resp.Body.String(), `"key":"service_tier"`) || !contains(resp.Body.String(), `"multiplier":2`) {
-		t.Fatalf("unexpected pricing rules response: %d %s", resp.Code, resp.Body.String())
+	assertPricingRemoved(t, resp)
+	if provider.lastRules != nil {
+		t.Fatal("retired rules called service")
 	}
 }
 
-func TestPricingRulesPUTPreservesOmittedNullAndExplicitZeroMultipliers(t *testing.T) {
+func TestPricingRulesPUTPreservesOmittedNullAndExplicitZeroMultipliersRemoved(t *testing.T) {
 	for name, body := range map[string]string{
 		"omitted": `{"model":"model-a","rules":[{"key":"service_tier","value":"priority"}]}`,
 		"null":    `{"model":"model-a","rules":[{"key":"service_tier","value":"priority","multiplier":null}]}`,
@@ -36,48 +37,32 @@ func TestPricingRulesPUTPreservesOmittedNullAndExplicitZeroMultipliers(t *testin
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
 
-			if resp.Code != http.StatusOK || provider.lastRules == nil || len(provider.lastRules.Rules) != 1 {
-				t.Fatalf("unexpected %s response: %d %s input=%+v", name, resp.Code, resp.Body.String(), provider.lastRules)
-			}
-			multiplier := provider.lastRules.Rules[0].Multiplier
-			if name == "zero" {
-				if multiplier == nil || *multiplier != 0 {
-					t.Fatalf("expected explicit zero pointer, got %+v", multiplier)
-				}
-			} else if multiplier != nil {
-				t.Fatalf("expected %s multiplier to remain nil for service defaulting, got %+v", name, multiplier)
+			assertPricingRemoved(t, resp)
+			if provider.lastRules != nil {
+				t.Fatal("retired rules called service")
 			}
 		})
 	}
 }
 
-func TestPricingRulesPUTAllowsEmptyArrayToClearRules(t *testing.T) {
-	provider := &pricingStub{rules: []servicedto.PricingRule{}}
-	router := NewRouter(nil, nil, nil, provider, AuthConfig{}, nil, "")
-	req := newPricingRequest(http.MethodPut, "/api/v1/pricing/rules", `{"model":"model-a","rules":[]}`)
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
-
-	if resp.Code != http.StatusOK || provider.lastRules == nil || provider.lastRules.Rules == nil || len(provider.lastRules.Rules) != 0 || !contains(resp.Body.String(), `"rules":[]`) {
-		t.Fatalf("expected complete empty replacement, got %d %s input=%+v", resp.Code, resp.Body.String(), provider.lastRules)
-	}
+func TestPricingRulesPUTAllowsEmptyArrayToClearRulesRemoved(t *testing.T) {
+	assertRetiredPricingRequest(t, "PUT", "/api/v1/pricing/rules", `{"model":"model-a","rules":[]}`)
 }
 
-func TestPricingRulesRoutesMapValidationAndMissingModelErrors(t *testing.T) {
+func TestPricingRulesRoutesMapValidationAndMissingModelErrorsRemoved(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		method      string
 		url         string
 		body        string
 		providerErr error
-		want        int
 	}{
-		{name: "missing query model", method: http.MethodGet, url: "/api/v1/pricing/rules", want: http.StatusBadRequest},
-		{name: "missing body model", method: http.MethodPut, url: "/api/v1/pricing/rules", body: `{"rules":[]}`, want: http.StatusBadRequest},
-		{name: "unknown model", method: http.MethodGet, url: "/api/v1/pricing/rules?model=missing", providerErr: service.ErrPricingModelNotFound, want: http.StatusNotFound},
-		{name: "unknown field", method: http.MethodPut, url: "/api/v1/pricing/rules", body: `{"model":"model-a","rules":[{"key":"provider","value":"openai","multiplier":2}]}`, providerErr: service.ErrInvalidPricingRule, want: http.StatusBadRequest},
-		{name: "duplicate", method: http.MethodPut, url: "/api/v1/pricing/rules", body: `{"model":"model-a","rules":[{"key":"service_tier","value":"priority","multiplier":2},{"key":"service_tier","value":"priority","multiplier":3}]}`, providerErr: service.ErrInvalidPricingRule, want: http.StatusBadRequest},
-		{name: "huge finite combination", method: http.MethodPut, url: "/api/v1/pricing/rules", body: `{"model":"model-a","rules":[{"key":"service_tier","value":"priority","multiplier":1e308}]}`, providerErr: service.ErrInvalidPricingRule, want: http.StatusBadRequest},
+		{name: "missing query model", method: http.MethodGet, url: "/api/v1/pricing/rules"},
+		{name: "missing body model", method: http.MethodPut, url: "/api/v1/pricing/rules", body: `{"rules":[]}`},
+		{name: "unknown model", method: http.MethodGet, url: "/api/v1/pricing/rules?model=missing", providerErr: service.ErrPricingModelNotFound},
+		{name: "unknown field", method: http.MethodPut, url: "/api/v1/pricing/rules", body: `{"model":"model-a","rules":[{"key":"provider","value":"openai","multiplier":2}]}`, providerErr: service.ErrInvalidPricingRule},
+		{name: "duplicate", method: http.MethodPut, url: "/api/v1/pricing/rules", body: `{"model":"model-a","rules":[{"key":"service_tier","value":"priority","multiplier":2},{"key":"service_tier","value":"priority","multiplier":3}]}`, providerErr: service.ErrInvalidPricingRule},
+		{name: "huge finite combination", method: http.MethodPut, url: "/api/v1/pricing/rules", body: `{"model":"model-a","rules":[{"key":"service_tier","value":"priority","multiplier":1e308}]}`, providerErr: service.ErrInvalidPricingRule},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			provider := &pricingStub{err: test.providerErr}
@@ -85,14 +70,15 @@ func TestPricingRulesRoutesMapValidationAndMissingModelErrors(t *testing.T) {
 			req := newPricingRequest(test.method, test.url, test.body)
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
-			if resp.Code != test.want {
-				t.Fatalf("status = %d, want %d: %s", resp.Code, test.want, resp.Body.String())
+			assertPricingRemoved(t, resp)
+			if provider.lastRules != nil {
+				t.Fatal("retired rules called service")
 			}
 		})
 	}
 }
 
-func TestPricingRulesPUTRejectsNonJSONFiniteNumbers(t *testing.T) {
+func TestPricingRulesPUTRejectsNonJSONFiniteNumbersRemoved(t *testing.T) {
 	for _, value := range []string{"NaN", "Infinity", "-Infinity"} {
 		provider := &pricingStub{}
 		router := NewRouter(nil, nil, nil, provider, AuthConfig{}, nil, "")
@@ -100,8 +86,9 @@ func TestPricingRulesPUTRejectsNonJSONFiniteNumbers(t *testing.T) {
 		req := newPricingRequest(http.MethodPut, "/api/v1/pricing/rules", body)
 		resp := httptest.NewRecorder()
 		router.ServeHTTP(resp, req)
-		if resp.Code != http.StatusBadRequest || provider.lastRules != nil {
-			t.Fatalf("expected %s to fail JSON decoding, got %d %s", value, resp.Code, resp.Body.String())
+		assertPricingRemoved(t, resp)
+		if provider.lastRules != nil {
+			t.Fatal("retired rules called service")
 		}
 	}
 }

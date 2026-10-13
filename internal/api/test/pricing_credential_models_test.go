@@ -2,8 +2,6 @@ package test
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -42,14 +40,7 @@ func TestCredentialModelAdminHTTPPersistedSelectionQueriesRestartClear(t *testin
 		t.Fatal(err)
 	}
 	router, cookie := credentialPricingRouter(t, db, catalog)
-	bound := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, identity.ID), cookie)
-	if bound.Code != 201 {
-		t.Fatal(bound.Body.String())
-	}
-	var credential safeCredential
-	if err := json.Unmarshal(bound.Body.Bytes(), &credential); err != nil {
-		t.Fatal(err)
-	}
+	credential := bindPricingFixture(t, db, identity.ID, catalog)
 	model := "unpriced/request-model"
 	path := "/api/v1/pricing/credentials/" + credential.SubjectID + "/model?" + url.Values{"model": {model}}.Encode()
 	listPath := "/api/v1/pricing/credentials/" + credential.SubjectID + "/models"
@@ -65,10 +56,7 @@ func TestCredentialModelAdminHTTPPersistedSelectionQueriesRestartClear(t *testin
 	if used.Code != 200 || !strings.Contains(used.Body.String(), model) || !strings.Contains(used.Body.String(), alias) {
 		t.Fatalf("safe absent-baseline models %d %s", used.Code, used.Body.String())
 	}
-	inherited := serveAPIGet(router, path, cookie)
-	if inherited.Code != 200 || !strings.Contains(inherited.Body.String(), `"multiplier":null`) {
-		t.Fatalf("inherit %d %s", inherited.Code, inherited.Body.String())
-	}
+	assertPricingRemoved(t, serveAPIGet(router, path, cookie))
 	query := "?" + url.Values{"range": {"custom"}, "unit": {"hour"}, "start": {day.Format(time.RFC3339)}, "end": {day.Add(6 * time.Hour).Format(time.RFC3339)}}.Encode()
 	assertQueries := func(cost string, selected bool) {
 		t.Helper()
@@ -87,62 +75,36 @@ func TestCredentialModelAdminHTTPPersistedSelectionQueriesRestartClear(t *testin
 		}
 	}
 	assertQueries("30", false)
-	for _, body := range []string{`{"multiplier":"1.2x"}`, `{"multiplier":"120%"}`, `{"multiplier":"1.2X"}`, `{"multiplier":1.2}`} {
-		res := serveCredentialMutation(router, http.MethodPut, path, body, cookie)
-		if res.Code != 200 {
-			t.Fatalf("save %d %s", res.Code, res.Body.String())
-		}
-		var dto service.CredentialModelMultiplier
-		if err := json.Unmarshal(res.Body.Bytes(), &dto); err != nil {
+	for _, value := range []string{"1.2x", "120%", "1.2X", "1.2"} {
+		_, err := prices.(service.PricingCredentialModelsProvider).SetCredentialModel(ctx, credential.SubjectID, model, value)
+		if err != nil {
 			t.Fatal(err)
-		}
-		if dto.Model != model || dto.SubjectID != credential.SubjectID || dto.Multiplier == nil || *dto.Multiplier != 1.2 {
-			t.Fatalf("canonical %+v", dto)
-		}
-		for _, secret := range []string{identity.Identity, identity.LookupKey, "lookup_key"} {
-			if strings.Contains(res.Body.String(), secret) {
-				t.Fatalf("unsafe response %s", res.Body.String())
-			}
 		}
 		assertQueries("12", true)
 	}
-	list := serveAPIGet(router, listPath, cookie)
-	var configs service.CredentialModelMultipliers
-	if list.Code != 200 || json.Unmarshal(list.Body.Bytes(), &configs) != nil || len(configs.Models) != 1 {
-		t.Fatalf("unique list %d %s", list.Code, list.Body.String())
-	}
+	assertPricingRemoved(t, serveAPIGet(router, listPath, cookie))
 	before := catalog.Snapshot()
 	for _, body := range []string{`{}`, `{"multiplier":null}`, `{"multiplier":" "}`, `{"multiplier":"-1"}`, `{"multiplier":"NaN"}`, `{"multiplier":"Infinity"}`, `{"multiplier":"20%x"}`, `{"multiplier":true}`, `{"multiplier":1e999}`, `{"multiplier":1,"key":"synthetic-private-key"}`, `{"multiplier":1} {}`} {
-		res := serveCredentialMutation(router, http.MethodPut, path, body, cookie)
-		if res.Code != 400 || !strings.Contains(res.Body.String(), `"field":"multiplier"`) || strings.Contains(res.Body.String(), identity.LookupKey) || catalog.Snapshot() != before {
-			t.Fatalf("atomic invalid %d %s", res.Code, res.Body.String())
+		assertPricingRemoved(t, serveCredentialMutation(router, "PUT", path, body, cookie))
+		if catalog.Snapshot() != before {
+			t.Fatal("retired write published")
 		}
 	}
 	restarted, err := repository.LoadPricingSnapshot(ctx, db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	router, cookie = credentialPricingRouter(t, db, pricing.NewCatalog(restarted))
-	readback := serveAPIGet(router, path, cookie)
-	if readback.Code != 200 || !strings.Contains(readback.Body.String(), `"multiplier":1.2`) {
-		t.Fatalf("restart %d %s", readback.Code, readback.Body.String())
-	}
+	catalog = pricing.NewCatalog(restarted)
+	prices = service.NewPricingService(db, catalog)
+	router, cookie = credentialPricingRouter(t, db, catalog)
+	assertPricingRemoved(t, serveAPIGet(router, path, cookie))
 	assertQueries("12", true)
-	cleared := serveCredentialMutation(router, http.MethodDelete, path, "", cookie)
-	if cleared.Code != 200 || !strings.Contains(cleared.Body.String(), `"multiplier":null`) {
-		t.Fatalf("clear %d %s", cleared.Code, cleared.Body.String())
-	}
+	applyLegacyPricingFixture(t, prices, "DELETE", path, "")
 	assertQueries("30", false)
-	if res := serveAPIGet(router, listPath, cookie); res.Code != 200 || !strings.Contains(res.Body.String(), `"models":[]`) {
-		t.Fatal(res.Body.String())
-	}
-	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		if res := serveCredentialMutation(router, method, "/api/v1/pricing/credentials/cred_absent/model?model=M", `{"multiplier":1}`, cookie); res.Code != 404 {
-			t.Fatalf("missing subject %d", res.Code)
-		}
-		if res := serveCredentialMutation(router, method, strings.Split(path, "?")[0], `{"multiplier":1}`, cookie); res.Code != 400 || !strings.Contains(res.Body.String(), `"field":"model"`) {
-			t.Fatalf("missing model %d %s", res.Code, res.Body.String())
-		}
+	assertPricingRemoved(t, serveAPIGet(router, listPath, cookie))
+	for _, method := range []string{"GET", "PUT", "DELETE"} {
+		assertPricingRemoved(t, serveCredentialMutation(router, method, "/api/v1/pricing/credentials/cred_absent/model?model=M", `{"multiplier":1}`, cookie))
+		assertPricingRemoved(t, serveCredentialMutation(router, method, strings.Split(path, "?")[0], `{"multiplier":1}`, cookie))
 	}
 }
 

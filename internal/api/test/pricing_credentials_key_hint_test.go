@@ -70,11 +70,9 @@ func TestPricingCredentialAPIsExposeOnlyMaskedKeyHints(t *testing.T) {
 				t.Fatal("directory request failed")
 			}
 			check(directory.Body.Bytes(), false)
-			bound := serveCredentialMutation(router, http.MethodPost, "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, row.ID), cookie)
-			if bound.Code != http.StatusCreated {
-				t.Fatal("binding request failed")
-			}
-			check(bound.Body.Bytes(), true)
+			bound := serveCredentialMutation(router, "POST", "/api/v1/pricing/credentials", fmt.Sprintf(`{"directory_id":%d}`, row.ID), cookie)
+			assertPricingRemoved(t, bound)
+			bindPricingFixture(t, db, row.ID)
 			saved := serveAPIGet(router, "/api/v1/pricing/credential-subjects", cookie)
 			if saved.Code != http.StatusOK {
 				t.Fatal("saved subjects request failed")
