@@ -33,6 +33,15 @@ func LoadCredentialPricingDirectory(tx *gorm.DB) ([]entities.UsageIdentity, []en
 	if err := tx.Order("created_at asc, id asc").Find(&subjects).Error; err != nil {
 		return nil, nil, err
 	}
+	if strictPricingActivated(tx) {
+		// SPEC-003 uses only the subject's exact CPA directory relation. Legacy
+		// correction overlays remain in storage for audit and rollback, but are
+		// not queried or applied to strict credential ownership.
+		for index := range subjects {
+			subjects[index].BindingRef = "binding_" + subjects[index].ID
+		}
+		return identities, subjects, nil
+	}
 	associations, err := loadCredentialPricingAssociations(tx, subjects)
 	if err != nil {
 		return nil, nil, err

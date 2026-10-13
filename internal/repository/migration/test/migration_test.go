@@ -103,6 +103,7 @@ func TestOrderedMigrationsPreservesExecutionOrder(t *testing.T) {
 		"20261007_credential_pricing_associations",
 		"20261012_official_model_prices",
 		"20261013_credential_model_price_overrides",
+		"20261013_pricing_migration",
 	}
 	assertStringSlicesEqual(t, want, got)
 }
